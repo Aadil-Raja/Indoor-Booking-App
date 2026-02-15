@@ -12,7 +12,7 @@ config = context.config
 config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", ""))
 
 # ---- Import shared models Base ----
-from shared.models.property import Base
+from shared.models import Base
 
 # Set target metadata for migrations
 target_metadata = Base.metadata
