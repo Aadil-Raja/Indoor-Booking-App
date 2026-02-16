@@ -26,4 +26,6 @@ class User(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
-   
+    owner_profile = relationship("OwnerProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    properties = relationship("Property", back_populates="owner", cascade="all, delete-orphan")
+    bookings = relationship("Booking", foreign_keys="[Booking.customer_id]", back_populates="customer", cascade="all, delete-orphan")
