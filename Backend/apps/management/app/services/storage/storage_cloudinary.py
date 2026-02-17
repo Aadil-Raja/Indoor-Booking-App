@@ -7,6 +7,8 @@ import io
 import cloudinary
 import cloudinary.uploader
 from cloudinary.utils import cloudinary_url
+from fastapi import UploadFile
+import os
 
 
 def configure_cloudinary(cloud_name: str, api_key: str, api_secret: str):
@@ -17,6 +19,14 @@ def configure_cloudinary(cloud_name: str, api_key: str, api_secret: str):
         api_secret=api_secret,
         secure=True,
     )
+
+
+# Auto-configure on import
+configure_cloudinary(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET")
+)
 
 
 def is_cloudinary_configured() -> bool:
@@ -103,6 +113,49 @@ def upload_video_bytes(file_bytes: bytes, folder: str, filename: str | None = No
     }
 
 
+async def upload_file(file: UploadFile, folder: str = "indoor", resource_type: str = "auto") -> dict:
+    """
+    Upload file from FastAPI UploadFile to Cloudinary.
+    
+    Args:
+        file: UploadFile from FastAPI
+        folder: Cloudinary folder path
+        resource_type: "image", "video", or "auto"
+    
+    Returns:
+        Dictionary with url, thumbnail_url, public_id, format, resource_type
+    """
+    if not is_cloudinary_configured():
+        raise RuntimeError("Cloudinary is not configured")
+    
+    try:
+        # Read file content
+        contents = await file.read()
+        
+        # Upload to Cloudinary
+        result = cloudinary.uploader.upload(
+            contents,
+            folder=folder,
+            resource_type=resource_type
+        )
+        
+        # Generate thumbnail for videos
+        thumbnail_url = None
+        if result.get("resource_type") == "video":
+            # Cloudinary automatically generates video thumbnails
+            thumbnail_url = result["url"].replace("/upload/", "/upload/c_thumb,w_300/")
+        
+        return {
+            "url": result["secure_url"],
+            "thumbnail_url": thumbnail_url,
+            "public_id": result["public_id"],
+            "format": result.get("format"),
+            "resource_type": result.get("resource_type")
+        }
+    except Exception as e:
+        raise Exception(f"Failed to upload to Cloudinary: {str(e)}")
+
+
 def delete_file_by_public_id(public_id: str, resource_type: str = "image") -> dict:
     """Delete a file from Cloudinary by its public ID."""
     try:
@@ -111,6 +164,42 @@ def delete_file_by_public_id(public_id: str, resource_type: str = "image") -> di
     except Exception as e:
         print(f"[delete_file_by_public_id] Failed to delete {public_id}: {e}")
         return {"result": "error", "error": str(e)}
+
+
+async def delete_file(url: str) -> dict:
+    """
+    Delete file from Cloudinary using URL.
+    
+    Args:
+        url: Cloudinary URL
+    
+    Returns:
+        Result dictionary from Cloudinary
+    """
+    try:
+        # Extract public_id from URL
+        # URL format: https://res.cloudinary.com/{cloud_name}/{resource_type}/upload/v{version}/{public_id}.{format}
+        parts = url.split("/upload/")
+        if len(parts) < 2:
+            raise ValueError("Invalid Cloudinary URL")
+        
+        # Get public_id (remove version and extension)
+        public_id_with_ext = parts[1].split("/", 1)[-1]
+        public_id = public_id_with_ext.rsplit(".", 1)[0]
+        
+        # Determine resource type from URL
+        resource_type = "image"
+        if "/video/" in url:
+            resource_type = "video"
+        elif "/raw/" in url:
+            resource_type = "raw"
+        
+        # Delete from Cloudinary
+        result = cloudinary.uploader.destroy(public_id, resource_type=resource_type)
+        
+        return result
+    except Exception as e:
+        raise Exception(f"Failed to delete from Cloudinary: {str(e)}")
 
 
 def delete_with_thumbnail(public_id: str, resource_type: str) -> dict:
