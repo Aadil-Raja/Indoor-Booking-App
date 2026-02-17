@@ -7,9 +7,19 @@ backend_dir = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(backend_dir))
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.routers import health, auth, properties, courts, pricing, availability, media, public, bookings, owner
 
 app = FastAPI(title="Management API")
+
+# CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/api/auth")
