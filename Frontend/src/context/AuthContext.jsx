@@ -8,23 +8,32 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is already logged in
-    const storedUser = tokenManager.getUser();
-    if (storedUser) {
-      setUser(storedUser);
+    // Check if token exists
+    const token = tokenManager.getToken();
+
+    if (token) {
+      // Token exists, user is authenticated
+      setUser({ authenticated: true });
     }
     setLoading(false);
   }, []);
 
-  const login = (token, userData) => {
-    tokenManager.clearAuth(); // Clear old data
-    tokenManager.setAuth(token, userData);
-    setUser(userData);
+  const login = (token) => {
+    tokenManager.setToken(token);
+    setUser({ authenticated: true });
+
+    // Check for redirect URL
+    const redirectUrl = sessionStorage.getItem('redirectAfterLogin');
+    if (redirectUrl) {
+      sessionStorage.removeItem('redirectAfterLogin');
+      window.location.href = redirectUrl;
+    }
   };
 
   const logout = () => {
-    tokenManager.clearAuth();
+    tokenManager.clearToken();
     setUser(null);
+    window.location.href = '/owner/login';
   };
 
   const value = {

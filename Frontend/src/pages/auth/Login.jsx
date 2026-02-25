@@ -19,30 +19,33 @@ const Login = () => {
 
     try {
       const result = await authService.loginPassword(email, password);
-      
+
       if (result.success) {
-        login(result.data.token, result.data.user);
+        // Backend returns: { access_token, token_type, name }
+        login(result.data.access_token);
         navigate('/owner/dashboard');
       } else {
         setError(result.message || 'Login failed');
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed. Please try again.');
+      setError(
+        err.response?.data?.message || 'Login failed. Please try again.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="auth-container">
-      <div className="auth-card">
+    <div className="ib-auth-container">
+      <div className="ib-auth-card">
         <h1>Owner Login</h1>
-        <p className="auth-subtitle">Sign in to manage your properties</p>
+        <p className="ib-auth-subtitle">Sign in to manage your properties</p>
         
-        {error && <div className="error-message">{error}</div>}
+        {error && <div className="ib-auth-error-message">{error}</div>}
         
         <form onSubmit={handleSubmit}>
-          <div className="form-group">
+          <div className="ib-auth-form-group">
             <label htmlFor="email">Email</label>
             <input
               type="email"
@@ -54,7 +57,7 @@ const Login = () => {
             />
           </div>
 
-          <div className="form-group">
+          <div className="ib-auth-form-group">
             <label htmlFor="password">Password</label>
             <input
               type="password"
@@ -66,12 +69,12 @@ const Login = () => {
             />
           </div>
 
-          <button type="submit" className="btn-primary" disabled={loading}>
+          <button type="submit" className="ib-auth-btn-primary" disabled={loading}>
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
 
-        <div className="auth-footer">
+        <div className="ib-auth-footer">
           <p>Don't have an account? <Link to="/owner/signup">Sign up</Link></p>
         </div>
       </div>

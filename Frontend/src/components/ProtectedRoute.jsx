@@ -9,12 +9,11 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/owner/login" replace />;
   }
 
-  if (requiredRole && user.role !== requiredRole) {
-    return <Navigate to="/login" replace />;
-  }
+  // Since we only store token, we assume all authenticated users are owners
+  // Backend will validate the actual role via JWT token
 
   return children;
 };

@@ -25,14 +25,28 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor - handle 401 errors
+// Response interceptor - handle errors
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Handle 401 Unauthorized - token expired or invalid
     if (error.response?.status === 401) {
       tokenManager.clearAuth();
-      window.location.href = '/login';
+      
+      // Only redirect if not already on login/signup pages
+      const currentPath = window.location.pathname;
+      if (!currentPath.includes('/login') && !currentPath.includes('/signup')) {
+        // Store the attempted URL to redirect after login
+        sessionStorage.setItem('redirectAfterLogin', currentPath);
+        window.location.href = '/owner/login';
+      }
     }
+    
+    // Handle 403 Forbidden - insufficient permissions
+    if (error.response?.status === 403) {
+      console.error('Access forbidden:', error.response.data);
+    }
+    
     return Promise.reject(error);
   }
 );

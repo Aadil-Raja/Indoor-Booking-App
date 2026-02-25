@@ -1,0 +1,354 @@
+/* Court Management Styles - Scoped with .ib-court prefix */
+
+.ib-court-container {
+  min-height: 100vh;
+  background-color: var(--color-gray-50);
+}
+
+.ib-court-header {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-darker) 100%);
+  color: var(--color-white);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ib-court-header h1 {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+}
+
+.ib-court-header-actions {
+  display: flex;
+  gap: var(--spacing-md);
+}
+
+.ib-court-btn-back {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--color-white);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  font-family: var(--font-family);
+  text-decoration: none;
+  display: inline-block;
+}
+
+.ib-court-btn-back:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.ib-court-content {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: var(--spacing-xl);
+}
+
+/* Court Form */
+.ib-court-form-card {
+  background: var(--color-white);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  box-shadow: var(--shadow-md);
+}
+
+.ib-court-form-group {
+  margin-bottom: var(--spacing-lg);
+}
+
+.ib-court-form-group label {
+  display: block;
+  margin-bottom: var(--spacing-sm);
+  color: var(--color-gray-700);
+  font-weight: 500;
+  font-size: var(--font-size-sm);
+}
+
+.ib-court-form-group input,
+.ib-court-form-group textarea,
+.ib-court-form-group select {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+  box-sizing: border-box;
+  font-family: var(--font-family);
+}
+
+.ib-court-form-group textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.ib-court-form-group input:focus,
+.ib-court-form-group textarea:focus,
+.ib-court-form-group select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-pale);
+}
+
+.ib-court-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-lg);
+}
+
+/* Specifications */
+.ib-court-spec-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.ib-court-spec-item {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.ib-court-spec-item input {
+  flex: 1;
+}
+
+.ib-court-spec-remove {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  border: none;
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  transition: all var(--transition-base);
+}
+
+.ib-court-spec-remove:hover {
+  background: var(--color-error);
+  color: var(--color-white);
+}
+
+.ib-court-btn-add-spec {
+  margin-top: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-gray-100);
+  color: var(--color-gray-700);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  font-family: var(--font-family);
+}
+
+.ib-court-btn-add-spec:hover {
+  background: var(--color-gray-200);
+}
+
+/* Amenities */
+.ib-court-amenities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.ib-court-amenity-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--color-primary-bg);
+  color: var(--color-primary-darker);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.ib-court-amenity-remove {
+  background: none;
+  border: none;
+  color: var(--color-error);
+  cursor: pointer;
+  padding: 0;
+  font-size: var(--font-size-base);
+  line-height: 1;
+}
+
+.ib-court-form-actions {
+  display: flex;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-xl);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--color-gray-100);
+}
+
+.ib-court-btn-primary {
+  flex: 1;
+  padding: 14px;
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-darker) 100%);
+  color: var(--color-white);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--transition-base), box-shadow var(--transition-base);
+  font-family: var(--font-family);
+}
+
+.ib-court-btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-green);
+}
+
+.ib-court-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ib-court-btn-secondary {
+  flex: 1;
+  padding: 14px;
+  background: var(--color-white);
+  color: var(--color-gray-700);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  font-family: var(--font-family);
+  text-decoration: none;
+  text-align: center;
+}
+
+.ib-court-btn-secondary:hover {
+  background: var(--color-gray-50);
+}
+
+/* Messages */
+.ib-court-error-message {
+  background: var(--color-error-bg);
+  color: var(--color-error);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-lg);
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-error);
+}
+
+.ib-court-success-message {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-lg);
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-success);
+}
+
+.ib-court-loading {
+  text-align: center;
+  padding: var(--spacing-2xl);
+  color: var(--color-gray-600);
+}
+
+/* Court Details */
+.ib-court-info-card {
+  background: var(--color-white);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  box-shadow: var(--shadow-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.ib-court-info-card h2 {
+  margin: 0 0 var(--spacing-lg) 0;
+  color: var(--color-gray-900);
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  padding-bottom: var(--spacing-md);
+  border-bottom: 2px solid var(--color-gray-100);
+}
+
+.ib-court-info-row {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md) 0;
+  border-bottom: 1px solid var(--color-gray-100);
+}
+
+.ib-court-info-row:last-child {
+  border-bottom: none;
+}
+
+.ib-court-info-label {
+  font-weight: 600;
+  color: var(--color-gray-700);
+  font-size: var(--font-size-sm);
+}
+
+.ib-court-info-value {
+  color: var(--color-gray-900);
+  font-size: var(--font-size-sm);
+}
+
+.ib-court-status-badge {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.ib-court-status-badge.active {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.ib-court-status-badge.inactive {
+  background: var(--color-gray-200);
+  color: var(--color-gray-600);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .ib-court-header {
+    flex-direction: column;
+    gap: var(--spacing-md);
+  }
+
+  .ib-court-header-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .ib-court-content {
+    padding: var(--spacing-lg);
+  }
+
+  .ib-court-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ib-court-info-row {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-xs);
+  }
+
+  .ib-court-form-actions {
+    flex-direction: column;
+  }
+}

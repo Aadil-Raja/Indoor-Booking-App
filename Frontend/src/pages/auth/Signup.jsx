@@ -68,7 +68,7 @@ const Signup = () => {
       
       if (result.success) {
         alert('Email verified successfully! Please login.');
-        navigate('/login');
+        navigate('/owner/login');
       } else {
         setError(result.message || 'Verification failed');
       }
@@ -99,15 +99,15 @@ const Signup = () => {
 
   if (step === 'verify') {
     return (
-      <div className="auth-container">
-        <div className="auth-card">
+      <div className="ib-auth-container">
+        <div className="ib-auth-card">
           <h1>Verify Email</h1>
-          <p className="auth-subtitle">Enter the code sent to {formData.email}</p>
+          <p className="ib-auth-subtitle">Enter the code sent to {formData.email}</p>
           
-          {error && <div className="error-message">{error}</div>}
+          {error && <div className="ib-auth-error-message">{error}</div>}
           
           <form onSubmit={handleVerify}>
-            <div className="form-group">
+            <div className="ib-auth-form-group">
               <label htmlFor="code">Verification Code</label>
               <input
                 type="text"
@@ -120,13 +120,13 @@ const Signup = () => {
               />
             </div>
 
-            <button type="submit" className="btn-primary" disabled={loading}>
+            <button type="submit" className="ib-auth-btn-primary" disabled={loading}>
               {loading ? 'Verifying...' : 'Verify Email'}
             </button>
           </form>
 
-          <div className="auth-footer">
-            <button onClick={handleResendCode} className="btn-link" disabled={loading}>
+          <div className="ib-auth-footer">
+            <button onClick={handleResendCode} className="ib-auth-btn-link" disabled={loading}>
               Resend Code
             </button>
           </div>
@@ -136,15 +136,15 @@ const Signup = () => {
   }
 
   return (
-    <div className="auth-container">
-      <div className="auth-card">
+    <div className="ib-auth-container">
+      <div className="ib-auth-card">
         <h1>Owner Signup</h1>
-        <p className="auth-subtitle">Create an account to manage your properties</p>
+        <p className="ib-auth-subtitle">Create an account to manage your properties</p>
         
-        {error && <div className="error-message">{error}</div>}
+        {error && <div className="ib-auth-error-message">{error}</div>}
         
         <form onSubmit={handleSignup}>
-          <div className="form-group">
+          <div className="ib-auth-form-group">
             <label htmlFor="name">Full Name</label>
             <input
               type="text"
@@ -157,7 +157,7 @@ const Signup = () => {
             />
           </div>
 
-          <div className="form-group">
+          <div className="ib-auth-form-group">
             <label htmlFor="email">Email</label>
             <input
               type="email"
@@ -170,7 +170,7 @@ const Signup = () => {
             />
           </div>
 
-          <div className="form-group">
+          <div className="ib-auth-form-group">
             <label htmlFor="password">Password</label>
             <input
               type="password"
@@ -184,7 +184,7 @@ const Signup = () => {
             />
           </div>
 
-          <div className="form-group">
+          <div className="ib-auth-form-group">
             <label htmlFor="confirmPassword">Confirm Password</label>
             <input
               type="password"
@@ -197,13 +197,13 @@ const Signup = () => {
             />
           </div>
 
-          <button type="submit" className="btn-primary" disabled={loading}>
+          <button type="submit" className="ib-auth-btn-primary" disabled={loading}>
             {loading ? 'Creating Account...' : 'Sign Up'}
           </button>
         </form>
 
-        <div className="auth-footer">
-          <p>Already have an account? <Link to="/login">Login</Link></p>
+        <div className="ib-auth-footer">
+          <p>Already have an account? <Link to="/owner/login">Login</Link></p>
         </div>
       </div>
     </div>
