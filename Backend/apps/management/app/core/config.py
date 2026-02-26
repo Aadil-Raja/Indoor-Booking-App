@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     use_credentials: bool = True
     validate_certs: bool = True
     reset_password_url: str = "http://localhost:5173/reset-password"
+    
+    # Cloudinary
+    cloudinary_cloud_name: str
+    cloudinary_api_key: str
+    cloudinary_api_secret: str
 
 
 @lru_cache()

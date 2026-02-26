@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { propertyService } from '../../services/propertyService';
+import OwnerLayout from '../../components/Layout/OwnerLayout';
 import './property.css';
 
 const PropertyForm = () => {
@@ -156,30 +157,33 @@ const PropertyForm = () => {
 
   if (loading) {
     return (
-      <div className="ib-property-container">
-        <header className="ib-property-header">
-          <h1>{isEditMode ? 'Edit Property' : 'Add New Property'}</h1>
-          <Link to="/owner/properties" className="ib-property-btn-back">
-            Back to Properties
-          </Link>
-        </header>
-        <div className="ib-property-content">
-          <div className="ib-property-loading">Loading...</div>
+      <OwnerLayout>
+        <div className="ib-page-container">
+          <div className="ib-page-header">
+            <h1>{isEditMode ? 'Edit Property' : 'Add New Property'}</h1>
+            <Link to="/owner/properties" className="ib-btn-secondary">
+              Cancel
+            </Link>
+          </div>
+          <div className="ib-page-content">
+            <div className="ib-property-loading">Loading...</div>
+          </div>
         </div>
-      </div>
+      </OwnerLayout>
     );
   }
 
   return (
-    <div className="ib-property-container">
-      <header className="ib-property-header">
-        <h1>{isEditMode ? 'Edit Property' : 'Add New Property'}</h1>
-        <Link to="/owner/properties" className="ib-property-btn-back">
-          Back to Properties
-        </Link>
-      </header>
+    <OwnerLayout>
+      <div className="ib-page-container">
+        <div className="ib-page-header">
+          <h1>{isEditMode ? 'Edit Property' : 'Add New Property'}</h1>
+          <Link to="/owner/properties" className="ib-btn-secondary">
+            Cancel
+          </Link>
+        </div>
 
-      <div className="ib-property-content">
+        <div className="ib-page-content">
         <div className="ib-property-form-card">
           {error && <div className="ib-property-error-message">{error}</div>}
 
@@ -366,8 +370,9 @@ const PropertyForm = () => {
             </div>
           </form>
         </div>
+        </div>
       </div>
-    </div>
+    </OwnerLayout>
   );
 };
 

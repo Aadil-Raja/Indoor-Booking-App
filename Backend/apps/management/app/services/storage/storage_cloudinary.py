@@ -8,25 +8,22 @@ import cloudinary
 import cloudinary.uploader
 from cloudinary.utils import cloudinary_url
 from fastapi import UploadFile
-import os
+from app.core.config import get_settings
 
 
-def configure_cloudinary(cloud_name: str, api_key: str, api_secret: str):
-    """Configure Cloudinary with credentials."""
+def configure_cloudinary():
+    """Configure Cloudinary with credentials from settings."""
+    settings = get_settings()
     cloudinary.config(
-        cloud_name=cloud_name,
-        api_key=api_key,
-        api_secret=api_secret,
+        cloud_name=settings.cloudinary_cloud_name,
+        api_key=settings.cloudinary_api_key,
+        api_secret=settings.cloudinary_api_secret,
         secure=True,
     )
 
 
 # Auto-configure on import
-configure_cloudinary(
-    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-    api_key=os.getenv("CLOUDINARY_API_KEY"),
-    api_secret=os.getenv("CLOUDINARY_API_SECRET")
-)
+configure_cloudinary()
 
 
 def is_cloudinary_configured() -> bool:
@@ -129,10 +126,8 @@ async def upload_file(file: UploadFile, folder: str = "indoor", resource_type: s
         raise RuntimeError("Cloudinary is not configured")
     
     try:
-        # Read file content
         contents = await file.read()
         
-        # Upload to Cloudinary
         result = cloudinary.uploader.upload(
             contents,
             folder=folder,
@@ -142,7 +137,6 @@ async def upload_file(file: UploadFile, folder: str = "indoor", resource_type: s
         # Generate thumbnail for videos
         thumbnail_url = None
         if result.get("resource_type") == "video":
-            # Cloudinary automatically generates video thumbnails
             thumbnail_url = result["url"].replace("/upload/", "/upload/c_thumb,w_300/")
         
         return {

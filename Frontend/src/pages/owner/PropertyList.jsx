@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { propertyService } from '../../services/propertyService';
+import OwnerLayout from '../../components/Layout/OwnerLayout';
 import './property.css';
 
 const PropertyList = () => {
@@ -71,37 +72,30 @@ const PropertyList = () => {
 
   if (loading) {
     return (
-      <div className="ib-property-container">
-        <header className="ib-property-header">
-          <h1>My Properties</h1>
-          <div className="ib-property-header-actions">
-            <Link to="/owner/dashboard" className="ib-property-btn-back">
-              Back to Dashboard
-            </Link>
+      <OwnerLayout>
+        <div className="ib-page-container">
+          <div className="ib-page-header">
+            <h1>My Properties</h1>
           </div>
-        </header>
-        <div className="ib-property-content">
-          <div className="ib-property-loading">Loading properties...</div>
+          <div className="ib-page-content">
+            <div className="ib-property-loading">Loading properties...</div>
+          </div>
         </div>
-      </div>
+      </OwnerLayout>
     );
   }
 
   return (
-    <div className="ib-property-container">
-      <header className="ib-property-header">
-        <h1>My Properties</h1>
-        <div className="ib-property-header-actions">
-          <Link to="/owner/dashboard" className="ib-property-btn-back">
-            Back to Dashboard
-          </Link>
-          <Link to="/owner/properties/new" className="ib-property-btn-add">
+    <OwnerLayout>
+      <div className="ib-page-container">
+        <div className="ib-page-header">
+          <h1>My Properties</h1>
+          <Link to="/owner/properties/new" className="ib-btn-primary">
             + Add Property
           </Link>
         </div>
-      </header>
 
-      <div className="ib-property-content">
+        <div className="ib-page-content">
         {error && <div className="ib-property-error-message">{error}</div>}
 
         {properties.length > 0 && (
@@ -180,8 +174,9 @@ const PropertyList = () => {
             ))}
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </OwnerLayout>
   );
 };
 

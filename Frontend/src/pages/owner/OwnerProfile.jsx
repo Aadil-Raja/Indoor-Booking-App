@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ownerService } from '../../services/ownerService';
+import OwnerLayout from '../../components/Layout/OwnerLayout';
 import './ownerProfile.css';
 
 const OwnerProfile = () => {
@@ -95,30 +96,27 @@ const OwnerProfile = () => {
 
   if (loading) {
     return (
-      <div className="ib-profile-container">
-        <header className="ib-profile-header">
-          <h1>Owner Profile</h1>
-          <Link to="/owner/dashboard" className="ib-profile-btn-back">
-            Back to Dashboard
-          </Link>
-        </header>
-        <div className="ib-profile-content">
-          <div className="ib-profile-loading">Loading profile...</div>
+      <OwnerLayout>
+        <div className="ib-page-container">
+          <div className="ib-page-header">
+            <h1>Owner Profile</h1>
+          </div>
+          <div className="ib-page-content">
+            <div className="ib-profile-loading">Loading profile...</div>
+          </div>
         </div>
-      </div>
+      </OwnerLayout>
     );
   }
 
   return (
-    <div className="ib-profile-container">
-      <header className="ib-profile-header">
-        <h1>Owner Profile</h1>
-        <Link to="/owner/dashboard" className="ib-profile-btn-back">
-          Back to Dashboard
-        </Link>
-      </header>
+    <OwnerLayout>
+      <div className="ib-page-container">
+        <div className="ib-page-header">
+          <h1>Owner Profile</h1>
+        </div>
 
-      <div className="ib-profile-content">
+        <div className="ib-page-content">
         <div className="ib-profile-card">
           <div className="ib-profile-card-header">
             <h2>Business Information</h2>
@@ -185,8 +183,9 @@ const OwnerProfile = () => {
             </div>
           </form>
         </div>
+        </div>
       </div>
-    </div>
+    </OwnerLayout>
   );
 };
 

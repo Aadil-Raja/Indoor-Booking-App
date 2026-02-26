@@ -8,8 +8,11 @@ import OwnerProfile from './pages/owner/OwnerProfile';
 import PropertyList from './pages/owner/PropertyList';
 import PropertyForm from './pages/owner/PropertyForm';
 import PropertyDetails from './pages/owner/PropertyDetails';
+import CourtList from './pages/owner/CourtList';
 import CourtForm from './pages/owner/CourtForm';
+import CourtDetails from './pages/owner/CourtDetails';
 import './styles/theme.css';
+import './styles/common.css';
 import './App.css';
 
 function App() {
@@ -80,10 +83,26 @@ function App() {
           
           {/* Phase 3: Court Management */}
           <Route 
+            path="/owner/courts" 
+            element={
+              <ProtectedRoute>
+                <CourtList />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
             path="/owner/properties/:propertyId/courts/new" 
             element={
               <ProtectedRoute>
                 <CourtForm />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/owner/courts/:id" 
+            element={
+              <ProtectedRoute>
+                <CourtDetails />
               </ProtectedRoute>
             } 
           />

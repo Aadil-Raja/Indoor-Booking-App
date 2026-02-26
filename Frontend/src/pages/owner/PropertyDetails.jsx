@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { propertyService } from '../../services/propertyService';
+import OwnerLayout from '../../components/Layout/OwnerLayout';
+import MediaGallery from '../../components/MediaGallery/MediaGallery';
 import './property.css';
 
 const PropertyDetails = () => {
@@ -11,7 +13,12 @@ const PropertyDetails = () => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchProperty();
+    if (id) {
+      fetchProperty();
+    } else {
+      setLoading(false);
+      setError('Property ID is missing');
+    }
   }, [id]);
 
   const fetchProperty = async () => {
@@ -56,56 +63,52 @@ const PropertyDetails = () => {
 
   if (loading) {
     return (
-      <div className="ib-property-container">
-        <header className="ib-property-header">
-          <h1>Property Details</h1>
-          <Link to="/owner/properties" className="ib-property-btn-back">
-            Back to Properties
-          </Link>
-        </header>
-        <div className="ib-property-content">
-          <div className="ib-property-loading">Loading property...</div>
+      <OwnerLayout>
+        <div className="ib-page-container">
+          <div className="ib-page-header">
+            <h1>Property Details</h1>
+          </div>
+          <div className="ib-page-content">
+            <div className="ib-property-loading">Loading property...</div>
+          </div>
         </div>
-      </div>
+      </OwnerLayout>
     );
   }
 
   if (error || !property) {
     return (
-      <div className="ib-property-container">
-        <header className="ib-property-header">
-          <h1>Property Details</h1>
-          <Link to="/owner/properties" className="ib-property-btn-back">
-            Back to Properties
-          </Link>
-        </header>
-        <div className="ib-property-content">
-          <div className="ib-property-error-message">
-            {error || 'Property not found'}
+      <OwnerLayout>
+        <div className="ib-page-container">
+          <div className="ib-page-header">
+            <h1>Property Details</h1>
+          </div>
+          <div className="ib-page-content">
+            <div className="ib-property-error-message">
+              {error || 'Property not found'}
+            </div>
           </div>
         </div>
-      </div>
+      </OwnerLayout>
     );
   }
 
   return (
-    <div className="ib-property-container">
-      <header className="ib-property-header">
-        <h1>{property.name}</h1>
-        <div className="ib-property-header-actions">
-          <Link to="/owner/properties" className="ib-property-btn-back">
-            Back to Properties
-          </Link>
-          <Link
-            to={`/owner/properties/${id}/edit`}
-            className="ib-property-btn-add"
-          >
-            Edit Property
-          </Link>
+    <OwnerLayout>
+      <div className="ib-page-container">
+        <div className="ib-page-header">
+          <h1>{property.name}</h1>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <Link to={`/owner/properties/${id}/edit`} className="ib-btn-secondary">
+              Edit Property
+            </Link>
+            <Link to={`/owner/properties/${id}/courts/new`} className="ib-btn-primary">
+              + Add Court
+            </Link>
+          </div>
         </div>
-      </header>
 
-      <div className="ib-property-content">
+        <div className="ib-page-content">
         <div className="ib-property-details-grid">
           {/* Property Information */}
           <div className="ib-property-info-card">
@@ -205,16 +208,7 @@ const PropertyDetails = () => {
 
           {/* Courts Section */}
           <div className="ib-property-info-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-lg)' }}>
-              <h2 style={{ margin: 0, paddingBottom: 0, border: 'none' }}>Courts</h2>
-              <Link
-                to={`/owner/properties/${id}/courts/new`}
-                className="ib-property-btn-view"
-                style={{ padding: '8px 16px', fontSize: '14px' }}
-              >
-                + Add Court
-              </Link>
-            </div>
+            <h2>Courts</h2>
             {property.courts && property.courts.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-md)' }}>
                 {property.courts.map((court) => (
@@ -237,7 +231,14 @@ const PropertyDetails = () => {
                         {court.sport_type}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <Link
+                        to={`/owner/courts/${court.id}`}
+                        className="ib-property-btn-view"
+                        style={{ padding: '6px 12px', fontSize: '13px' }}
+                      >
+                        View
+                      </Link>
                       <Link
                         to={`/owner/courts/${court.id}/edit`}
                         className="ib-property-btn-edit"
@@ -261,13 +262,19 @@ const PropertyDetails = () => {
                 <p>No courts added yet</p>
                 <Link
                   to={`/owner/properties/${id}/courts/new`}
-                  className="ib-property-btn-primary"
-                  style={{ display: 'inline-block', marginTop: '1rem', padding: '12px 24px' }}
+                  className="ib-btn-primary"
+                  style={{ marginTop: '1rem' }}
                 >
                   + Add First Court
                 </Link>
               </div>
             )}
+          </div>
+
+          {/* Media Gallery */}
+          <div className="ib-property-info-card">
+            <h2>Media Gallery</h2>
+            <MediaGallery type="property" id={id} />
           </div>
 
           {/* Danger Zone */}
@@ -287,8 +294,9 @@ const PropertyDetails = () => {
             </div>
           </div>
         </div>
+        </div>
       </div>
-    </div>
+    </OwnerLayout>
   );
 };
 

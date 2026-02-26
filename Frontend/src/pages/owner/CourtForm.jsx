@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { courtService } from '../../services/courtService';
+import OwnerLayout from '../../components/Layout/OwnerLayout';
 import './court.css';
 
 const CourtForm = () => {
@@ -139,7 +140,13 @@ const CourtForm = () => {
         : await courtService.createCourt(propertyId, dataToSend);
 
       if (result.success) {
-        navigate(`/owner/properties/${propertyId || result.data.property_id}`);
+        // Navigate back to property details
+        const targetPropertyId = propertyId || result.data?.property_id;
+        if (targetPropertyId) {
+          navigate(`/owner/properties/${targetPropertyId}`);
+        } else {
+          navigate('/owner/properties');
+        }
       } else {
         setError(result.message || 'Failed to save court');
       }
@@ -161,30 +168,33 @@ const CourtForm = () => {
 
   if (loading) {
     return (
-      <div className="ib-court-container">
-        <header className="ib-court-header">
-          <h1>{isEditMode ? 'Edit Court' : 'Add New Court'}</h1>
-          <Link to={backUrl} className="ib-court-btn-back">
-            Back
-          </Link>
-        </header>
-        <div className="ib-court-content">
-          <div className="ib-court-loading">Loading...</div>
+      <OwnerLayout>
+        <div className="ib-page-container">
+          <div className="ib-page-header">
+            <h1>{isEditMode ? 'Edit Court' : 'Add New Court'}</h1>
+            <Link to={backUrl} className="ib-btn-secondary">
+              Cancel
+            </Link>
+          </div>
+          <div className="ib-page-content">
+            <div className="ib-court-loading">Loading...</div>
+          </div>
         </div>
-      </div>
+      </OwnerLayout>
     );
   }
 
   return (
-    <div className="ib-court-container">
-      <header className="ib-court-header">
-        <h1>{isEditMode ? 'Edit Court' : 'Add New Court'}</h1>
-        <Link to={backUrl} className="ib-court-btn-back">
-          Back
-        </Link>
-      </header>
+    <OwnerLayout>
+      <div className="ib-page-container">
+        <div className="ib-page-header">
+          <h1>{isEditMode ? 'Edit Court' : 'Add New Court'}</h1>
+          <Link to={backUrl} className="ib-btn-secondary">
+            Cancel
+          </Link>
+        </div>
 
-      <div className="ib-court-content">
+        <div className="ib-page-content">
         <div className="ib-court-form-card">
           {error && <div className="ib-court-error-message">{error}</div>}
 
@@ -342,8 +352,9 @@ const CourtForm = () => {
             </div>
           </form>
         </div>
+        </div>
       </div>
-    </div>
+    </OwnerLayout>
   );
 };
 
