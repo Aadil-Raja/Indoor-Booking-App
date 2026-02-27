@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from app.deps.db import get_db
 from app.deps.auth import get_current_owner
 from app.services import media_service
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.media import CourtMediaCreate, CourtMediaUpdate, MediaTypeEnum
-from shared.models import User
 from typing import Optional
 
 router = APIRouter(tags=["Media"])
@@ -18,7 +18,7 @@ async def upload_property_media(
     caption: Optional[str] = Form(None),
     display_order: int = Form(0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """Upload media for property (Owner only)"""
     data = CourtMediaCreate(
@@ -29,7 +29,7 @@ async def upload_property_media(
     return await media_service.upload_property_media(
         db,
         property_id=property_id,
-        owner_id=current_user.id,
+        current_owner=current_owner,
         file=file,
         data=data
     )
@@ -43,7 +43,7 @@ async def upload_court_media(
     caption: Optional[str] = Form(None),
     display_order: int = Form(0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """Upload media for court (Owner only)"""
     data = CourtMediaCreate(
@@ -54,30 +54,31 @@ async def upload_court_media(
     return await media_service.upload_court_media(
         db,
         court_id=court_id,
-        owner_id=current_user.id,
+        current_owner=current_owner,
         file=file,
         data=data
     )
+
 
 
 @router.get("/properties/{property_id}/media")
 def list_property_media(
     property_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """List all media for a property"""
-    return media_service.get_property_media(db, property_id=property_id, owner_id=current_user.id)
+    return media_service.get_property_media(db, property_id=property_id, current_owner=current_owner)
 
 
 @router.get("/courts/{court_id}/media")
 def list_court_media(
     court_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """List all media for a court"""
-    return media_service.get_court_media(db, court_id=court_id, owner_id=current_user.id)
+    return media_service.get_court_media(db, court_id=court_id, current_owner=current_owner)
 
 
 @router.patch("/media/{media_id}")
@@ -85,17 +86,17 @@ def update_media(
     media_id: int,
     payload: CourtMediaUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """Update media metadata (caption, display_order)"""
-    return media_service.update_media(db, media_id=media_id, owner_id=current_user.id, data=payload)
+    return media_service.update_media(db, media_id=media_id, current_owner=current_owner, data=payload)
 
 
 @router.delete("/media/{media_id}")
 async def delete_media(
     media_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """Delete media"""
-    return await media_service.delete_media(db, media_id=media_id, owner_id=current_user.id)
+    return await media_service.delete_media(db, media_id=media_id, current_owner=current_owner)

@@ -37,6 +37,12 @@ async def signup(
     password_hash = hash_password(password)
     user = users_repo.create(db, email=email_norm, password_hash=password_hash, name=name, role=role)
 
+    # Auto-create owner profile for owners
+    from shared.models import UserRole
+    if role == UserRole.owner.value:
+        from app.repositories import owner_repo
+        owner_repo.create(db, user_id=user.id)
+
     # Send OTP
     code = gen_code_6()
     code_hash = sha256_str(code)
@@ -112,8 +118,17 @@ async def login_password(
     if not user or not verify_password(password, user.password_hash):
         return make_response(False, "Invalid email or password", status_code=401)
 
+    # Get owner_profile_id for owners (always exists after signup)
+    owner_profile_id = None
+    if user.role.value == "owner":
+        from app.repositories import owner_repo
+        owner_profile = owner_repo.get_by_user_id(db, user.id)
+        owner_profile_id = owner_profile.id if owner_profile else None
+
     token = issue_access_token(
         user_id=user.id,
+        role=user.role.value,
+        owner_profile_id=owner_profile_id,
         ttl_seconds=3600,
         jwt_secret=settings.jwt_secret,
         jwt_algorithm=settings.jwt_algorithm,
@@ -172,8 +187,17 @@ async def login_verify_code(
 
     auth_repo.consume(db, otp)
 
+    # Get owner_profile_id for owners (always exists after signup)
+    owner_profile_id = None
+    if user.role.value == "owner":
+        from app.repositories import owner_repo
+        owner_profile = owner_repo.get_by_user_id(db, user.id)
+        owner_profile_id = owner_profile.id if owner_profile else None
+
     token = issue_access_token(
         user_id=user.id,
+        role=user.role.value,
+        owner_profile_id=owner_profile_id,
         ttl_seconds=3600,
         jwt_secret=settings.jwt_secret,
         jwt_algorithm=settings.jwt_algorithm,

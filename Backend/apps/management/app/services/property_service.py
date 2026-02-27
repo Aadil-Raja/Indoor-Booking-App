@@ -1,20 +1,16 @@
 from sqlalchemy.orm import Session
-from app.repositories import property_repo, owner_repo
+from app.repositories import property_repo
 from app.utils.response_utils import make_response
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.property import PropertyCreate, PropertyUpdate
 
 
-def create_property(db: Session, *, owner_id: int, data: PropertyCreate):
+def create_property(db: Session, *, current_owner: OwnerContext, data: PropertyCreate):
     """Create a new property for owner"""
-    # Get owner profile
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile:
-        return make_response(False, "Owner profile not found. Please complete your profile first.", status_code=404)
-    
     try:
         property = property_repo.create(
             db,
-            owner_profile_id=owner_profile.id,
+            owner_profile_id=current_owner.owner_profile_id,
             **data.model_dump()
         )
         return make_response(
@@ -27,14 +23,9 @@ def create_property(db: Session, *, owner_id: int, data: PropertyCreate):
         return make_response(False, "Failed to create property", status_code=500, error=str(e))
 
 
-def get_owner_properties(db: Session, *, owner_id: int):
+def get_owner_properties(db: Session, *, current_owner: OwnerContext):
     """Get all properties owned by user"""
-    # Get owner profile
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile:
-        return make_response(True, "No properties found", data=[])
-    
-    properties = property_repo.get_by_owner_profile(db, owner_profile.id)
+    properties = property_repo.get_by_owner_profile(db, current_owner.owner_profile_id)
     
     data = [
         {
@@ -54,19 +45,16 @@ def get_owner_properties(db: Session, *, owner_id: int):
     )
 
 
-def get_property_details(db: Session, *, property_id: int, owner_id: int):
+def get_property_details(db: Session, *, property_id: int, current_owner: OwnerContext):
     """Get property with courts"""
     property = property_repo.get_with_courts(db, property_id)
     
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    # Get owner profile and check ownership
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile or property.owner_profile_id != owner_profile.id:
+    if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
-    # Format response
     data = {
         "id": property.id,
         "name": property.name,
@@ -95,16 +83,14 @@ def get_property_details(db: Session, *, property_id: int, owner_id: int):
     return make_response(True, "Property retrieved successfully", data=data)
 
 
-def update_property(db: Session, *, property_id: int, owner_id: int, data: PropertyUpdate):
+def update_property(db: Session, *, property_id: int, current_owner: OwnerContext, data: PropertyUpdate):
     """Update property"""
     property = property_repo.get_by_id(db, property_id)
     
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    # Get owner profile and check ownership
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile or property.owner_profile_id != owner_profile.id:
+    if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -118,16 +104,14 @@ def update_property(db: Session, *, property_id: int, owner_id: int, data: Prope
         return make_response(False, "Failed to update property", status_code=500, error=str(e))
 
 
-def delete_property(db: Session, *, property_id: int, owner_id: int):
+def delete_property(db: Session, *, property_id: int, current_owner: OwnerContext):
     """Delete property"""
     property = property_repo.get_by_id(db, property_id)
     
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    # Get owner profile and check ownership
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile or property.owner_profile_id != owner_profile.id:
+    if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     try:

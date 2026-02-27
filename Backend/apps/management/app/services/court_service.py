@@ -1,20 +1,18 @@
 from sqlalchemy.orm import Session
-from app.repositories import court_repo, property_repo, owner_repo
+from app.repositories import court_repo, property_repo
 from app.utils.response_utils import make_response
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.court import CourtCreate, CourtUpdate
 
 
-def create_court(db: Session, *, property_id: int, owner_id: int, data: CourtCreate):
+def create_court(db: Session, *, property_id: int, current_owner: OwnerContext, data: CourtCreate):
     """Create a new court for property"""
-    # Verify property exists and belongs to owner
     property = property_repo.get_by_id(db, property_id)
     
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    # Get owner profile and check ownership
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile or property.owner_profile_id != owner_profile.id:
+    if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -33,17 +31,14 @@ def create_court(db: Session, *, property_id: int, owner_id: int, data: CourtCre
         return make_response(False, "Failed to create court", status_code=500, error=str(e))
 
 
-def get_property_courts(db: Session, *, property_id: int, owner_id: int):
+def get_property_courts(db: Session, *, property_id: int, current_owner: OwnerContext):
     """Get all courts for a property"""
-    # Verify property exists and belongs to owner
     property = property_repo.get_by_id(db, property_id)
     
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    # Get owner profile and check ownership
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile or property.owner_profile_id != owner_profile.id:
+    if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     courts = court_repo.get_by_property(db, property_id)
@@ -64,17 +59,16 @@ def get_property_courts(db: Session, *, property_id: int, owner_id: int):
     return make_response(True, "Courts retrieved successfully", data=data)
 
 
-def get_court_details(db: Session, *, court_id: int, owner_id: int):
+
+def get_court_details(db: Session, *, court_id: int, current_owner: OwnerContext):
     """Get court details"""
     court = court_repo.get_by_id(db, court_id)
     
     if not court:
         return make_response(False, "Court not found", status_code=404)
     
-    # Verify ownership through property
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     data = {
@@ -92,17 +86,15 @@ def get_court_details(db: Session, *, court_id: int, owner_id: int):
     return make_response(True, "Court retrieved successfully", data=data)
 
 
-def update_court(db: Session, *, court_id: int, owner_id: int, data: CourtUpdate):
+def update_court(db: Session, *, court_id: int, current_owner: OwnerContext, data: CourtUpdate):
     """Update court"""
     court = court_repo.get_by_id(db, court_id)
     
     if not court:
         return make_response(False, "Court not found", status_code=404)
     
-    # Verify ownership through property
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -116,17 +108,15 @@ def update_court(db: Session, *, court_id: int, owner_id: int, data: CourtUpdate
         return make_response(False, "Failed to update court", status_code=500, error=str(e))
 
 
-def delete_court(db: Session, *, court_id: int, owner_id: int):
+def delete_court(db: Session, *, court_id: int, current_owner: OwnerContext):
     """Delete court"""
     court = court_repo.get_by_id(db, court_id)
     
     if not court:
         return make_response(False, "Court not found", status_code=404)
     
-    # Verify ownership through property
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
