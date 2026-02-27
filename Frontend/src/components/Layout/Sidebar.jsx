@@ -20,55 +20,77 @@ const Sidebar = () => {
   };
 
   return (
-    <aside className="ib-sidebar">
-      <div className="ib-sidebar-header">
-        <h2>Indoor Booking</h2>
-        <p>Owner Portal</p>
+    <aside className="ch-sidebar">
+      {/* Sport emoji watermark background */}
+      <div className="ch-sidebar-watermark">
+        {['🏏', '⚽', '🎾', '🏸', '🏀', '🏐'].map((emoji, i) => (
+          <span key={i} className="ch-sidebar-watermark-emoji">{emoji}</span>
+        ))}
       </div>
 
-      <nav className="ib-sidebar-nav">
+      {/* Brand section */}
+      <div className="ch-sidebar-brand">
+        <div className="ch-sidebar-logo">
+          <div className="ch-sidebar-logo-icon">⚽</div>
+          <div className="ch-sidebar-logo-text">
+            <span className="ch-sidebar-logo-court">Court</span>
+            <span className="ch-sidebar-logo-hub">Hub</span>
+          </div>
+        </div>
+        <p className="ch-sidebar-portal-label">OWNER PORTAL</p>
+      </div>
+
+      {/* Navigation */}
+      <nav className="ch-sidebar-nav">
         <Link
           to="/owner/dashboard"
-          className={`ib-sidebar-link ${isActive('/owner/dashboard') ? 'active' : ''}`}
+          className={`ch-sidebar-link ${isActive('/owner/dashboard') ? 'active' : ''}`}
         >
-          <span className="ib-sidebar-icon">📊</span>
-          <span className="ib-sidebar-text">Dashboard</span>
+          <span className="ch-sidebar-icon">📊</span>
+          <span className="ch-sidebar-text">Dashboard</span>
         </Link>
 
         <Link
           to="/owner/properties"
-          className={`ib-sidebar-link ${isActive('/owner/properties') ? 'active' : ''}`}
+          className={`ch-sidebar-link ${isActive('/owner/properties') ? 'active' : ''}`}
         >
-          <span className="ib-sidebar-icon">🏢</span>
-          <span className="ib-sidebar-text">Properties</span>
+          <span className="ch-sidebar-icon">🏢</span>
+          <span className="ch-sidebar-text">Properties</span>
         </Link>
 
         <Link
           to="/owner/courts"
-          className={`ib-sidebar-link ${isActive('/owner/courts') ? 'active' : ''}`}
+          className={`ch-sidebar-link ${isActive('/owner/courts') ? 'active' : ''}`}
         >
-          <span className="ib-sidebar-icon">⚐</span>
-          <span className="ib-sidebar-text">Courts</span>
+          <span className="ch-sidebar-icon">🏟️</span>
+          <span className="ch-sidebar-text">Courts</span>
+        </Link>
+
+        <div className="ch-sidebar-divider"></div>
+
+        <Link
+          to="/owner/bookings"
+          className={`ch-sidebar-link ${isActive('/owner/bookings') ? 'active' : ''}`}
+        >
+          <span className="ch-sidebar-icon">📅</span>
+          <span className="ch-sidebar-text">Bookings</span>
         </Link>
 
         <Link
           to="/owner/profile"
-          className={`ib-sidebar-link ${isActive('/owner/profile') ? 'active' : ''}`}
+          className={`ch-sidebar-link ${isActive('/owner/profile') ? 'active' : ''}`}
         >
-          <span className="ib-sidebar-icon">👤</span>
-          <span className="ib-sidebar-text">Profile</span>
+          <span className="ch-sidebar-icon">👤</span>
+          <span className="ch-sidebar-text">Profile</span>
         </Link>
-
-        <div className="ib-sidebar-divider"></div>
-
-        <button onClick={handleLogout} className="ib-sidebar-link ib-sidebar-logout">
-          <span className="ib-sidebar-icon">⏻</span>
-          <span className="ib-sidebar-text">Logout</span>
-        </button>
       </nav>
 
-      <div className="ib-sidebar-footer">
-        <p>© 2024 Indoor Booking</p>
+      {/* Footer with logout */}
+      <div className="ch-sidebar-footer">
+        <button onClick={handleLogout} className="ch-sidebar-link ch-sidebar-logout">
+          <span className="ch-sidebar-icon">⏻</span>
+          <span className="ch-sidebar-text">Logout</span>
+        </button>
       </div>
     </aside>
   );
