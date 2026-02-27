@@ -7,7 +7,7 @@ class Property(Base):
     __tablename__ = "properties"
     
     id = Column(Integer, primary_key=True, index=True)
-    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_profile_id = Column(Integer, ForeignKey("owner_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
     address = Column(String(500), nullable=False)
@@ -23,6 +23,6 @@ class Property(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
-    owner = relationship("User", back_populates="properties")
+    owner_profile = relationship("OwnerProfile", back_populates="properties")
     courts = relationship("Court", back_populates="property", cascade="all, delete-orphan")
     media = relationship("CourtMedia", foreign_keys="[CourtMedia.property_id]", back_populates="property", cascade="all, delete-orphan")
