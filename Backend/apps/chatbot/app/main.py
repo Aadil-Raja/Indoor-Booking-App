@@ -7,8 +7,9 @@ backend_dir = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(backend_dir))
 
 from fastapi import FastAPI
-from app.routers import health
+from app.routers import health, chat
 
 app = FastAPI(title="Chatbot API")
 
 app.include_router(health.router)
+app.include_router(chat.router)
