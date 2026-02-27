@@ -570,6 +570,41 @@
   gap: 16px;
 }
 
+.ib-pricing-error-message {
+  background: #fee;
+  border: 2px solid #dc2626;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+  color: #991b1b;
+  font-size: 0.938rem;
+  line-height: 1.6;
+  animation: slideDown 0.3s ease-out;
+}
+
+.ib-pricing-success-message {
+  background: #dcfce7;
+  border: 2px solid #16a34a;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+  color: #166534;
+  font-size: 0.938rem;
+  line-height: 1.6;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .ib-pricing-card {
   border: 1px solid #e0e0e0;
   border-radius: 8px;
@@ -582,6 +617,15 @@
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 12px;
+}
+
+.ib-pricing-number {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
 }
 
 .ib-pricing-label {

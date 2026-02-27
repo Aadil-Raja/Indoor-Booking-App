@@ -1,134 +1,182 @@
-/* Sidebar Styles */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Syne:wght@700;800&display=swap');
 
-.ib-sidebar {
-  width: 260px;
-  height: 100vh;
-  background: linear-gradient(180deg, var(--color-primary-darker) 0%, var(--color-primary-dark) 100%);
-  color: var(--color-white);
-  display: flex;
-  flex-direction: column;
+/* CourtHub Sidebar - New Design */
+.ch-sidebar {
   position: fixed;
   left: 0;
   top: 0;
-  z-index: var(--z-fixed);
-  box-shadow: var(--shadow-lg);
+  bottom: 0;
+  width: 240px;
+  background: #0f5132;
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+  overflow: hidden;
 }
 
-.ib-sidebar-header {
-  padding: var(--spacing-xl);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+/* Sport emoji watermark */
+.ch-sidebar-watermark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  opacity: 0.04;
+  filter: grayscale(1) brightness(10);
+  font-size: 48px;
+  pointer-events: none;
+  z-index: 0;
 }
 
-.ib-sidebar-header h2 {
-  margin: 0 0 var(--spacing-xs) 0;
-  font-size: var(--font-size-xl);
-  font-weight: 700;
-  color: var(--color-white);
+.ch-sidebar-watermark-emoji {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.ib-sidebar-header p {
+/* Brand section */
+.ch-sidebar-brand {
+  position: relative;
+  z-index: 1;
+  padding: 24px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ch-sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.ch-sidebar-logo-icon {
+  width: 34px;
+  height: 34px;
+  background: #22c55e;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+}
+
+.ch-sidebar-logo-text {
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.ch-sidebar-logo-court {
+  color: white;
+}
+
+.ch-sidebar-logo-hub {
+  color: #22c55e;
+}
+
+.ch-sidebar-portal-label {
   margin: 0;
-  font-size: var(--font-size-sm);
-  color: rgba(255, 255, 255, 0.7);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: rgba(255, 255, 255, 0.35);
+  padding-left: 46px;
 }
 
-.ib-sidebar-nav {
+/* Navigation */
+.ch-sidebar-nav {
+  position: relative;
+  z-index: 1;
   flex: 1;
-  padding: var(--spacing-lg) 0;
+  padding: 16px 12px;
   overflow-y: auto;
 }
 
-.ib-sidebar-link {
+.ch-sidebar-link {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md) var(--spacing-xl);
-  color: rgba(255, 255, 255, 0.8);
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 4px;
+  border-radius: 8px;
   text-decoration: none;
-  transition: all var(--transition-base);
-  border-left: 3px solid transparent;
-  cursor: pointer;
-  background: none;
-  border-right: none;
-  border-top: none;
-  border-bottom: none;
-  width: 100%;
-  text-align: left;
-  font-family: var(--font-family);
-  font-size: var(--font-size-base);
-}
-
-.ib-sidebar-link:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--color-white);
-}
-
-.ib-sidebar-link.active {
-  background: rgba(255, 255, 255, 0.15);
-  color: var(--color-white);
-  border-left-color: var(--color-white);
+  color: rgba(255, 255, 255, 0.5);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 13.5px;
   font-weight: 600;
+  transition: all 0.2s ease;
+  border: 1.5px solid transparent;
+  background: transparent;
+  width: 100%;
+  cursor: pointer;
 }
 
-.ib-sidebar-icon {
-  font-size: var(--font-size-xl);
-  width: 24px;
+.ch-sidebar-link:hover {
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ch-sidebar-link.active {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.ch-sidebar-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  width: 20px;
   text-align: center;
 }
 
-.ib-sidebar-text {
+.ch-sidebar-text {
   flex: 1;
 }
 
-.ib-sidebar-divider {
+.ch-sidebar-divider {
   height: 1px;
-  background: rgba(255, 255, 255, 0.1);
-  margin: var(--spacing-md) var(--spacing-xl);
+  background: rgba(255, 255, 255, 0.08);
+  margin: 12px 0;
 }
 
-.ib-sidebar-logout {
-  color: rgba(255, 255, 255, 0.7);
+/* Footer */
+.ch-sidebar-footer {
+  position: relative;
+  z-index: 1;
+  padding: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.ib-sidebar-logout:hover {
-  background: rgba(239, 68, 68, 0.2);
-  color: var(--color-white);
+.ch-sidebar-logout {
+  color: rgba(239, 68, 68, 0.7);
+  margin-bottom: 0;
 }
 
-.ib-sidebar-footer {
-  padding: var(--spacing-lg) var(--spacing-xl);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  text-align: center;
+.ch-sidebar-logout:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.2);
 }
 
-.ib-sidebar-footer p {
-  margin: 0;
-  font-size: var(--font-size-xs);
-  color: rgba(255, 255, 255, 0.5);
+/* Scrollbar styling */
+.ch-sidebar-nav::-webkit-scrollbar {
+  width: 4px;
 }
 
-/* Mobile Responsive */
-@media (max-width: 768px) {
-  .ib-sidebar {
-    width: 70px;
-  }
+.ch-sidebar-nav::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+}
 
-  .ib-sidebar-header h2 {
-    font-size: var(--font-size-base);
-  }
+.ch-sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
 
-  .ib-sidebar-header p,
-  .ib-sidebar-text,
-  .ib-sidebar-footer p {
-    display: none;
-  }
-
-  .ib-sidebar-link {
-    justify-content: center;
-    padding: var(--spacing-md);
-  }
-
-  .ib-sidebar-icon {
-    font-size: var(--font-size-2xl);
-  }
+.ch-sidebar-nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }

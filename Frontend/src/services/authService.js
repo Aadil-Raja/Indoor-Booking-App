@@ -52,5 +52,30 @@ export const authService = {
     } catch (error) {
       throw error;
     }
+  },
+
+  // Request login OTP
+  async requestLoginCode(email) {
+    try {
+      const response = await api.post('/api/auth/login/request-code', {
+        email
+      });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  // Verify login OTP
+  async verifyLoginCode(email, code) {
+    try {
+      const response = await api.post('/api/auth/login/verify-code', {
+        email,
+        code
+      });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   }
 };

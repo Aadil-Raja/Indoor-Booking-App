@@ -1,8 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
-import Login from './pages/auth/Login';
-import Signup from './pages/auth/Signup';
+import Auth from './pages/auth/Auth';
 import Dashboard from './pages/owner/Dashboard';
 import OwnerProfile from './pages/owner/OwnerProfile';
 import PropertyList from './pages/owner/PropertyList';
@@ -20,12 +19,13 @@ function App() {
     <Router>
       <AuthProvider>
         <Routes>
-          {/* Redirect root to owner login */}
-          <Route path="/" element={<Navigate to="/owner/login" replace />} />
+          {/* Redirect root to auth */}
+          <Route path="/" element={<Navigate to="/auth" replace />} />
           
-          {/* Auth Routes - All under /owner */}
-          <Route path="/owner/login" element={<Login />} />
-          <Route path="/owner/signup" element={<Signup />} />
+          {/* Auth Routes - Unified login/signup page */}
+          <Route path="/auth" element={<Auth />} />
+          <Route path="/owner/login" element={<Navigate to="/auth" replace />} />
+          <Route path="/owner/signup" element={<Navigate to="/auth" replace />} />
           
           {/* Protected Owner Routes */}
           <Route 
