@@ -1,15 +1,20 @@
 from sqlalchemy.orm import Session
-from app.repositories import property_repo
+from app.repositories import property_repo, owner_repo
 from app.utils.response_utils import make_response
 from shared.schemas.property import PropertyCreate, PropertyUpdate
 
 
 def create_property(db: Session, *, owner_id: int, data: PropertyCreate):
     """Create a new property for owner"""
+    # Get owner profile
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile:
+        return make_response(False, "Owner profile not found. Please complete your profile first.", status_code=404)
+    
     try:
         property = property_repo.create(
             db,
-            owner_id=owner_id,
+            owner_profile_id=owner_profile.id,
             **data.model_dump()
         )
         return make_response(
@@ -24,7 +29,12 @@ def create_property(db: Session, *, owner_id: int, data: PropertyCreate):
 
 def get_owner_properties(db: Session, *, owner_id: int):
     """Get all properties owned by user"""
-    properties = property_repo.get_by_owner(db, owner_id)
+    # Get owner profile
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile:
+        return make_response(True, "No properties found", data=[])
+    
+    properties = property_repo.get_by_owner_profile(db, owner_profile.id)
     
     data = [
         {
@@ -51,8 +61,9 @@ def get_property_details(db: Session, *, property_id: int, owner_id: int):
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    # Check ownership
-    if property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     # Format response
@@ -91,7 +102,9 @@ def update_property(db: Session, *, property_id: int, owner_id: int, data: Prope
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    if property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -112,7 +125,9 @@ def delete_property(db: Session, *, property_id: int, owner_id: int):
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    if property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:

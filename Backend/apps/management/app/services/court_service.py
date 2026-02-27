@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.repositories import court_repo, property_repo
+from app.repositories import court_repo, property_repo, owner_repo
 from app.utils.response_utils import make_response
 from shared.schemas.court import CourtCreate, CourtUpdate
 
@@ -12,7 +12,9 @@ def create_court(db: Session, *, property_id: int, owner_id: int, data: CourtCre
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    if property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -39,7 +41,9 @@ def get_property_courts(db: Session, *, property_id: int, owner_id: int):
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    if property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     courts = court_repo.get_by_property(db, property_id)
@@ -69,7 +73,8 @@ def get_court_details(db: Session, *, court_id: int, owner_id: int):
     
     # Verify ownership through property
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     data = {
@@ -96,7 +101,8 @@ def update_court(db: Session, *, court_id: int, owner_id: int, data: CourtUpdate
     
     # Verify ownership through property
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -119,7 +125,8 @@ def delete_court(db: Session, *, court_id: int, owner_id: int):
     
     # Verify ownership through property
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
