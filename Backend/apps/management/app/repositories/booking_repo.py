@@ -82,8 +82,8 @@ def get_by_court(db: Session, court_id: int, from_date: Optional[date] = None) -
     return query.order_by(Booking.booking_date, Booking.start_time).all()
 
 
-def get_by_property_owner(db: Session, owner_id: int) -> List[Booking]:
-    """Get all bookings for properties owned by user"""
+def get_by_property_owner(db: Session, owner_profile_id: int) -> List[Booking]:
+    """Get all bookings for properties owned by owner profile"""
     return (
         db.query(Booking)
         .join(Booking.court)
@@ -92,7 +92,7 @@ def get_by_property_owner(db: Session, owner_id: int) -> List[Booking]:
             joinedload(Booking.court).joinedload("property"),
             joinedload(Booking.customer)
         )
-        .filter("property.owner_id" == owner_id)
+        .filter("property.owner_profile_id" == owner_profile_id)
         .order_by(Booking.booking_date.desc(), Booking.start_time.desc())
         .all()
     )

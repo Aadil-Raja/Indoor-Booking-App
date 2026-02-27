@@ -66,15 +66,20 @@ def get_profile(db: Session, *, owner_id: int):
 
 def get_dashboard_stats(db: Session, *, owner_id: int):
     """Get dashboard statistics for owner"""
+    # Get owner profile
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile:
+        return make_response(False, "Owner profile not found", status_code=404)
+    
     # Get properties count
-    properties = property_repo.get_by_owner(db, owner_id)
+    properties = property_repo.get_by_owner_profile(db, owner_profile.id)
     total_properties = len(properties)
     
     # Get courts count
     total_courts = sum(len(p.courts) for p in properties)
     
     # Get bookings for owner's properties
-    bookings = booking_repo.get_by_property_owner(db, owner_id)
+    bookings = booking_repo.get_by_property_owner(db, owner_profile.id)
     
     # Calculate stats
     total_bookings = len(bookings)

@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.repositories import booking_repo, court_repo, property_repo, pricing_repo, availability_repo
+from app.repositories import booking_repo, court_repo, property_repo, pricing_repo, availability_repo, owner_repo
 from app.utils.response_utils import make_response
 from shared.schemas.booking import BookingCreate
 from shared.models import BookingStatus, PaymentStatus
@@ -113,8 +113,12 @@ def get_booking_details(db: Session, *, booking_id: int, user_id: int):
     if not booking:
         return make_response(False, "Booking not found", status_code=404)
     
+    # Get owner profile to check if user is the property owner
+    owner_profile = owner_repo.get_by_user_id(db, user_id)
+    is_owner = owner_profile and booking.court.property.owner_profile_id == owner_profile.id
+    
     # Check access (customer or property owner)
-    if booking.customer_id != user_id and booking.court.property.owner_id != user_id:
+    if booking.customer_id != user_id and not is_owner:
         return make_response(False, "Access denied", status_code=403)
     
     data = {
@@ -143,7 +147,7 @@ def get_booking_details(db: Session, *, booking_id: int, user_id: int):
             "id": booking.customer.id,
             "name": booking.customer.Name,
             "email": booking.customer.email
-        } if booking.court.property.owner_id == user_id else None
+        } if is_owner else None
     }
     
     return make_response(True, "Booking details retrieved successfully", data=data)
@@ -184,7 +188,9 @@ def confirm_booking(db: Session, *, booking_id: int, owner_id: int):
     if not booking:
         return make_response(False, "Booking not found", status_code=404)
     
-    if booking.court.property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or booking.court.property.owner_profile_id != owner_profile.id:
         return make_response(False, "Only the property owner can confirm bookings", status_code=403)
     
     if booking.status != BookingStatus.pending:
@@ -204,7 +210,9 @@ def complete_booking(db: Session, *, booking_id: int, owner_id: int):
     if not booking:
         return make_response(False, "Booking not found", status_code=404)
     
-    if booking.court.property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or booking.court.property.owner_profile_id != owner_profile.id:
         return make_response(False, "Only the property owner can complete bookings", status_code=403)
     
     if booking.status not in [BookingStatus.pending, BookingStatus.confirmed]:
@@ -219,7 +227,12 @@ def complete_booking(db: Session, *, booking_id: int, owner_id: int):
 
 def get_owner_bookings(db: Session, *, owner_id: int):
     """Get all bookings for properties owned by user"""
-    bookings = booking_repo.get_by_property_owner(db, owner_id)
+    # Get owner profile
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile:
+        return make_response(True, "No bookings found", data=[])
+    
+    bookings = booking_repo.get_by_property_owner(db, owner_profile.id)
     
     data = [
         {

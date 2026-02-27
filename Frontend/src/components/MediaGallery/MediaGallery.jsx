@@ -73,14 +73,6 @@ const MediaGallery = ({ type, id, onMediaUpdate }) => {
     setError('');
 
     try {
-      console.log('Uploading:', {
-        type,
-        id,
-        mediaType,
-        fileName: selectedFile.name,
-        fileType: selectedFile.type
-      });
-
       const result =
         type === 'property'
           ? await mediaService.uploadPropertyMedia(
@@ -170,9 +162,6 @@ const MediaGallery = ({ type, id, onMediaUpdate }) => {
                 <p>Click to upload image or video</p>
                 <p className="ib-upload-hint">
                   Supports: JPG, PNG, GIF, WebP, MP4, WebM
-                </p>
-                <p className="ib-upload-hint" style={{ marginTop: '8px', fontSize: '12px' }}>
-                  Note: Cloudinary must be configured on backend
                 </p>
               </div>
             </label>

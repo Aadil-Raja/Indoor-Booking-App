@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.repositories import availability_repo, court_repo, property_repo
+from app.repositories import availability_repo, court_repo, property_repo, owner_repo
 from app.utils.response_utils import make_response
 from shared.schemas.availability import CourtAvailabilityCreate
 from datetime import date
@@ -14,7 +14,8 @@ def block_time_slot(db: Session, *, court_id: int, owner_id: int, data: CourtAva
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     # Check for overlapping blocks
@@ -59,7 +60,8 @@ def get_blocked_slots(db: Session, *, court_id: int, owner_id: int, from_date: d
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     blocked_slots = availability_repo.get_by_court(db, court_id, from_date or date.today())
@@ -88,7 +90,8 @@ def unblock_time_slot(db: Session, *, availability_id: int, owner_id: int):
     # Verify ownership through court and property
     court = court_repo.get_by_id(db, availability.court_id)
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:

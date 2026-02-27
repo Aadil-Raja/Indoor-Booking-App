@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.repositories import pricing_repo, court_repo, property_repo
+from app.repositories import pricing_repo, court_repo, property_repo, owner_repo
 from app.utils.response_utils import make_response
 from shared.schemas.pricing import CourtPricingCreate, CourtPricingUpdate
 
@@ -13,7 +13,8 @@ def create_pricing(db: Session, *, court_id: int, owner_id: int, data: CourtPric
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     # Check for overlapping pricing rules
@@ -55,7 +56,8 @@ def get_court_pricing(db: Session, *, court_id: int, owner_id: int):
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     pricing_rules = pricing_repo.get_by_court(db, court_id)
@@ -85,7 +87,8 @@ def update_pricing(db: Session, *, pricing_id: int, owner_id: int, data: CourtPr
     # Verify ownership through court and property
     court = court_repo.get_by_id(db, pricing.court_id)
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     # Check for overlaps if days or times are being updated
@@ -123,7 +126,8 @@ def delete_pricing(db: Session, *, pricing_id: int, owner_id: int):
     # Verify ownership through court and property
     court = court_repo.get_by_id(db, pricing.court_id)
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
