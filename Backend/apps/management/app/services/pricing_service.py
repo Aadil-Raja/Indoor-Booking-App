@@ -1,23 +1,21 @@
 from sqlalchemy.orm import Session
-from app.repositories import pricing_repo, court_repo, property_repo, owner_repo
+from app.repositories import pricing_repo, court_repo, property_repo
 from app.utils.response_utils import make_response
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.pricing import CourtPricingCreate, CourtPricingUpdate
 
 
-def create_pricing(db: Session, *, court_id: int, owner_id: int, data: CourtPricingCreate):
+def create_pricing(db: Session, *, court_id: int, current_owner: OwnerContext, data: CourtPricingCreate):
     """Create a new pricing rule for court"""
-    # Verify court exists and belongs to owner
     court = court_repo.get_by_id(db, court_id)
     
     if not court:
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
-    # Check for overlapping pricing rules
     if pricing_repo.check_overlap(db, court_id, data.days, data.start_time, data.end_time):
         return make_response(
             False,
@@ -47,18 +45,17 @@ def create_pricing(db: Session, *, court_id: int, owner_id: int, data: CourtPric
         return make_response(False, "Failed to create pricing rule", status_code=500, error=str(e))
 
 
-def get_court_pricing(db: Session, *, court_id: int, owner_id: int):
+def get_court_pricing(db: Session, *, court_id: int, current_owner: OwnerContext):
     """Get all pricing rules for a court"""
-    # Verify court exists and belongs to owner
     court = court_repo.get_by_id(db, court_id)
     
     if not court:
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
+
     
     pricing_rules = pricing_repo.get_by_court(db, court_id)
     
@@ -77,21 +74,18 @@ def get_court_pricing(db: Session, *, court_id: int, owner_id: int):
     return make_response(True, "Pricing rules retrieved successfully", data=data)
 
 
-def update_pricing(db: Session, *, pricing_id: int, owner_id: int, data: CourtPricingUpdate):
+def update_pricing(db: Session, *, pricing_id: int, current_owner: OwnerContext, data: CourtPricingUpdate):
     """Update pricing rule"""
     pricing = pricing_repo.get_by_id(db, pricing_id)
     
     if not pricing:
         return make_response(False, "Pricing rule not found", status_code=404)
     
-    # Verify ownership through court and property
     court = court_repo.get_by_id(db, pricing.court_id)
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
-    # Check for overlaps if days or times are being updated
     update_data = data.model_dump(exclude_unset=True)
     if any(key in update_data for key in ['days', 'start_time', 'end_time']):
         days = update_data.get('days', pricing.days)
@@ -116,18 +110,16 @@ def update_pricing(db: Session, *, pricing_id: int, owner_id: int, data: CourtPr
         return make_response(False, "Failed to update pricing rule", status_code=500, error=str(e))
 
 
-def delete_pricing(db: Session, *, pricing_id: int, owner_id: int):
+def delete_pricing(db: Session, *, pricing_id: int, current_owner: OwnerContext):
     """Delete pricing rule"""
     pricing = pricing_repo.get_by_id(db, pricing_id)
     
     if not pricing:
         return make_response(False, "Pricing rule not found", status_code=404)
     
-    # Verify ownership through court and property
     court = court_repo.get_by_id(db, pricing.court_id)
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     try:

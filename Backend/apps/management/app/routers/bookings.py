@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 from app.deps.db import get_db
 from app.deps.auth import get_current_user, get_current_customer, get_current_owner
 from app.services import booking_service
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.booking import BookingCreate
-from shared.models import User
+from shared.models import User, UserRole
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -24,15 +25,17 @@ def list_my_bookings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    List bookings for current user
-    - Customers see their bookings
-    - Owners see bookings for their properties
-    """
-    if current_user.role.value == "owner":
-        return booking_service.get_owner_bookings(db, owner_id=current_user.id)
-    else:
-        return booking_service.get_user_bookings(db, user_id=current_user.id)
+    """List bookings for current user (Customer view)"""
+    return booking_service.get_user_bookings(db, user_id=current_user.id)
+
+
+@router.get("/owner")
+def list_owner_bookings(
+    db: Session = Depends(get_db),
+    current_owner: OwnerContext = Depends(get_current_owner)
+):
+    """List bookings for owner's properties (Owner only)"""
+    return booking_service.get_owner_bookings(db, current_owner=current_owner)
 
 
 @router.get("/{booking_id}")
@@ -55,21 +58,22 @@ def cancel_booking(
     return booking_service.cancel_booking(db, booking_id=booking_id, user_id=current_user.id)
 
 
+
 @router.patch("/{booking_id}/confirm")
 def confirm_booking(
     booking_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """Confirm booking (Owner only)"""
-    return booking_service.confirm_booking(db, booking_id=booking_id, owner_id=current_user.id)
+    return booking_service.confirm_booking(db, booking_id=booking_id, current_owner=current_owner)
 
 
 @router.patch("/{booking_id}/complete")
 def complete_booking(
     booking_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """Mark booking as completed (Owner only)"""
-    return booking_service.complete_booking(db, booking_id=booking_id, owner_id=current_user.id)
+    return booking_service.complete_booking(db, booking_id=booking_id, current_owner=current_owner)

@@ -3,9 +3,16 @@ from __future__ import annotations
 import os, hmac, hashlib, time, jwt
 from typing import Iterable, Optional
 from passlib.context import CryptContext
-
+from fastapi import HTTPException
 # single password context for the whole app
 _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ---------- Owner Context ----------
+class OwnerContext:
+    """Context object for authenticated owner (profile always exists)"""
+    def __init__(self, user_id: int, owner_profile_id: int):
+        self.user_id = user_id
+        self.owner_profile_id = owner_profile_id
 
 # ---------- time ----------
 def now_ts() -> int:
@@ -45,6 +52,8 @@ def safe_equals(a: str, b: str) -> bool:
 def issue_access_token(
     *,
     user_id: int | str,
+    role: Optional[str] = None,
+    owner_profile_id: Optional[int] = None,
     token_version: int = 0,
     ttl_seconds: int,
     jwt_secret: str,
@@ -59,6 +68,10 @@ def issue_access_token(
         "tv": token_version,
         "typ": "access",
     }
+    if role:
+        payload["role"] = role
+    if owner_profile_id:
+        payload["owner_profile_id"] = owner_profile_id
     if aud:
         payload["aud"] = aud
     return jwt.encode(payload, jwt_secret, algorithm=jwt_algorithm)

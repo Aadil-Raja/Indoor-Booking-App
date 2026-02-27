@@ -1,24 +1,22 @@
 from sqlalchemy.orm import Session
-from app.repositories import availability_repo, court_repo, property_repo, owner_repo
+from app.repositories import availability_repo, court_repo, property_repo
 from app.utils.response_utils import make_response
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.availability import CourtAvailabilityCreate
 from datetime import date
 
 
-def block_time_slot(db: Session, *, court_id: int, owner_id: int, data: CourtAvailabilityCreate):
+def block_time_slot(db: Session, *, court_id: int, current_owner: OwnerContext, data: CourtAvailabilityCreate):
     """Block a time slot for a court"""
-    # Verify court exists and belongs to owner
     court = court_repo.get_by_id(db, court_id)
     
     if not court:
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
-    # Check for overlapping blocks
     if availability_repo.check_overlap(db, court_id, data.date, data.start_time, data.end_time):
         return make_response(
             False,
@@ -51,17 +49,15 @@ def block_time_slot(db: Session, *, court_id: int, owner_id: int, data: CourtAva
         return make_response(False, "Failed to block time slot", status_code=500, error=str(e))
 
 
-def get_blocked_slots(db: Session, *, court_id: int, owner_id: int, from_date: date = None):
+def get_blocked_slots(db: Session, *, court_id: int, current_owner: OwnerContext, from_date: date = None):
     """Get all blocked slots for a court"""
-    # Verify court exists and belongs to owner
     court = court_repo.get_by_id(db, court_id)
     
     if not court:
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     blocked_slots = availability_repo.get_by_court(db, court_id, from_date or date.today())
@@ -80,18 +76,16 @@ def get_blocked_slots(db: Session, *, court_id: int, owner_id: int, from_date: d
     return make_response(True, "Blocked slots retrieved successfully", data=data)
 
 
-def unblock_time_slot(db: Session, *, availability_id: int, owner_id: int):
+def unblock_time_slot(db: Session, *, availability_id: int, current_owner: OwnerContext):
     """Unblock a time slot"""
     availability = availability_repo.get_by_id(db, availability_id)
     
     if not availability:
         return make_response(False, "Blocked slot not found", status_code=404)
     
-    # Verify ownership through court and property
     court = court_repo.get_by_id(db, availability.court_id)
     property = property_repo.get_by_id(db, court.property_id)
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
+    if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
     
     try:

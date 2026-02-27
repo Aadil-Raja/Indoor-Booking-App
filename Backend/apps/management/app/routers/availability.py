@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from app.deps.db import get_db
 from app.deps.auth import get_current_owner
 from app.services import availability_service
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.availability import CourtAvailabilityCreate
-from shared.models import User
 from datetime import date
 from typing import Optional
 
@@ -16,10 +16,10 @@ def block_time_slot(
     court_id: int,
     payload: CourtAvailabilityCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """Block a time slot for court (Owner only)"""
-    return availability_service.block_time_slot(db, court_id=court_id, owner_id=current_user.id, data=payload)
+    return availability_service.block_time_slot(db, court_id=court_id, current_owner=current_owner, data=payload)
 
 
 @router.get("/courts/{court_id}/availability")
@@ -27,17 +27,17 @@ def list_blocked_slots(
     court_id: int,
     from_date: Optional[date] = Query(None, description="Filter from this date onwards"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """List all blocked slots for a court"""
-    return availability_service.get_blocked_slots(db, court_id=court_id, owner_id=current_user.id, from_date=from_date)
+    return availability_service.get_blocked_slots(db, court_id=court_id, current_owner=current_owner, from_date=from_date)
 
 
 @router.delete("/availability/{availability_id}")
 def unblock_time_slot(
     availability_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_owner)
+    current_owner: OwnerContext = Depends(get_current_owner)
 ):
     """Unblock a time slot"""
-    return availability_service.unblock_time_slot(db, availability_id=availability_id, owner_id=current_user.id)
+    return availability_service.unblock_time_slot(db, availability_id=availability_id, current_owner=current_owner)

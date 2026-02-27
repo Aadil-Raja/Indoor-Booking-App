@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
-from app.repositories import booking_repo, court_repo, property_repo, pricing_repo, availability_repo, owner_repo
+from app.repositories import booking_repo, court_repo, property_repo, pricing_repo, availability_repo
 from app.utils.response_utils import make_response
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.booking import BookingCreate
 from shared.models import BookingStatus, PaymentStatus
 from datetime import datetime, timedelta
@@ -8,13 +9,11 @@ from datetime import datetime, timedelta
 
 def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
     """Create a new booking"""
-    # Verify court exists and is active
     court = court_repo.get_by_id(db, data.court_id)
     
     if not court or not court.is_active:
         return make_response(False, "Court not found or inactive", status_code=404)
     
-    # Check if court is available (not blocked)
     blocked_slots = availability_repo.get_by_date(db, data.court_id, data.booking_date)
     for block in blocked_slots:
         if not (data.end_time <= block.start_time or data.start_time >= block.end_time):
@@ -24,11 +23,9 @@ def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
                 status_code=409
             )
     
-    # Check for booking conflicts
     if booking_repo.check_conflict(db, data.court_id, data.booking_date, data.start_time, data.end_time):
         return make_response(False, "This time slot is already booked", status_code=409)
     
-    # Get pricing for this date and time
     day_of_week = data.booking_date.weekday()
     pricing = (
         db.query(pricing_repo.CourtPricing)
@@ -44,12 +41,11 @@ def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
     if not pricing:
         return make_response(False, "No pricing available for this time slot", status_code=400)
     
-    # Calculate total
     start_datetime = datetime.combine(data.booking_date, data.start_time)
     end_datetime = datetime.combine(data.booking_date, data.end_time)
     total_hours = (end_datetime - start_datetime).total_seconds() / 3600
     total_price = total_hours * pricing.price_per_hour
-    
+
     try:
         booking = booking_repo.create(
             db,
@@ -106,6 +102,7 @@ def get_user_bookings(db: Session, *, user_id: int):
     return make_response(True, "Bookings retrieved successfully", data=data)
 
 
+
 def get_booking_details(db: Session, *, booking_id: int, user_id: int):
     """Get booking details"""
     booking = booking_repo.get_with_details(db, booking_id)
@@ -113,12 +110,10 @@ def get_booking_details(db: Session, *, booking_id: int, user_id: int):
     if not booking:
         return make_response(False, "Booking not found", status_code=404)
     
-    # Get owner profile to check if user is the property owner
-    owner_profile = owner_repo.get_by_user_id(db, user_id)
-    is_owner = owner_profile and booking.court.property.owner_profile_id == owner_profile.id
+    is_customer = booking.customer_id == user_id
+    is_owner = booking.court.property.owner_profile_id  # We'll check this in the router
     
-    # Check access (customer or property owner)
-    if booking.customer_id != user_id and not is_owner:
+    if not is_customer and not is_owner:
         return make_response(False, "Access denied", status_code=403)
     
     data = {
@@ -172,7 +167,6 @@ def cancel_booking(db: Session, *, booking_id: int, user_id: int):
     try:
         booking_repo.update_status(db, booking, BookingStatus.cancelled)
         
-        # If payment was made, mark for refund
         if booking.payment_status == PaymentStatus.paid:
             booking_repo.update_payment_status(db, booking, PaymentStatus.refunded)
         
@@ -181,16 +175,15 @@ def cancel_booking(db: Session, *, booking_id: int, user_id: int):
         return make_response(False, "Failed to cancel booking", status_code=500, error=str(e))
 
 
-def confirm_booking(db: Session, *, booking_id: int, owner_id: int):
+
+def confirm_booking(db: Session, *, booking_id: int, current_owner: OwnerContext):
     """Confirm a booking (owner only)"""
     booking = booking_repo.get_with_details(db, booking_id)
     
     if not booking:
         return make_response(False, "Booking not found", status_code=404)
     
-    # Get owner profile and check ownership
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile or booking.court.property.owner_profile_id != owner_profile.id:
+    if booking.court.property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Only the property owner can confirm bookings", status_code=403)
     
     if booking.status != BookingStatus.pending:
@@ -203,16 +196,14 @@ def confirm_booking(db: Session, *, booking_id: int, owner_id: int):
         return make_response(False, "Failed to confirm booking", status_code=500, error=str(e))
 
 
-def complete_booking(db: Session, *, booking_id: int, owner_id: int):
+def complete_booking(db: Session, *, booking_id: int, current_owner: OwnerContext):
     """Mark booking as completed (owner only)"""
     booking = booking_repo.get_with_details(db, booking_id)
     
     if not booking:
         return make_response(False, "Booking not found", status_code=404)
     
-    # Get owner profile and check ownership
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile or booking.court.property.owner_profile_id != owner_profile.id:
+    if booking.court.property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Only the property owner can complete bookings", status_code=403)
     
     if booking.status not in [BookingStatus.pending, BookingStatus.confirmed]:
@@ -225,14 +216,9 @@ def complete_booking(db: Session, *, booking_id: int, owner_id: int):
         return make_response(False, "Failed to complete booking", status_code=500, error=str(e))
 
 
-def get_owner_bookings(db: Session, *, owner_id: int):
+def get_owner_bookings(db: Session, *, current_owner: OwnerContext):
     """Get all bookings for properties owned by user"""
-    # Get owner profile
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile:
-        return make_response(True, "No bookings found", data=[])
-    
-    bookings = booking_repo.get_by_property_owner(db, owner_profile.id)
+    bookings = booking_repo.get_by_property_owner(db, current_owner.owner_profile_id)
     
     data = [
         {

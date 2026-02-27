@@ -2,52 +2,39 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.repositories import owner_repo, property_repo, court_repo, booking_repo
 from app.utils.response_utils import make_response
+from app.utils.shared_utils import OwnerContext
 from shared.schemas.owner import OwnerProfileCreate, OwnerProfileUpdate
 from shared.models import Booking, BookingStatus, PaymentStatus, Property, Court
 from datetime import datetime, timedelta
 
 
-def create_or_update_profile(db: Session, *, owner_id: int, data: OwnerProfileCreate):
-    """Create or update owner profile"""
-    profile = owner_repo.get_by_user_id(db, owner_id)
+def create_or_update_profile(db: Session, *, current_owner: OwnerContext, data: OwnerProfileCreate):
+    """Update owner profile (profile always exists from signup)"""
+    profile = owner_repo.get_by_user_id(db, current_owner.user_id)
+    
+    if not profile:
+        return make_response(False, "Profile not found", status_code=404)
     
     try:
-        if profile:
-            # Update existing
-            updated = owner_repo.update(db, profile, **data.model_dump(exclude_unset=True))
-            return make_response(
-                True,
-                "Profile updated successfully",
-                data={
-                    "id": updated.id,
-                    "business_name": updated.business_name,
-                    "phone": updated.phone,
-                    "address": updated.address,
-                    "verified": updated.verified
-                }
-            )
-        else:
-            # Create new
-            profile = owner_repo.create(db, user_id=owner_id, **data.model_dump())
-            return make_response(
-                True,
-                "Profile created successfully",
-                data={
-                    "id": profile.id,
-                    "business_name": profile.business_name,
-                    "phone": profile.phone,
-                    "address": profile.address,
-                    "verified": profile.verified
-                },
-                status_code=201
-            )
+        updated = owner_repo.update(db, profile, **data.model_dump(exclude_unset=True))
+        return make_response(
+            True,
+            "Profile updated successfully",
+            data={
+                "id": updated.id,
+                "business_name": updated.business_name,
+                "phone": updated.phone,
+                "address": updated.address,
+                "verified": updated.verified
+            }
+        )
     except Exception as e:
         return make_response(False, "Failed to save profile", status_code=500, error=str(e))
 
 
-def get_profile(db: Session, *, owner_id: int):
+def get_profile(db: Session, *, current_owner: OwnerContext):
     """Get owner profile"""
-    profile = owner_repo.get_by_user_id(db, owner_id)
+    profile = owner_repo.get_by_user_id(db, current_owner.user_id)
     
     if not profile:
         return make_response(False, "Profile not found", status_code=404)
@@ -64,36 +51,26 @@ def get_profile(db: Session, *, owner_id: int):
     return make_response(True, "Profile retrieved successfully", data=data)
 
 
-def get_dashboard_stats(db: Session, *, owner_id: int):
+def get_dashboard_stats(db: Session, *, current_owner: OwnerContext):
     """Get dashboard statistics for owner"""
-    # Get owner profile
-    owner_profile = owner_repo.get_by_user_id(db, owner_id)
-    if not owner_profile:
-        return make_response(False, "Owner profile not found", status_code=404)
-    
-    # Get properties count
-    properties = property_repo.get_by_owner_profile(db, owner_profile.id)
+    # Use owner_profile_id from token (no DB query needed!)
+    properties = property_repo.get_by_owner_profile(db, current_owner.owner_profile_id)
     total_properties = len(properties)
     
-    # Get courts count
     total_courts = sum(len(p.courts) for p in properties)
     
-    # Get bookings for owner's properties
-    bookings = booking_repo.get_by_property_owner(db, owner_profile.id)
+    bookings = booking_repo.get_by_property_owner(db, current_owner.owner_profile_id)
     
-    # Calculate stats
     total_bookings = len(bookings)
     pending_bookings = sum(1 for b in bookings if b.status == BookingStatus.pending)
     confirmed_bookings = sum(1 for b in bookings if b.status == BookingStatus.confirmed)
     completed_bookings = sum(1 for b in bookings if b.status == BookingStatus.completed)
     cancelled_bookings = sum(1 for b in bookings if b.status == BookingStatus.cancelled)
     
-    # Calculate revenue
     total_revenue = sum(b.total_price for b in bookings if b.status == BookingStatus.completed)
     pending_revenue = sum(b.total_price for b in bookings if b.status == BookingStatus.pending)
     confirmed_revenue = sum(b.total_price for b in bookings if b.status == BookingStatus.confirmed)
     
-    # Revenue by property
     revenue_by_property = {}
     for booking in bookings:
         if booking.status == BookingStatus.completed:
@@ -111,7 +88,6 @@ def get_dashboard_stats(db: Session, *, owner_id: int):
             revenue_by_property[prop_id]["total_bookings"] += 1
             revenue_by_property[prop_id]["total_revenue"] += booking.total_price
     
-    # Recent bookings (last 10)
     recent_bookings = sorted(bookings, key=lambda b: (b.booking_date, b.start_time), reverse=True)[:10]
     
     data = {
