@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from fastapi import UploadFile
-from app.repositories import media_repo, property_repo, court_repo
+from app.repositories import media_repo, property_repo, court_repo, owner_repo
 from app.services.storage.storage_cloudinary import upload_file, delete_file
 from app.utils.response_utils import make_response
 from shared.schemas.media import CourtMediaCreate, CourtMediaUpdate
@@ -22,7 +22,9 @@ async def upload_property_media(
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    if property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -75,7 +77,10 @@ async def upload_court_media(
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -120,7 +125,9 @@ def get_property_media(db: Session, *, property_id: int, owner_id: int):
     if not property:
         return make_response(False, "Property not found", status_code=404)
     
-    if property.owner_id != owner_id:
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     media_list = media_repo.get_by_property(db, property_id)
@@ -149,7 +156,10 @@ def get_court_media(db: Session, *, court_id: int, owner_id: int):
         return make_response(False, "Court not found", status_code=404)
     
     property = property_repo.get_by_id(db, court.property_id)
-    if not property or property.owner_id != owner_id:
+    
+    # Get owner profile and check ownership
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not property or not owner_profile or property.owner_profile_id != owner_profile.id:
         return make_response(False, "Access denied", status_code=403)
     
     media_list = media_repo.get_by_court(db, court_id)
@@ -176,15 +186,20 @@ def update_media(db: Session, *, media_id: int, owner_id: int, data: CourtMediaU
     if not media:
         return make_response(False, "Media not found", status_code=404)
     
+    # Get owner profile
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile:
+        return make_response(False, "Access denied", status_code=403)
+    
     # Verify ownership
     if media.property_id:
         property = property_repo.get_by_id(db, media.property_id)
-        if not property or property.owner_id != owner_id:
+        if not property or property.owner_profile_id != owner_profile.id:
             return make_response(False, "Access denied", status_code=403)
     elif media.court_id:
         court = court_repo.get_by_id(db, media.court_id)
         property = property_repo.get_by_id(db, court.property_id)
-        if not property or property.owner_id != owner_id:
+        if not property or property.owner_profile_id != owner_profile.id:
             return make_response(False, "Access denied", status_code=403)
     
     try:
@@ -205,15 +220,20 @@ async def delete_media(db: Session, *, media_id: int, owner_id: int):
     if not media:
         return make_response(False, "Media not found", status_code=404)
     
+    # Get owner profile
+    owner_profile = owner_repo.get_by_user_id(db, owner_id)
+    if not owner_profile:
+        return make_response(False, "Access denied", status_code=403)
+    
     # Verify ownership
     if media.property_id:
         property = property_repo.get_by_id(db, media.property_id)
-        if not property or property.owner_id != owner_id:
+        if not property or property.owner_profile_id != owner_profile.id:
             return make_response(False, "Access denied", status_code=403)
     elif media.court_id:
         court = court_repo.get_by_id(db, media.court_id)
         property = property_repo.get_by_id(db, court.property_id)
-        if not property or property.owner_id != owner_id:
+        if not property or property.owner_profile_id != owner_profile.id:
             return make_response(False, "Access denied", status_code=403)
     
     try:

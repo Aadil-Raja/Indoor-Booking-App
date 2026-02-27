@@ -17,3 +17,4 @@ class OwnerProfile(Base):
     
     # Relationships
     user = relationship("User", back_populates="owner_profile")
+    properties = relationship("Property", back_populates="owner_profile", cascade="all, delete-orphan")

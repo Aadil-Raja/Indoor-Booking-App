@@ -99,9 +99,12 @@ const CourtDetails = () => {
   useEffect(() => {
     if (id) {
       fetchCourt();
-      if (activeTab === 'pricing') {
-        fetchPricing();
-      }
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (id && activeTab === 'pricing') {
+      fetchPricing();
     }
   }, [id, activeTab]);
 
