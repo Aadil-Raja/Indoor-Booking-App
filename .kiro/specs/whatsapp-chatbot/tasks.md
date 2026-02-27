@@ -6,13 +6,20 @@ This implementation plan breaks down the WhatsApp-style chatbot feature into dis
 
 The chatbot integrates with existing sync services (booking, property, court, availability) through a sync-to-async bridge pattern, enabling natural language interactions for facility search and booking.
 
+**Important Notes:**
+- Properties are linked to OwnerProfile (not directly to User)
+- The chatbot uses a separate async database (CHAT_DATABASE_URL) for chat/message data
+- Integration with main database services uses MAIN_DATABASE_URL (sync)
+- Configuration is in Backend/apps/chatbot/.env with both database URLs
+
 ## Tasks
 
 - [ ] 1. Set up async database infrastructure and core models
   - [ ] 1.1 Create async database configuration and engine
-    - Implement `Backend/apps/chatbot/app/core/config.py` with async database URL settings
+    - Implement `Backend/apps/chatbot/app/core/config.py` with CHAT_DATABASE_URL (async) and MAIN_DATABASE_URL (sync) settings
     - Implement `Backend/apps/chatbot/app/core/database.py` with `create_async_engine`, `AsyncSessionLocal`, and `get_async_db` dependency
     - Configure connection pooling for async operations
+    - Add JWT_SECRET, LLM provider settings, and session configuration
     - _Requirements: 1.1, 1.3, 16.1_
   
   - [ ] 1.2 Implement Chat and Message database models
@@ -107,6 +114,7 @@ The chatbot integrates with existing sync services (booking, property, court, av
     - Create `Backend/apps/chatbot/app/agent/tools/property_tool.py`
     - Implement `search_properties_tool` wrapping property_service.search_properties
     - Implement `get_property_details_tool` for property information
+    - Note: Properties are linked to OwnerProfile, access via owner_profile.properties
     - Use sync bridge for database access
     - _Requirements: 9.1-9.2, 19.1-19.5_
   

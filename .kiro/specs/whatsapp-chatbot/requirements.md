@@ -8,7 +8,7 @@ This document specifies requirements for a production-grade WhatsApp-style chatb
 
 - **Chat_System**: The complete chatbot module including API, services, repositories, and agent components
 - **Chat_Database**: Separate async PostgreSQL database containing only chat and message data
-- **Main_Database**: Existing sync PostgreSQL database containing users, properties, courts, bookings, and related data
+- **Main_Database**: Existing sync PostgreSQL database containing users, owner_profiles, properties, courts, bookings, and related data
 - **Chat_Session**: A conversation thread between a user and the bot associated with a specific owner
 - **Flow_State**: Structured JSONB field tracking current booking progress (property_id, service_id, date, time, intent, step)
 - **Bot_Memory**: Unstructured JSONB field for AI context and conversation history
@@ -21,7 +21,7 @@ This document specifies requirements for a production-grade WhatsApp-style chatb
 - **Pending_Booking**: Booking record created by bot awaiting confirmation or payment
 - **Session_Continuity**: Logic determining whether to continue or create new chat based on time elapsed
 - **Token_Usage**: Count of LLM tokens consumed per message for cost tracking
-- **Owner**: Property owner whose facilities are being booked
+- **Owner**: Property owner (via OwnerProfile) whose facilities are being booked
 - **Customer**: User interacting with the chatbot to make bookings
 
 ## Requirements
