@@ -1,8 +1,9 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.repositories import owner_repo, property_repo, court_repo, booking_repo
-from app.utils.response_utils import make_response
-from app.utils.shared_utils import OwnerContext
+from app.repositories import owner_repo
+from shared.repositories import property_repo, court_repo, booking_repo
+from shared.utils.response_utils import make_response
+from shared.utils import OwnerContext
 from shared.schemas.owner import OwnerProfileCreate, OwnerProfileUpdate
 from shared.models import Booking, BookingStatus, PaymentStatus, Property, Court
 from datetime import datetime, timedelta

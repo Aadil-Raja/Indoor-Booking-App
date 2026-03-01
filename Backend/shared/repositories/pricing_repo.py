@@ -1,3 +1,6 @@
+"""
+Pricing repository for database operations.
+"""
 from sqlalchemy.orm import Session
 from shared.models import CourtPricing
 from typing import Optional, List
@@ -49,17 +52,17 @@ def delete(db: Session, pricing: CourtPricing) -> None:
 def check_overlap(db: Session, court_id: int, days: List[int], start_time: time, end_time: time, exclude_id: Optional[int] = None) -> bool:
     """Check if pricing rule overlaps with existing rules"""
     query = db.query(CourtPricing).filter(CourtPricing.court_id == court_id)
-    
+
     if exclude_id:
         query = query.filter(CourtPricing.id != exclude_id)
-    
+
     existing = query.all()
-    
+
     for pricing in existing:
         # Check if any day overlaps
         if any(day in pricing.days for day in days):
             # Check if time ranges overlap
             if not (end_time <= pricing.start_time or start_time >= pricing.end_time):
                 return True
-    
+
     return False

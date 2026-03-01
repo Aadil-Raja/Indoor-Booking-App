@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.deps.db import get_db
-from app.utils.response_utils import make_response
+from shared.utils.response_utils import make_response
 import shared.schemas as schemas
 from app.services import auth_service
 

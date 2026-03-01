@@ -1,7 +1,10 @@
+"""
+Property service for business logic operations.
+"""
 from sqlalchemy.orm import Session
-from app.repositories import property_repo
-from app.utils.response_utils import make_response
-from app.utils.shared_utils import OwnerContext
+from shared.repositories import property_repo
+from shared.utils.response_utils import make_response
+from shared.utils import OwnerContext
 from shared.schemas.property import PropertyCreate, PropertyUpdate
 
 
@@ -26,7 +29,7 @@ def create_property(db: Session, *, current_owner: OwnerContext, data: PropertyC
 def get_owner_properties(db: Session, *, current_owner: OwnerContext):
     """Get all properties owned by user"""
     properties = property_repo.get_by_owner_profile(db, current_owner.owner_profile_id)
-    
+
     data = [
         {
             "id": p.id,
@@ -37,7 +40,7 @@ def get_owner_properties(db: Session, *, current_owner: OwnerContext):
         }
         for p in properties
     ]
-    
+
     return make_response(
         True,
         "Properties retrieved successfully",
@@ -48,13 +51,13 @@ def get_owner_properties(db: Session, *, current_owner: OwnerContext):
 def get_property_details(db: Session, *, property_id: int, current_owner: OwnerContext):
     """Get property with courts"""
     property = property_repo.get_with_courts(db, property_id)
-    
+
     if not property:
         return make_response(False, "Property not found", status_code=404)
-    
+
     if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
-    
+
     data = {
         "id": property.id,
         "name": property.name,
@@ -79,20 +82,20 @@ def get_property_details(db: Session, *, property_id: int, current_owner: OwnerC
             for c in property.courts
         ]
     }
-    
+
     return make_response(True, "Property retrieved successfully", data=data)
 
 
 def update_property(db: Session, *, property_id: int, current_owner: OwnerContext, data: PropertyUpdate):
     """Update property"""
     property = property_repo.get_by_id(db, property_id)
-    
+
     if not property:
         return make_response(False, "Property not found", status_code=404)
-    
+
     if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
-    
+
     try:
         updated = property_repo.update(db, property, **data.model_dump(exclude_unset=True))
         return make_response(
@@ -107,13 +110,13 @@ def update_property(db: Session, *, property_id: int, current_owner: OwnerContex
 def delete_property(db: Session, *, property_id: int, current_owner: OwnerContext):
     """Delete property"""
     property = property_repo.get_by_id(db, property_id)
-    
+
     if not property:
         return make_response(False, "Property not found", status_code=404)
-    
+
     if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
-    
+
     try:
         property_repo.delete(db, property)
         return make_response(True, "Property deleted successfully")

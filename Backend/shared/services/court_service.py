@@ -1,20 +1,23 @@
+"""
+Court service for business logic operations.
+"""
 from sqlalchemy.orm import Session
-from app.repositories import court_repo, property_repo
-from app.utils.response_utils import make_response
-from app.utils.shared_utils import OwnerContext
+from shared.repositories import court_repo, property_repo
+from shared.utils.response_utils import make_response
+from shared.utils import OwnerContext
 from shared.schemas.court import CourtCreate, CourtUpdate
 
 
 def create_court(db: Session, *, property_id: int, current_owner: OwnerContext, data: CourtCreate):
     """Create a new court for property"""
     property = property_repo.get_by_id(db, property_id)
-    
+
     if not property:
         return make_response(False, "Property not found", status_code=404)
-    
+
     if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
-    
+
     try:
         court = court_repo.create(
             db,
@@ -34,15 +37,15 @@ def create_court(db: Session, *, property_id: int, current_owner: OwnerContext, 
 def get_property_courts(db: Session, *, property_id: int, current_owner: OwnerContext):
     """Get all courts for a property"""
     property = property_repo.get_by_id(db, property_id)
-    
+
     if not property:
         return make_response(False, "Property not found", status_code=404)
-    
+
     if property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
-    
+
     courts = court_repo.get_by_property(db, property_id)
-    
+
     data = [
         {
             "id": c.id,
@@ -55,22 +58,21 @@ def get_property_courts(db: Session, *, property_id: int, current_owner: OwnerCo
         }
         for c in courts
     ]
-    
-    return make_response(True, "Courts retrieved successfully", data=data)
 
+    return make_response(True, "Courts retrieved successfully", data=data)
 
 
 def get_court_details(db: Session, *, court_id: int, current_owner: OwnerContext):
     """Get court details"""
     court = court_repo.get_by_id(db, court_id)
-    
+
     if not court:
         return make_response(False, "Court not found", status_code=404)
-    
+
     property = property_repo.get_by_id(db, court.property_id)
     if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
-    
+
     data = {
         "id": court.id,
         "property_id": court.property_id,
@@ -82,21 +84,21 @@ def get_court_details(db: Session, *, court_id: int, current_owner: OwnerContext
         "is_active": court.is_active,
         "created_at": court.created_at.isoformat() if court.created_at else None
     }
-    
+
     return make_response(True, "Court retrieved successfully", data=data)
 
 
 def update_court(db: Session, *, court_id: int, current_owner: OwnerContext, data: CourtUpdate):
     """Update court"""
     court = court_repo.get_by_id(db, court_id)
-    
+
     if not court:
         return make_response(False, "Court not found", status_code=404)
-    
+
     property = property_repo.get_by_id(db, court.property_id)
     if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
-    
+
     try:
         updated = court_repo.update(db, court, **data.model_dump(exclude_unset=True))
         return make_response(
@@ -111,14 +113,14 @@ def update_court(db: Session, *, court_id: int, current_owner: OwnerContext, dat
 def delete_court(db: Session, *, court_id: int, current_owner: OwnerContext):
     """Delete court"""
     court = court_repo.get_by_id(db, court_id)
-    
+
     if not court:
         return make_response(False, "Court not found", status_code=404)
-    
+
     property = property_repo.get_by_id(db, court.property_id)
     if not property or property.owner_profile_id != current_owner.owner_profile_id:
         return make_response(False, "Access denied", status_code=403)
-    
+
     try:
         court_repo.delete(db, court)
         return make_response(True, "Court deleted successfully")

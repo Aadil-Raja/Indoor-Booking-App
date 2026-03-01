@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.deps.db import get_db
 from app.deps.auth import get_current_owner
 from app.services import owner_service
-from app.utils.shared_utils import OwnerContext
+from shared.utils import OwnerContext
 from shared.schemas.owner import OwnerProfileCreate, OwnerProfileUpdate
 
 router = APIRouter(prefix="/owner", tags=["Owner"])

@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
-from app.repositories import pricing_repo, court_repo, property_repo
-from app.utils.response_utils import make_response
-from app.utils.shared_utils import OwnerContext
+from shared.repositories import property_repo, court_repo, pricing_repo
+from shared.utils.response_utils import make_response
+from shared.utils import OwnerContext
 from shared.schemas.pricing import CourtPricingCreate, CourtPricingUpdate
 
 

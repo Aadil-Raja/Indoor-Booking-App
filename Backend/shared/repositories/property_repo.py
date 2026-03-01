@@ -1,3 +1,6 @@
+"""
+Property repository for database operations.
+"""
 from sqlalchemy.orm import Session, joinedload
 from shared.models import Property
 from typing import Optional, List

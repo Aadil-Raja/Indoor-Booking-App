@@ -1,3 +1,6 @@
+"""
+Court repository for database operations.
+"""
 from sqlalchemy.orm import Session
 from shared.models import Court
 from typing import Optional, List

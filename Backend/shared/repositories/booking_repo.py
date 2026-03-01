@@ -1,3 +1,6 @@
+"""
+Booking repository for database operations.
+"""
 from sqlalchemy.orm import Session, joinedload
 from shared.models import Booking, BookingStatus, PaymentStatus
 from typing import Optional, List
@@ -75,10 +78,10 @@ def get_by_court(db: Session, court_id: int, from_date: Optional[date] = None) -
         .options(joinedload(Booking.customer))
         .filter(Booking.court_id == court_id)
     )
-    
+
     if from_date:
         query = query.filter(Booking.booking_date >= from_date)
-    
+
     return query.order_by(Booking.booking_date, Booking.start_time).all()
 
 
@@ -112,17 +115,17 @@ def check_conflict(
         Booking.booking_date == booking_date,
         Booking.status.in_([BookingStatus.pending, BookingStatus.confirmed])
     )
-    
+
     if exclude_booking_id:
         query = query.filter(Booking.id != exclude_booking_id)
-    
+
     existing = query.all()
-    
+
     for booking in existing:
         # Check if time ranges overlap
         if not (end_time <= booking.start_time or start_time >= booking.end_time):
             return True
-    
+
     return False
 
 
