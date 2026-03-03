@@ -15,9 +15,9 @@ from typing import Optional
 import logging
 import re
 
-from ..state.conversation_state import ConversationState
-from ...services.llm.base import LLMProvider, LLMProviderError
-from ..prompts.intent_prompts import get_intent_prompt
+from app.agent.state.conversation_state import ConversationState
+from app.services.llm.base import LLMProvider, LLMProviderError
+from app.agent.prompts.intent_prompts import get_intent_prompt
 
 logger = logging.getLogger(__name__)
 

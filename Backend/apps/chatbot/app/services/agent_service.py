@@ -21,10 +21,10 @@ from typing import Dict, Any
 from uuid import UUID
 import logging
 
-from .chat_service import ChatService
-from .message_service import MessageService
-from ..agent.runtime.graph_runtime import GraphRuntime, GraphExecutionError
-from ..models.chat import Chat
+from app.services.chat_service import ChatService
+from app.services.message_service import MessageService
+from app.agent.runtime.graph_runtime import GraphRuntime, GraphExecutionError
+from app.models.chat import Chat
 
 logger = logging.getLogger(__name__)
 

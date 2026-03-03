@@ -5,7 +5,7 @@ This module exports the Chat and Message models for conversation
 storage and management.
 """
 
-from .chat import Chat
-from .message import Message
+from app.models.chat import Chat
+from app.models.message import Message
 
 __all__ = ["Chat", "Message"]

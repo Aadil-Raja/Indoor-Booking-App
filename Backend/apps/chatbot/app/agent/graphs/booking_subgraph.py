@@ -17,8 +17,8 @@ import logging
 
 from langgraph.graph import StateGraph, END
 
-from ..state.conversation_state import ConversationState
-from ..nodes.booking import (
+from app.agent.state.conversation_state import ConversationState
+from app.agent.nodes.booking import (
     select_property,
     select_service,
     select_date,

@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, AsyncIterator
 from openai import AsyncOpenAI, OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, APITimeoutError
 import tiktoken
 
-from .base import (
+from app.services.llm.base import (
     LLMProvider,
     LLMProviderError,
     LLMConnectionError,

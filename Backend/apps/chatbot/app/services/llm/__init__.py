@@ -9,7 +9,7 @@ changing business logic.
 import logging
 from typing import Optional
 
-from .base import (
+from app.services.llm.base import (
     LLMProvider,
     LLMProviderError,
     LLMConnectionError,
@@ -19,8 +19,8 @@ from .base import (
     LLMTimeoutError,
     LLMProviderUnavailableError,
 )
-from .openai_provider import OpenAIProvider
-from .gemini_provider import GeminiProvider
+from app.services.llm.openai_provider import OpenAIProvider
+from app.services.llm.gemini_provider import GeminiProvider
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ def get_llm_provider() -> LLMProvider:
         >>> provider = get_llm_provider()
         >>> response = await provider.generate("Hello, how are you?")
     """
-    from ...core.config import settings
+    from app.core.config import settings
     
     # Validate that API key is configured
     if not settings.OPENAI_API_KEY and settings.LLM_PROVIDER.lower() == "openai":

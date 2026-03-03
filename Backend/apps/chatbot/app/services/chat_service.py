@@ -17,9 +17,9 @@ from uuid import UUID
 from datetime import datetime
 import logging
 
-from ..repositories.chat_repository import ChatRepository
-from ..repositories.message_repository import MessageRepository
-from ..models.chat import Chat
+from app.repositories.chat_repository import ChatRepository
+from app.repositories.message_repository import MessageRepository
+from app.models.chat import Chat
 
 logger = logging.getLogger(__name__)
 

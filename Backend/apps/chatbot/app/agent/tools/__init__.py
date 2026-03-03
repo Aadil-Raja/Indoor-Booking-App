@@ -26,7 +26,7 @@ Usage:
 from typing import Dict, Callable, Any
 import logging
 
-from .sync_bridge import (
+from app.agent.tools.sync_bridge import (
     run_sync_in_executor,
     sync_to_async,
     call_sync_service,
@@ -36,29 +36,29 @@ from .sync_bridge import (
 )
 
 # Import tool functions from individual modules
-from .property_tool import (
+from app.agent.tools.property_tool import (
     search_properties_tool,
     get_property_details_tool,
     get_owner_properties_tool,
 )
 
-from .court_tool import (
+from app.agent.tools.court_tool import (
     search_courts_tool,
     get_court_details_tool,
     get_property_courts_tool,
 )
 
-from .availability_tool import (
+from app.agent.tools.availability_tool import (
     check_availability_tool,
     get_available_slots_tool,
 )
 
-from .pricing_tool import (
+from app.agent.tools.pricing_tool import (
     get_pricing_tool,
     calculate_total_price,
 )
 
-from .booking_tool import (
+from app.agent.tools.booking_tool import (
     create_booking_tool,
     get_booking_details_tool,
     cancel_booking_tool,

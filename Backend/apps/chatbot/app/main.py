@@ -9,7 +9,7 @@ sys.path.insert(0, str(backend_dir))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import health, chat
-from app.core.database import async_engine
+from app.deps.db import async_engine
 import logging
 
 # Configure logging

@@ -12,7 +12,7 @@ from datetime import datetime
 from uuid import UUID
 import logging
 
-from ..models.message import Message
+from app.models.message import Message
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ Pydantic schemas for the chatbot application.
 This module exports all schema classes for easy importing throughout the application.
 """
 
-from .chat import (
+from app.schemas.chat import (
     # Chat schemas
     ChatBase,
     ChatCreate,

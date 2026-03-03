@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 import logging
 
-from ..models.chat import Chat
+from app.models.chat import Chat
 
 logger = logging.getLogger(__name__)
 

@@ -20,10 +20,10 @@ import logging
 import time
 from datetime import datetime
 
-from ..graphs.main_graph import create_main_graph
-from ..state.conversation_state import ConversationState
-from ..tools import initialize_tools
-from ...services.llm.base import LLMProvider, LLMProviderError
+from app.agent.graphs.main_graph import create_main_graph
+from app.agent.state.conversation_state import ConversationState
+from app.agent.tools import initialize_tools
+from app.services.llm.base import LLMProvider, LLMProviderError
 
 logger = logging.getLogger(__name__)
 

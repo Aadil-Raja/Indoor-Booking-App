@@ -5,7 +5,7 @@ This module exports repository classes for data access operations
 on chat and message models.
 """
 
-from .chat_repository import ChatRepository
-from .message_repository import MessageRepository
+from app.repositories.chat_repository import ChatRepository
+from app.repositories.message_repository import MessageRepository
 
 __all__ = ["ChatRepository", "MessageRepository"]

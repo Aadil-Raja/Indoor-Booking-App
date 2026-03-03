@@ -20,6 +20,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from shared.services import property_service, court_service, booking_service, availability_service
 
 logger = logging.getLogger(__name__)
 

@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional
 from uuid import UUID
 
 from app.agent.tools.sync_bridge import call_sync_service
+from shared.services import property_service
 
 logger = logging.getLogger(__name__)
 

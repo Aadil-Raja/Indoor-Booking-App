@@ -29,7 +29,7 @@ Usage:
     result = await runtime.execute(state)
 """
 
-from .graph_runtime import (
+from app.agent.runtime.graph_runtime import (
     GraphRuntime,
     GraphExecutionError,
     create_graph_runtime,

@@ -15,16 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 import logging
 
-from ..core.database import get_async_db
-from ..repositories.chat_repository import ChatRepository
-from ..repositories.message_repository import MessageRepository
-from ..services.chat_service import ChatService
-from ..services.message_service import MessageService
-from ..services.agent_service import AgentService
-from ..agent.runtime.graph_runtime import GraphRuntime
-from ..schemas.chat import ChatMessageRequest, ChatMessageResponse, ChatHistoryResponse, ChatCreate, ChatResponse, ChatListResponse, ChatSummary
-from ..core.config import settings
-from ..services.llm import get_llm_provider
+from app.deps.db import get_async_db
+from app.repositories.chat_repository import ChatRepository
+from app.repositories.message_repository import MessageRepository
+from app.services.chat_service import ChatService
+from app.services.message_service import MessageService
+from app.services.agent_service import AgentService
+from app.agent.runtime.graph_runtime import GraphRuntime
+from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ChatHistoryResponse, ChatCreate, ChatResponse, ChatListResponse, ChatSummary
+from app.core.config import settings
+from app.services.llm import get_llm_provider
 
 logger = logging.getLogger(__name__)
 

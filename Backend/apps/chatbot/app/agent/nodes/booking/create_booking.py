@@ -14,8 +14,8 @@ from typing import Optional, Dict, Any
 import logging
 from datetime import datetime, time, date
 
-from ...state.conversation_state import ConversationState
-from ...tools import TOOL_REGISTRY
+from app.agent.state.conversation_state import ConversationState
+from app.agent.tools import TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)
 

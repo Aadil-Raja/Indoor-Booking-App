@@ -17,8 +17,8 @@ from uuid import UUID
 from datetime import datetime
 import logging
 
-from ..repositories.message_repository import MessageRepository
-from ..models.message import Message
+from app.repositories.message_repository import MessageRepository
+from app.models.message import Message
 
 logger = logging.getLogger(__name__)
 

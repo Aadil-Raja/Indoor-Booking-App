@@ -12,8 +12,8 @@ Requirements: 6.1, 21.4
 from typing import Optional, Dict, Any
 import logging
 
-from ..state.conversation_state import ConversationState
-from ...services.llm.base import LLMProvider, LLMProviderError
+from app.agent.state.conversation_state import ConversationState
+from app.services.llm.base import LLMProvider, LLMProviderError
 
 logger = logging.getLogger(__name__)
 

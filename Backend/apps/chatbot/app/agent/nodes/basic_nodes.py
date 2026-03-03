@@ -19,11 +19,11 @@ from typing import Dict, Any
 import logging
 from datetime import datetime
 
-from ..state.conversation_state import ConversationState
-from ...services.chat_service import ChatService
-from ...services.message_service import MessageService
-from ...repositories.chat_repository import ChatRepository
-from ...repositories.message_repository import MessageRepository
+from app.agent.state.conversation_state import ConversationState
+from app.services.chat_service import ChatService
+from app.services.message_service import MessageService
+from app.repositories.chat_repository import ChatRepository
+from app.repositories.message_repository import MessageRepository
 
 logger = logging.getLogger(__name__)
 
