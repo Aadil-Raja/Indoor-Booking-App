@@ -5,7 +5,7 @@ This model tracks chat sessions between users and property owners,
 maintaining conversation state and bot memory for context persistence.
 """
 
-from sqlalchemy import Column, String, DateTime, Index
+from sqlalchemy import Column, String, DateTime, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 import uuid
@@ -24,7 +24,7 @@ class Chat(Base):
     Attributes:
         id: Unique chat identifier
         user_id: Reference to user (no FK constraint - separate database)
-        owner_id: Reference to owner (no FK constraint - separate database)
+        owner_profile_id: Reference to owner profile (no FK constraint - separate database)
         status: Chat status (active, closed)
         last_message_at: Timestamp of last message for session continuity
         flow_state: Structured JSONB for booking progress tracking
@@ -42,17 +42,17 @@ class Chat(Base):
     )
     
     user_id = Column(
-        UUID(as_uuid=True),
+        Integer,
         nullable=False,
         index=True,
         comment="User ID (reference only, no FK)"
     )
     
-    owner_id = Column(
-        UUID(as_uuid=True),
+    owner_profile_id = Column(
+        Integer,
         nullable=False,
         index=True,
-        comment="Owner ID (reference only, no FK)"
+        comment="Owner Profile ID (reference only, no FK)"
     )
     
     status = Column(
@@ -103,7 +103,7 @@ class Chat(Base):
         Index(
             'idx_user_owner_last_message',
             'user_id',
-            'owner_id',
+            'owner_profile_id',
             'last_message_at',
             postgresql_using='btree'
         ),
@@ -117,5 +117,5 @@ class Chat(Base):
     def __repr__(self):
         return (
             f"<Chat(id={self.id}, user_id={self.user_id}, "
-            f"owner_id={self.owner_id}, status={self.status})>"
+            f"owner_profile_id={self.owner_profile_id}, status={self.status})>"
         )

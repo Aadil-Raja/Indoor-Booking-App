@@ -64,7 +64,7 @@ class ChatRepository:
         
         logger.info(
             f"Created chat session: {chat.id} "
-            f"(user={chat.user_id}, owner={chat.owner_id})"
+            f"(user={chat.user_id}, owner={Chat.owner_profile_id})"
         )
         
         return chat
@@ -93,8 +93,8 @@ class ChatRepository:
     
     async def get_latest_by_user_owner(
         self, 
-        user_id: UUID, 
-        owner_id: UUID
+        user_id: int, 
+        owner_profile_id: int
     ) -> Optional[Chat]:
         """
         Get the most recent active chat for a user-owner pair.
@@ -114,7 +114,7 @@ class ChatRepository:
             .where(
                 and_(
                     Chat.user_id == user_id,
-                    Chat.owner_id == owner_id,
+                    Chat.owner_profile_id == owner_profile_id,
                     Chat.status == "active"
                 )
             )
@@ -126,19 +126,19 @@ class ChatRepository:
         if chat:
             logger.debug(
                 f"Found latest chat: {chat.id} "
-                f"(user={user_id}, owner={owner_id}, "
+                f"(user={user_id}, owner_profile={owner_profile_id}, "
                 f"last_message={chat.last_message_at})"
             )
         else:
             logger.debug(
-                f"No active chat found for user={user_id}, owner={owner_id}"
+                f"No active chat found for user={user_id}, owner_profile={owner_profile_id}"
             )
         
         return chat
     
     async def get_user_chats(
         self, 
-        user_id: UUID, 
+        user_id: int, 
         limit: int = 50
     ) -> List[Chat]:
         """
@@ -211,7 +211,8 @@ class ChatRepository:
         Returns:
             True if session expired, False otherwise
         """
-        threshold = datetime.utcnow() - timedelta(hours=threshold_hours)
+        from datetime import timezone
+        threshold = datetime.now(timezone.utc) - timedelta(hours=threshold_hours)
         is_expired = chat.last_message_at < threshold
         
         if is_expired:

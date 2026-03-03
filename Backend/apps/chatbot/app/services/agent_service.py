@@ -130,7 +130,7 @@ class AgentService:
         """
         chat_id = chat.id
         user_id = chat.user_id
-        owner_id = chat.owner_id
+        owner_profile_id = chat.owner_profile_id
         
         # Log incoming message (Requirement 12.1)
         logger.info(
@@ -138,7 +138,7 @@ class AgentService:
             extra={
                 "chat_id": str(chat_id),
                 "user_id": str(user_id),
-                "owner_id": str(owner_id),
+                "owner_profile_id": str(owner_profile_id),
                 "message_preview": user_message[:100],
                 "current_intent": chat.flow_state.get("intent"),
                 "current_step": chat.flow_state.get("step")
@@ -282,7 +282,7 @@ class AgentService:
                 extra={
                     "chat_id": str(chat_id),
                     "user_id": str(user_id),
-                    "owner_id": str(owner_id),
+                    "owner_profile_id": str(owner_profile_id),
                     "error_type": type(e).__name__,
                     "flow_state": chat.flow_state
                 },
@@ -333,7 +333,7 @@ class AgentService:
         
         This method transforms the database chat model into the ConversationState
         format expected by the LangGraph nodes. It includes:
-        - Chat identifiers (chat_id, user_id, owner_id)
+        - Chat identifiers (chat_id, user_id, owner_profile_id)
         - Current user message
         - Persistent state (flow_state, bot_memory)
         - Message history for LLM context
@@ -357,7 +357,7 @@ class AgentService:
             # Identifiers
             "chat_id": str(chat.id),
             "user_id": str(chat.user_id),
-            "owner_id": str(chat.owner_id),
+            "owner_profile_id": str(chat.owner_profile_id),
             
             # Current message
             "user_message": user_message,

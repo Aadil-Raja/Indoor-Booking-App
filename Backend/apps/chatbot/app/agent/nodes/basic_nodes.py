@@ -57,7 +57,7 @@ async def receive_message(
         state = {
             "chat_id": "123e4567-e89b-12d3-a456-426614174000",
             "user_id": "223e4567-e89b-12d3-a456-426614174000",
-            "owner_id": "323e4567-e89b-12d3-a456-426614174000",
+            "owner_profile_id": "323e4567-e89b-12d3-a456-426614174000",
             "user_message": "I want to book a tennis court",
             "flow_state": {},
             "bot_memory": {},
@@ -68,7 +68,7 @@ async def receive_message(
         result = await receive_message(state)
     """
     # Validate required fields
-    required_fields = ["chat_id", "user_id", "owner_id", "user_message"]
+    required_fields = ["chat_id", "user_id", "owner_profile_id", "user_message"]
     missing_fields = [field for field in required_fields if not state.get(field)]
     
     if missing_fields:
@@ -82,7 +82,7 @@ async def receive_message(
     # Log incoming message for observability (Requirement 12.1)
     logger.info(
         f"Received message - chat_id={state['chat_id']}, "
-        f"user_id={state['user_id']}, owner_id={state['owner_id']}, "
+        f"user_id={state['user_id']}, owner_profile_id={state['owner_profile_id']}, "
         f"message_preview={state['user_message'][:50]}..."
     )
     

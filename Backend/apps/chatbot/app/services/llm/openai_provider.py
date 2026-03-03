@@ -56,7 +56,11 @@ class OpenAIProvider(LLMProvider):
             max_retries: Maximum number of retry attempts
             retry_delay: Initial delay between retries in seconds
         """
-        self.client = AsyncOpenAI(api_key=api_key)
+        # Initialize AsyncOpenAI client with only supported parameters
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            max_retries=0  # We handle retries ourselves
+        )
         self.model = model
         self.default_max_tokens = max_tokens
         self.default_temperature = temperature

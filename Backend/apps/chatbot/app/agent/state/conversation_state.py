@@ -19,8 +19,8 @@ class ConversationState(TypedDict):
     
     # Identifiers
     chat_id: str  # UUID of the chat session
-    user_id: str  # UUID of the user
-    owner_id: str  # UUID of the property owner
+    user_id: str  # Integer user ID
+    owner_profile_id: str  # Integer owner profile ID
     
     # Current message
     user_message: str  # The current user message being processed

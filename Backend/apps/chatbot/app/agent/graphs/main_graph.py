@@ -90,7 +90,7 @@ def create_main_graph(
         state = {
             "chat_id": "123",
             "user_id": "456",
-            "owner_id": "789",
+            "owner_profile_id": "789",
             "user_message": "Hello",
             "flow_state": {},
             "bot_memory": {},
@@ -105,38 +105,38 @@ def create_main_graph(
     graph = StateGraph(ConversationState)
     
     # Add basic flow nodes
-    graph.add_node(
-        "receive_message",
-        lambda state: receive_message(state, chat_service, message_service)
-    )
-    graph.add_node(
-        "load_chat",
-        lambda state: load_chat(state, chat_service, message_service)
-    )
-    graph.add_node(
-        "append_user_message",
-        lambda state: append_user_message(state, chat_service, message_service)
-    )
+    async def receive_message_node(state):
+        return await receive_message(state, chat_service, message_service)
+    
+    async def load_chat_node(state):
+        return await load_chat(state, chat_service, message_service)
+    
+    async def append_user_message_node(state):
+        return await append_user_message(state, chat_service, message_service)
+    
+    graph.add_node("receive_message", receive_message_node)
+    graph.add_node("load_chat", load_chat_node)
+    graph.add_node("append_user_message", append_user_message_node)
     
     # Add intent detection node
-    graph.add_node(
-        "intent_detection",
-        lambda state: intent_detection(state, llm_provider)
-    )
+    async def intent_detection_node(state):
+        return await intent_detection(state, llm_provider)
+    
+    graph.add_node("intent_detection", intent_detection_node)
     
     # Add handler nodes
-    graph.add_node(
-        "greeting",
-        lambda state: greeting_handler(state, chat_service, message_service)
-    )
-    graph.add_node(
-        "indoor_search",
-        lambda state: indoor_search_handler(state, tools)
-    )
-    graph.add_node(
-        "faq",
-        lambda state: faq_handler(state, llm_provider)
-    )
+    async def greeting_node(state):
+        return await greeting_handler(state, chat_service, message_service)
+    
+    async def indoor_search_node(state):
+        return await indoor_search_handler(state, tools)
+    
+    async def faq_node(state):
+        return await faq_handler(state, llm_provider)
+    
+    graph.add_node("greeting", greeting_node)
+    graph.add_node("indoor_search", indoor_search_node)
+    graph.add_node("faq", faq_node)
     
     # Add booking subgraph as a node
     booking_subgraph = create_booking_subgraph(tools)
