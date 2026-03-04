@@ -21,6 +21,7 @@ from app.services.llm.base import (
 )
 from app.services.llm.openai_provider import OpenAIProvider
 from app.services.llm.gemini_provider import GeminiProvider
+from app.services.llm.langchain_wrapper import create_langchain_llm
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ __all__ = [
     "GeminiProvider",
     "create_llm_provider",
     "get_llm_provider",
+    "create_langchain_llm",
 ]
 
 

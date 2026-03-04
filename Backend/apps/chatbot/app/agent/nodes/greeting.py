@@ -7,15 +7,20 @@ new users (first message) and returning users (continuing conversation).
 
 For new users, it fetches and displays property information to introduce the facility.
 
-Requirements: 6.1, 21.1
+This node uses rule-based logic and does not require LangChain agents or tools,
+as greetings are deterministic based on user state. While the node accepts an
+llm_provider parameter for consistency with other nodes, it does not use LangChain
+or make any LLM calls.
+
+Requirements: 6.1, 21.1, 9.2, 9.3
 """
 
 from typing import Optional, Dict, Any
 import logging
 
 from app.agent.state.conversation_state import ConversationState
-from app.services.chat_service import ChatService
-from app.services.message_service import MessageService
+from app.services.llm.base import LLMProvider
+from app.services.llm.langchain_wrapper import create_langchain_llm
 from app.agent.tools import TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -23,8 +28,7 @@ logger = logging.getLogger(__name__)
 
 async def greeting_handler(
     state: ConversationState,
-    chat_service: Optional[ChatService] = None,
-    message_service: Optional[MessageService] = None
+    llm_provider: Optional[LLMProvider] = None
 ) -> ConversationState:
     """
     Handle greeting intents with contextual responses.
@@ -37,24 +41,36 @@ async def greeting_handler(
     For new users, it fetches property details and displays them in a rich format
     with property name, address, city, and map link.
     
+    This node follows the standard LangGraph node pattern:
+    1. Extract state (user_message, bot_memory, flow_state)
+    2. Process (generate contextual greeting)
+    3. Return updated state (response_content, response_type, response_metadata)
+    
+    Note: This node does not use LangChain agents or tools as greeting generation
+    is rule-based and deterministic. The llm_provider parameter is accepted for
+    consistency with other nodes but is not used.
+    
     Implements Requirements:
     - 6.1: LangGraph high-level graph with Greeting handler node
     - 21.1: Route greeting messages to Greeting node
+    - 9.2: Use LangChain for all LLM interactions (N/A - no LLM needed)
+    - 9.3: No tools needed for greeting node (tools=None)
     
     Args:
         state: ConversationState containing user message and bot_memory
-        chat_service: Optional ChatService for dependency injection (unused in this node)
-        message_service: Optional MessageService for dependency injection (unused in this node)
+        llm_provider: Optional LLMProvider (not used in this node)
         
     Returns:
         ConversationState: State with response_content, response_type, and response_metadata set
     """
+    # 1. Extract state
     chat_id = state["chat_id"]
     owner_profile_id = state["owner_profile_id"]
     bot_memory = state.get("bot_memory", {})
     
     logger.info(f"Processing greeting for chat {chat_id}")
     
+    # 2. Process - Generate contextual greeting
     # Check if this is a returning user by examining bot_memory
     is_returning = _is_returning_user(bot_memory)
     
@@ -84,6 +100,7 @@ async def greeting_handler(
             state["response_metadata"] = {}
             logger.debug(f"Generated simple new user greeting (no properties) for chat {chat_id}")
     
+    # 3. Return updated state
     logger.info(
         f"Greeting handler completed for chat {chat_id} - "
         f"is_returning={is_returning}"

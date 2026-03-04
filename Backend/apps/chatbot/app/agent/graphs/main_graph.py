@@ -126,7 +126,7 @@ def create_main_graph(
     
     # Add handler nodes
     async def greeting_node(state):
-        return await greeting_handler(state, chat_service, message_service)
+        return await greeting_handler(state, llm_provider)
     
     async def indoor_search_node(state):
         return await indoor_search_handler(state, tools)
