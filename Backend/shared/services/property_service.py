@@ -36,6 +36,7 @@ def get_owner_properties(db: Session, *, current_owner: OwnerContext):
             "name": p.name,
             "city": p.city,
             "state": p.state,
+            "address":p.address,
             "is_active": p.is_active
         }
         for p in properties

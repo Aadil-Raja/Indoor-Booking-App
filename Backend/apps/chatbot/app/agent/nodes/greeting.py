@@ -5,15 +5,18 @@ This module implements the greeting_handler node that responds to greeting inten
 It generates contextual greetings based on session history, differentiating between
 new users (first message) and returning users (continuing conversation).
 
+For new users, it fetches and displays property information to introduce the facility.
+
 Requirements: 6.1, 21.1
 """
 
-from typing import Optional
+from typing import Optional, Dict, Any
 import logging
 
 from app.agent.state.conversation_state import ConversationState
 from app.services.chat_service import ChatService
 from app.services.message_service import MessageService
+from app.agent.tools import TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +31,11 @@ async def greeting_handler(
     
     This node generates friendly, contextual greetings based on the user's
     conversation history. It differentiates between:
-    - New users: First message in the conversation (no history in bot_memory)
+    - New users: First message in the conversation (fetches property info to introduce facility)
     - Returning users: Continuing an existing conversation (has message history)
     
-    The node checks bot_memory to determine if this is a new or returning user
-    and generates an appropriate greeting message. It sets response_content,
-    response_type, and response_metadata in the state.
+    For new users, it fetches property details and displays them in a rich format
+    with property name, address, city, and map link.
     
     Implements Requirements:
     - 6.1: LangGraph high-level graph with Greeting handler node
@@ -46,54 +48,41 @@ async def greeting_handler(
         
     Returns:
         ConversationState: State with response_content, response_type, and response_metadata set
-        
-    Example:
-        # New user
-        state = {
-            "chat_id": "123e4567-e89b-12d3-a456-426614174000",
-            "user_message": "Hello",
-            "bot_memory": {},
-            ...
-        }
-        result = await greeting_handler(state)
-        # result["response_content"] = "Hello! I'm your sports booking assistant..."
-        
-        # Returning user
-        state = {
-            "chat_id": "123e4567-e89b-12d3-a456-426614174000",
-            "user_message": "Hi again",
-            "bot_memory": {
-                "conversation_history": [
-                    {"role": "user", "content": "Hello", "timestamp": "..."},
-                    {"role": "assistant", "content": "Hi!", "timestamp": "..."}
-                ]
-            },
-            ...
-        }
-        result = await greeting_handler(state)
-        # result["response_content"] = "Welcome back! How can I help you today?..."
     """
     chat_id = state["chat_id"]
+    owner_profile_id = state["owner_profile_id"]
     bot_memory = state.get("bot_memory", {})
     
     logger.info(f"Processing greeting for chat {chat_id}")
     
     # Check if this is a returning user by examining bot_memory
-    # A returning user will have conversation history or session metadata
     is_returning = _is_returning_user(bot_memory)
     
     # Generate contextual greeting based on user type
     if is_returning:
         response = _generate_returning_user_greeting(bot_memory)
+        state["response_content"] = response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
         logger.debug(f"Generated returning user greeting for chat {chat_id}")
     else:
-        response = _generate_new_user_greeting()
-        logger.debug(f"Generated new user greeting for chat {chat_id}")
-    
-    # Set response in state
-    state["response_content"] = response
-    state["response_type"] = "text"
-    state["response_metadata"] = {}
+        # New user - fetch property details and create rich greeting
+        properties = await _fetch_owner_properties(owner_profile_id, chat_id)
+        
+        if properties:
+            # Generate rich greeting with property information
+            response, response_type, metadata = _generate_new_user_greeting_with_properties(properties)
+            state["response_content"] = response
+            state["response_type"] = response_type
+            state["response_metadata"] = metadata
+            logger.debug(f"Generated new user greeting with {len(properties)} properties for chat {chat_id}")
+        else:
+            # Fallback to simple greeting if no properties found
+            response = _generate_new_user_greeting()
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            logger.debug(f"Generated simple new user greeting (no properties) for chat {chat_id}")
     
     logger.info(
         f"Greeting handler completed for chat {chat_id} - "
@@ -150,10 +139,11 @@ def _is_returning_user(bot_memory: dict) -> bool:
 
 def _generate_new_user_greeting() -> str:
     """
-    Generate a greeting for a new user.
+    Generate a simple greeting for a new user (fallback).
     
     This greeting introduces the bot and explains what it can do,
     helping new users understand the available functionality.
+    Used as fallback when property information is not available.
     
     Returns:
         str: Greeting message for new users
@@ -163,6 +153,95 @@ def _generate_new_user_greeting() -> str:
         "I can help you find and book indoor sports facilities. "
         "What would you like to do today?"
     )
+
+
+async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
+    """
+    Fetch properties for the owner to display in greeting.
+    
+    Args:
+        owner_profile_id: Owner profile ID
+        chat_id: Chat ID for logging
+        
+    Returns:
+        List of property dictionaries with details
+    """
+    try:
+        # Get the property tool from registry
+        get_owner_properties = TOOL_REGISTRY.get("get_owner_properties")
+        
+        if not get_owner_properties:
+            logger.warning(f"get_owner_properties tool not found for chat {chat_id}")
+            return []
+        
+        # Fetch properties
+        properties = await get_owner_properties(owner_profile_id=int(owner_profile_id))
+        
+        logger.info(f"Fetched {len(properties)} properties for greeting in chat {chat_id}")
+        return properties
+        
+    except Exception as e:
+        logger.error(f"Error fetching properties for greeting in chat {chat_id}: {e}", exc_info=True)
+        return []
+
+
+def _generate_new_user_greeting_with_properties(properties: list) -> tuple:
+    """
+    Generate a rich greeting with property information for new users.
+    
+    Creates a personalized welcome message that introduces the facility
+    with property name, address, city, and map link.
+    
+    Args:
+        properties: List of property dictionaries
+        
+    Returns:
+        Tuple of (response_content, response_type, response_metadata)
+    """
+    if not properties:
+        return _generate_new_user_greeting(), "text", {}
+    
+    # Get the first property (or primary property)
+    property_info = properties[0]
+    
+    property_name = property_info.get("name", "our facility")
+    address = property_info.get("address", "")
+    city = property_info.get("city", "")
+    state_name = property_info.get("state", "")
+    maps_link = property_info.get("maps_link", "")
+    
+    # Build location string
+    location_parts = []
+    if address:
+        location_parts.append(address)
+    if city:
+        location_parts.append(city)
+    if state_name:
+        location_parts.append(state_name)
+    
+    location = ", ".join(location_parts) if location_parts else "our location"
+    
+    # Create greeting message with proper formatting
+    greeting_text = f"Welcome to {property_name}!\n\n"
+    greeting_text += "I'm your booking assistant, here to help you find and reserve sports facilities.\n\n"
+    
+    # Add location information
+    greeting_text += f"Location: {location}\n"
+    
+    # Add map link if available
+    if maps_link:
+        greeting_text += f"View on map: {maps_link}\n"
+    
+    greeting_text += "\nHow can I help you today? I can:\n"
+    greeting_text += "• Show you available courts and facilities\n"
+    greeting_text += "• Help you make a booking\n"
+    greeting_text += "• Answer questions about pricing and availability"
+    
+    # If multiple properties, mention them
+    if len(properties) > 1:
+        greeting_text += f"\n\nWe have {len(properties)} facilities available for you to explore!"
+    
+    return greeting_text, "text", {}
 
 
 def _generate_returning_user_greeting(bot_memory: dict) -> str:
