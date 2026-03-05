@@ -2,11 +2,11 @@
 Select date node for booking subgraph.
 
 This module implements the select_date node that handles date selection
-in the booking flow. It parses dates from user messages (supporting various formats
-like "tomorrow", "next Monday", "2024-12-25"), validates that dates are in the future,
+in the booking flow using LangChain agent. It uses an LLM agent to parse dates
+from user messages (supporting various formats), validates that dates are in the future,
 stores the selected date in flow_state, and handles invalid dates gracefully.
 
-Requirements: 6.3, 20.4, 22.1-22.6
+Requirements: 6.3, 9.1, 9.2, 9.3, 20.4, 22.1-22.6
 """
 
 from typing import Optional, Dict, Any
@@ -16,12 +16,16 @@ import re
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.tools import TOOL_REGISTRY
+from app.services.llm.langchain_wrapper import create_langchain_llm
+from app.agent.prompts.booking_prompts import create_select_date_prompt
+from app.services.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
 async def select_date(
     state: ConversationState,
+    llm_provider: LLMProvider,
     tools: Optional[Dict[str, Any]] = None
 ) -> ConversationState:
     """
@@ -141,6 +145,7 @@ async def select_date(
         # User is responding with a date
         return await _process_date_selection(
             state=state,
+            llm_provider=llm_provider,
             chat_id=chat_id,
             user_message=user_message,
             flow_state=flow_state
@@ -199,18 +204,20 @@ async def _prompt_for_date(
 
 async def _process_date_selection(
     state: ConversationState,
+    llm_provider: LLMProvider,
     chat_id: str,
     user_message: str,
     flow_state: Dict[str, Any]
 ) -> ConversationState:
     """
-    Process user's date selection.
+    Process user's date selection using LangChain agent.
     
-    This function parses the user's date input, validates it's in the future,
-    and stores the selected date in flow_state.
+    This function uses a LangChain agent to intelligently parse the user's
+    date input, validates it's in the future, and stores the selected date in flow_state.
     
     Args:
         state: ConversationState
+        llm_provider: LLMProvider for creating LangChain LLM
         chat_id: Chat ID for logging
         user_message: User's date input
         flow_state: Current flow state
@@ -218,73 +225,219 @@ async def _process_date_selection(
     Returns:
         Updated ConversationState with selected date in flow_state
     """
-    # Parse date from user message
-    parsed_date = _parse_date(user_message)
-    
-    if not parsed_date:
-        # Invalid date format
-        logger.warning(
-            f"Invalid date format for chat {chat_id}: {user_message}"
-        )
+    # Create LangChain LLM
+    try:
+        llm = create_langchain_llm(llm_provider)
+    except Exception as e:
+        logger.error(f"Failed to create LangChain LLM for chat {chat_id}: {e}", exc_info=True)
+        # Fallback to manual parsing
+        parsed_date = _parse_date(user_message)
+        
+        if not parsed_date:
+            # Invalid date format
+            logger.warning(
+                f"Invalid date format for chat {chat_id}: {user_message}"
+            )
+            
+            response = (
+                "I couldn't understand that date. "
+                "Please try again with a format like 'tomorrow', 'next Monday', "
+                "or a specific date like '2024-12-25'."
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
+        
+        # Validate date is in the future
+        today = datetime.now().date()
+        if parsed_date < today:
+            logger.warning(
+                f"Past date provided for chat {chat_id}: {parsed_date}"
+            )
+            
+            response = (
+                f"The date {parsed_date.strftime('%B %d, %Y')} is in the past. "
+                f"Please provide a date that is today or in the future."
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
+        
+        # Valid date - store in flow_state
+        date_str = parsed_date.strftime("%Y-%m-%d")
+        
+        flow_state["date"] = date_str
+        flow_state["step"] = "date_selected"
+        
+        state["flow_state"] = flow_state
+        
+        # Generate confirmation message
+        formatted_date = parsed_date.strftime("%A, %B %d, %Y")
+        service_name = flow_state.get("service_name", "the court")
         
         response = (
-            "I couldn't understand that date. "
-            "Please try again with a format like 'tomorrow', 'next Monday', "
-            "or a specific date like '2024-12-25'."
+            f"Perfect! You've selected {formatted_date} for {service_name}. "
+            f"Now let's choose a time slot."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
         
-        # Keep step as select_date to allow retry
-        return state
-    
-    # Validate date is in the future
-    today = datetime.now().date()
-    if parsed_date < today:
-        logger.warning(
-            f"Past date provided for chat {chat_id}: {parsed_date}"
+        logger.info(
+            f"Date selected for chat {chat_id}: date={date_str}"
         )
         
-        response = (
-            f"The date {parsed_date.strftime('%B %d, %Y')} is in the past. "
-            f"Please provide a date that is today or in the future."
-        )
-        
-        state["response_content"] = response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
-        
-        # Keep step as select_date to allow retry
         return state
     
-    # Valid date - store in flow_state
-    date_str = parsed_date.strftime("%Y-%m-%d")
-    
-    flow_state["date"] = date_str
-    flow_state["step"] = "date_selected"
-    
-    state["flow_state"] = flow_state
-    
-    # Generate confirmation message
-    formatted_date = parsed_date.strftime("%A, %B %d, %Y")
+    # Create prompt for date selection
+    property_name = flow_state.get("property_name", "the property")
     service_name = flow_state.get("service_name", "the court")
+    current_date = datetime.now().date().strftime("%Y-%m-%d")
     
-    response = (
-        f"Perfect! You've selected {formatted_date} for {service_name}. "
-        f"Now let's choose a time slot."
-    )
+    prompt = create_select_date_prompt(property_name, service_name, current_date)
     
-    state["response_content"] = response
-    state["response_type"] = "text"
-    state["response_metadata"] = {}
-    
-    logger.info(
-        f"Date selected for chat {chat_id}: date={date_str}"
-    )
-    
-    return state
+    # Use LLM to parse date
+    try:
+        messages = prompt.format_messages(input=user_message)
+        response_obj = await llm.ainvoke(messages)
+        agent_response = response_obj.content.strip()
+        
+        logger.debug(f"Agent response for date selection: {agent_response}")
+        
+        # Try to extract ISO date from response (YYYY-MM-DD)
+        date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', agent_response)
+        
+        if date_match:
+            try:
+                parsed_date = datetime.strptime(date_match.group(0), "%Y-%m-%d").date()
+                
+                # Validate date is in the future
+                today = datetime.now().date()
+                if parsed_date < today:
+                    response = (
+                        f"The date {parsed_date.strftime('%B %d, %Y')} is in the past. "
+                        f"Please provide a date that is today or in the future."
+                    )
+                    
+                    state["response_content"] = response
+                    state["response_type"] = "text"
+                    state["response_metadata"] = {}
+                    
+                    return state
+                
+                # Valid date - store in flow_state
+                date_str = parsed_date.strftime("%Y-%m-%d")
+                
+                flow_state["date"] = date_str
+                flow_state["step"] = "date_selected"
+                
+                state["flow_state"] = flow_state
+                
+                # Generate confirmation message
+                formatted_date = parsed_date.strftime("%A, %B %d, %Y")
+                
+                response = (
+                    f"Perfect! You've selected {formatted_date} for {service_name}. "
+                    f"Now let's choose a time slot."
+                )
+                
+                state["response_content"] = response
+                state["response_type"] = "text"
+                state["response_metadata"] = {}
+                
+                logger.info(
+                    f"Date selected for chat {chat_id}: date={date_str}"
+                )
+                
+                return state
+                
+            except ValueError:
+                pass
+        
+        # Agent is asking for clarification or couldn't parse
+        state["response_content"] = agent_response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        
+        logger.info(f"Agent asking for clarification in chat {chat_id}")
+        
+        return state
+        
+    except Exception as e:
+        logger.error(f"Error using LangChain agent for date selection in chat {chat_id}: {e}", exc_info=True)
+        
+        # Fallback to manual parsing
+        parsed_date = _parse_date(user_message)
+        
+        if not parsed_date:
+            # Invalid date format
+            logger.warning(
+                f"Invalid date format for chat {chat_id}: {user_message}"
+            )
+            
+            response = (
+                "I couldn't understand that date. "
+                "Please try again with a format like 'tomorrow', 'next Monday', "
+                "or a specific date like '2024-12-25'."
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
+        
+        # Validate date is in the future
+        today = datetime.now().date()
+        if parsed_date < today:
+            logger.warning(
+                f"Past date provided for chat {chat_id}: {parsed_date}"
+            )
+            
+            response = (
+                f"The date {parsed_date.strftime('%B %d, %Y')} is in the past. "
+                f"Please provide a date that is today or in the future."
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
+        
+        # Valid date - store in flow_state
+        date_str = parsed_date.strftime("%Y-%m-%d")
+        
+        flow_state["date"] = date_str
+        flow_state["step"] = "date_selected"
+        
+        state["flow_state"] = flow_state
+        
+        # Generate confirmation message
+        formatted_date = parsed_date.strftime("%A, %B %d, %Y")
+        service_name = flow_state.get("service_name", "the court")
+        
+        response = (
+            f"Perfect! You've selected {formatted_date} for {service_name}. "
+            f"Now let's choose a time slot."
+        )
+        
+        state["response_content"] = response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        
+        logger.info(
+            f"Date selected for chat {chat_id}: date={date_str}"
+        )
+        
+        return state
 
 
 def _parse_date(user_input: str) -> Optional[datetime.date]:

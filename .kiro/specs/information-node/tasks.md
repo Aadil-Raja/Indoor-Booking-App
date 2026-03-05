@@ -38,7 +38,16 @@
   - Ensure node follows standard pattern: extract state, process, return state
   - _Requirements: 9.2, 9.3_
 
-- [ ] 3. Convert intent_detection node to use LangChain
+- [x] 3. Convert intent_detection node to use LangChain
+
+
+
+
+
+
+
+
+
 
 
   - Update `Backend/apps/chatbot/app/agent/nodes/intent_detection.py`
@@ -49,14 +58,24 @@
   - No tools needed for intent detection (tools=None)
   - _Requirements: 9.1, 9.2, 9.3_
 
-- [ ] 4. Replace indoor_search node with information node
+- [x] 4. Replace indoor_search node with information node
+
+
+
+
+
   - The indoor_search node will be replaced by the new information_node
   - Information node handles all search functionality PLUS availability, pricing, media
   - Keep indoor_search.py file for reference but it will not be used in the graph
   - The new information_node (task 9) will handle all these queries using LangChain agent
   - _Requirements: 9.1, 9.2, 9.4_
 
-- [ ] 5. Create information tools module
+- [x] 5. Create information tools module
+
+
+
+
+
   - Create `Backend/apps/chatbot/app/agent/tools/information_tools.py`
   - Implement search_properties_tool that calls public_service.search_properties()
   - Implement get_property_details_tool that calls public_service.get_property_details()
@@ -69,7 +88,12 @@
   - All tools should handle errors gracefully and return empty results on failure
   - _Requirements: 1.1, 2.1, 3.1, 4.1, 5.1, 6.1, 9.6_
 
-- [ ] 6. Create LangChain tool converter
+- [x] 6. Create LangChain tool converter
+
+
+
+
+
   - Create `Backend/apps/chatbot/app/agent/tools/langchain_converter.py`
   - Define Pydantic schemas for each tool (SearchPropertiesInput, GetPropertyDetailsInput, etc.)
   - Implement create_langchain_tools() function that converts tool registry to LangChain StructuredTools
@@ -77,7 +101,16 @@
   - Use StructuredTool.from_function() with coroutine parameter for async tools
   - _Requirements: 9.1, 9.6_
 
-- [ ] 7. Create information prompt templates
+- [x] 7. Create information prompt templates
+
+
+
+
+
+
+
+
+
   - Create `Backend/apps/chatbot/app/agent/prompts/information_prompts.py`
   - Define SYSTEM_TEMPLATE with instructions for information assistant
   - Implement create_information_prompt() that builds ChatPromptTemplate
@@ -86,7 +119,12 @@
   - Use prompt.partial() to inject owner_profile_id and context
   - _Requirements: 8.4, 10.1_
 
-- [ ] 8. Create bot memory manager
+- [x] 8. Create bot memory manager
+
+
+
+
+
   - Create `Backend/apps/chatbot/app/agent/state/memory_manager.py`
   - Implement update_bot_memory() function
   - Extract intermediate_steps from agent result to see which tools were called
@@ -97,7 +135,12 @@
   - Store last_availability_check with court_id and date
   - _Requirements: 1.2, 1.5, 5.5, 8.1, 8.2, 8.3, 11.2, 11.3_
 
-- [ ] 9. Implement information node handler
+- [x] 9. Implement information node handler
+
+
+
+
+
   - Create `Backend/apps/chatbot/app/agent/nodes/information.py`
   - Implement information_node() async function
   - Extract state: user_message, owner_profile_id, bot_memory, flow_state
@@ -113,14 +156,37 @@
   - Handle exceptions and return error message on failure
   - _Requirements: 1.1-1.5, 2.1-2.5, 3.1-3.5, 4.1-4.5, 5.1-5.5, 6.1-6.5, 7.1-7.5, 8.1-8.5, 9.1-9.6, 10.1-10.5, 11.1-11.5_
 
-- [ ] 10. Register information tools in tool registry
+- [x] 10. Register information tools in tool registry
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   - Update `Backend/apps/chatbot/app/agent/tools/__init__.py`
   - Import information tools from information_tools module
   - Add all information tools to TOOL_REGISTRY dictionary
   - Ensure tool names match what's used in create_langchain_tools()
   - _Requirements: 9.6_
 
-- [ ] 11. Register information node in LangGraph
+- [x] 11. Register information node in LangGraph
+
+
+
+
   - Update `Backend/apps/chatbot/app/agent/graph.py` (or main graph file)
   - Import information_node from nodes.information
   - Add information_node to the graph
@@ -130,7 +196,12 @@
   - Remove indoor_search_handler from graph (replaced by information_node)
   - _Requirements: 10.1, 10.2, 10.3_
 
-- [ ] 12. Update intent detection patterns
+- [x] 12. Update intent detection patterns
+
+
+
+
+
   - Update `Backend/apps/chatbot/app/agent/nodes/intent_detection.py`
   - Ensure SEARCH_PATTERNS include information-related queries
   - Add patterns for availability queries ("when is available", "check availability")
@@ -139,14 +210,24 @@
   - Ensure "information" or "search" intent routes to information_node
   - _Requirements: 10.2_
 
-- [ ] 13. Add langchain dependencies
+- [x] 13. Add langchain dependencies
+
+
+
+
+
   - Update `Backend/requirements.txt`
   - Add langchain>=0.1.0
   - Add langchain-openai>=0.0.5
   - Run pip install -r requirements.txt to install dependencies
   - _Requirements: 9.1_
 
-- [ ] 14. Convert booking nodes to use LangChain agents
+- [x] 14. Convert booking nodes to use LangChain agents
+
+
+
+
+
   - Update booking nodes to use LangChain agents instead of manual flow control
   - Each booking step node should use LangChain agent with appropriate tools
   - Create booking-specific prompt templates for each step
@@ -154,7 +235,9 @@
   - Maintain flow_state management for booking progress
   - _Requirements: 9.1, 9.2_
 
-- [ ] 14.1 Convert select_property booking node
+
+- [x] 14.1 Convert select_property booking node
+
   - Update `Backend/apps/chatbot/app/agent/nodes/booking/select_property.py`
   - Create LangChain agent with get_owner_properties tool
   - Create prompt template for property selection assistant
@@ -162,7 +245,9 @@
   - Update flow_state with selected property_id and property_name
   - _Requirements: 9.1, 9.2_
 
-- [ ] 14.2 Convert select_service booking node
+
+- [x] 14.2 Convert select_service booking node
+
   - Update `Backend/apps/chatbot/app/agent/nodes/booking/select_service.py`
   - Create LangChain agent with get_property_courts tool
   - Create prompt template for service/court selection assistant
@@ -170,7 +255,9 @@
   - Update flow_state with selected service_id and service_name
   - _Requirements: 9.1, 9.2_
 
-- [ ] 14.3 Convert select_date booking node
+
+- [x] 14.3 Convert select_date booking node
+
   - Update `Backend/apps/chatbot/app/agent/nodes/booking/select_date.py`
   - Create LangChain agent (no tools needed, just date parsing)
   - Create prompt template for date selection assistant
@@ -178,7 +265,9 @@
   - Update flow_state with selected date
   - _Requirements: 9.1, 9.2, 9.3_
 
-- [ ] 14.4 Convert select_time booking node
+
+- [x] 14.4 Convert select_time booking node
+
   - Update `Backend/apps/chatbot/app/agent/nodes/booking/select_time.py`
   - Create LangChain agent with get_available_slots tool
   - Create prompt template for time selection assistant
@@ -186,7 +275,9 @@
   - Update flow_state with selected start_time, end_time, price
   - _Requirements: 9.1, 9.2_
 
-- [ ] 14.5 Convert confirm_booking node
+
+- [x] 14.5 Convert confirm_booking node
+
   - Update `Backend/apps/chatbot/app/agent/nodes/booking/confirm_booking.py`
   - Create LangChain agent (no tools needed, just confirmation)
   - Create prompt template for booking confirmation assistant
@@ -194,13 +285,21 @@
   - Update flow_state step based on user response (confirmed/cancelled/modify)
   - _Requirements: 9.1, 9.2, 9.3_
 
-- [ ] 14.6 Keep create_pending_booking node as-is
+
+- [x] 14.6 Keep create_pending_booking node as-is
+
   - The create_pending_booking node doesn't need LangChain agent
   - It just calls the create_booking tool and formats response
   - Keep current implementation
   - _Requirements: 9.1_
 
-- [ ]* 15. Write unit tests for information tools
+- [x] 15. Write unit tests for information tools
+
+
+
+
+
+
   - Create `Backend/apps/chatbot/tests/test_information_tools.py`
   - Test search_properties_tool with valid inputs
   - Test get_property_details_tool with valid property_id
@@ -211,7 +310,13 @@
   - Mock service calls using pytest fixtures
   - _Requirements: 1.1-1.5, 2.1-2.5, 3.1-3.5, 4.1-4.5, 5.1-5.5, 6.1-6.5_
 
-- [ ]* 16. Write unit tests for memory manager
+- [x] 16. Write unit tests for memory manager
+
+
+
+
+
+
   - Create `Backend/apps/chatbot/tests/test_memory_manager.py`
   - Test update_bot_memory() with search_properties result
   - Test preference extraction from search parameters
@@ -220,7 +325,12 @@
   - Verify bot_memory structure is correct
   - _Requirements: 8.1-8.5, 11.2, 11.3_
 
-- [ ]* 17. Write integration tests for information node
+- [x] 17. Write integration tests for information node
+
+
+
+
+
   - Create `Backend/apps/chatbot/tests/integration/test_information_node.py`
   - Test simple search query flow
   - Test property details query flow
@@ -230,7 +340,13 @@
   - Mock LLM responses for predictable testing
   - _Requirements: 1.1-1.5, 7.1-7.5, 8.1-8.5_
 
-- [ ]* 18. Write integration tests for booking nodes
+- [x] 18. Write integration tests for booking nodes
+
+
+
+
+
+
   - Create `Backend/apps/chatbot/tests/integration/test_booking_nodes.py`
   - Test complete booking flow from property selection to creation
   - Test back navigation between steps

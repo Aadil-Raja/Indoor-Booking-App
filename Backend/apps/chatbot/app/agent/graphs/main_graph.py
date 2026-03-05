@@ -8,7 +8,7 @@ conditional routing based on detected intent.
 The main graph includes:
 - Basic flow nodes (receive_message, load_chat, append_user_message)
 - Intent detection node
-- Handler nodes (greeting, indoor_search, faq)
+- Handler nodes (greeting, information, faq)
 - Booking subgraph (integrated as a node)
 
 Requirements: 6.1-6.8
@@ -23,7 +23,8 @@ from app.agent.state.conversation_state import ConversationState
 from app.agent.nodes.basic_nodes import receive_message, load_chat, append_user_message
 from app.agent.nodes.intent_detection import intent_detection
 from app.agent.nodes.greeting import greeting_handler
-from app.agent.nodes.indoor_search import indoor_search_handler
+# from app.agent.nodes.indoor_search import indoor_search_handler  # Replaced by information_node
+from app.agent.nodes.information import information_node  # New LangChain agent-based node
 from app.agent.nodes.faq import faq_handler
 from app.agent.graphs.booking_subgraph import create_booking_subgraph
 
@@ -49,7 +50,7 @@ def create_main_graph(
     4. intent_detection: Classifies user intent
     5. [Handler nodes]: Routes to appropriate handler based on intent
        - greeting: Handles greetings
-       - indoor_search: Handles facility search
+       - information: Handles facility search, availability, pricing, media (LangChain agent)
        - booking: Handles booking flow (subgraph)
        - faq: Handles general questions
     6. END: Terminates the graph execution
@@ -128,14 +129,14 @@ def create_main_graph(
     async def greeting_node(state):
         return await greeting_handler(state, llm_provider)
     
-    async def indoor_search_node(state):
-        return await indoor_search_handler(state, tools)
+    async def information_handler_node(state):
+        return await information_node(state, llm_provider)
     
     async def faq_node(state):
         return await faq_handler(state, llm_provider)
     
     graph.add_node("greeting", greeting_node)
-    graph.add_node("indoor_search", indoor_search_node)
+    graph.add_node("information", information_handler_node)
     graph.add_node("faq", faq_node)
     
     # Add booking subgraph as a node
@@ -154,7 +155,8 @@ def create_main_graph(
         route_by_intent,
         {
             "greeting": "greeting",
-            "search": "indoor_search",
+            "search": "information",  # Route search intent to information node
+            "information": "information",  # Route information intent to information node
             "booking": "booking",
             "faq": "faq",
             "unknown": "faq"  # Default to FAQ for unknown intents
@@ -163,7 +165,7 @@ def create_main_graph(
     
     # All handler nodes route to END
     graph.add_edge("greeting", END)
-    graph.add_edge("indoor_search", END)
+    graph.add_edge("information", END)
     graph.add_edge("booking", END)
     graph.add_edge("faq", END)
     
@@ -183,7 +185,8 @@ def route_by_intent(state: ConversationState) -> str:
     
     The function handles:
     - greeting: Route to greeting handler
-    - search: Route to indoor_search handler
+    - search: Route to information node (LangChain agent)
+    - information: Route to information node (LangChain agent)
     - booking: Route to booking subgraph
     - faq: Route to FAQ handler
     - unknown/missing: Default to FAQ handler
@@ -195,12 +198,16 @@ def route_by_intent(state: ConversationState) -> str:
         state: ConversationState containing the detected intent
         
     Returns:
-        Handler node name: "greeting", "search", "booking", "faq", or "unknown"
+        Handler node name: "greeting", "search", "information", "booking", "faq", or "unknown"
         
     Example:
         state = {"intent": "booking", ...}
         route = route_by_intent(state)
         # Returns: "booking"
+        
+        state = {"intent": "search", ...}
+        route = route_by_intent(state)
+        # Returns: "search" (which maps to "information" in conditional_edges)
         
         state = {"intent": "unknown", ...}
         route = route_by_intent(state)
@@ -213,7 +220,7 @@ def route_by_intent(state: ConversationState) -> str:
     )
     
     # Validate intent is one of the expected values
-    valid_intents = ["greeting", "search", "booking", "faq"]
+    valid_intents = ["greeting", "search", "information", "booking", "faq"]
     
     if intent in valid_intents:
         return intent

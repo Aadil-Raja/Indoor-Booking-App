@@ -2,11 +2,11 @@
 Select property node for booking subgraph.
 
 This module implements the select_property node that handles property selection
-in the booking flow. It presents properties from search results as button options,
-parses user selection (property ID or property name), stores the selected property_id
+in the booking flow using LangChain agent. It presents properties from search results,
+uses an LLM agent to parse user selection, stores the selected property_id
 in flow_state, and handles invalid selections gracefully.
 
-Requirements: 6.3, 20.2, 22.1-22.6, 23.2
+Requirements: 6.3, 9.1, 9.2, 20.2, 22.1-22.6, 23.2
 """
 
 from typing import Optional, Dict, Any, List
@@ -15,22 +15,26 @@ import re
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.tools import TOOL_REGISTRY
+from app.services.llm.langchain_wrapper import create_langchain_llm
+from app.agent.prompts.booking_prompts import create_select_property_prompt
+from app.services.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
 async def select_property(
     state: ConversationState,
+    llm_provider: LLMProvider,
     tools: Optional[Dict[str, Any]] = None
 ) -> ConversationState:
     """
-    Handle property selection in booking flow.
+    Handle property selection in booking flow using LangChain agent.
     
     This node manages the property selection step of the booking process. It:
     1. Checks if property is already selected in flow_state
     2. Retrieves properties from bot_memory search results
     3. Presents properties as button options if not yet selected
-    4. Parses user selection (property ID or property name)
+    4. Uses LangChain agent to parse user selection intelligently
     5. Validates the selection
     6. Stores selected property_id in flow_state
     7. Updates flow_state step to "select_property"
@@ -38,6 +42,8 @@ async def select_property(
     
     Implements Requirements:
     - 6.3: Booking_Subgraph with Select_Property node
+    - 9.1: Use LangChain agents with ChatOpenAI wrapper
+    - 9.2: Use create_langchain_llm() for LLM instances
     - 20.2: Store selected property_id when user chooses a property
     - 22.1: Present properties from search results
     - 22.2: Present booking summary including property name
@@ -49,6 +55,7 @@ async def select_property(
     
     Args:
         state: ConversationState containing user message, flow_state, and bot_memory
+        llm_provider: LLMProvider instance for creating LangChain LLM
         tools: Optional tool registry (defaults to TOOL_REGISTRY if not provided)
         
     Returns:
@@ -69,7 +76,7 @@ async def select_property(
             ...
         }
         
-        result = await select_property(state, tools)
+        result = await select_property(state, llm_provider, tools)
         # result["response_type"] = "button"
         # result["response_metadata"]["buttons"] = [...]
         # result["flow_state"]["step"] = "select_property"
@@ -86,7 +93,7 @@ async def select_property(
             ...
         }
         
-        result = await select_property(state, tools)
+        result = await select_property(state, llm_provider, tools)
         # result["flow_state"]["property_id"] = "1"
         # result["flow_state"]["property_name"] = "Downtown Sports Center"
     """
@@ -121,6 +128,7 @@ async def select_property(
         # User is responding with a selection
         return await _process_property_selection(
             state=state,
+            llm_provider=llm_provider,
             tools=tools,
             chat_id=chat_id,
             user_message=user_message,
@@ -242,6 +250,7 @@ async def _present_property_options(
 
 async def _process_property_selection(
     state: ConversationState,
+    llm_provider: LLMProvider,
     tools: Dict[str, Any],
     chat_id: str,
     user_message: str,
@@ -249,13 +258,14 @@ async def _process_property_selection(
     bot_memory: Dict[str, Any]
 ) -> ConversationState:
     """
-    Process user's property selection.
+    Process user's property selection using LangChain agent.
     
-    This function parses the user's selection (property ID or property name),
-    validates it, and stores the selected property_id in flow_state.
+    This function uses a LangChain agent to intelligently parse the user's
+    selection, validates it, and stores the selected property_id in flow_state.
     
     Args:
         state: ConversationState
+        llm_provider: LLMProvider for creating LangChain LLM
         tools: Tool registry
         chat_id: Chat ID for logging
         user_message: User's selection message
@@ -297,60 +307,184 @@ async def _process_property_selection(
             
             return state
     
-    # Parse user selection
-    selected_property = _parse_property_selection(
-        user_message=user_message,
-        available_properties=available_properties
-    )
-    
-    if not selected_property:
-        # Invalid selection
-        logger.warning(
-            f"Invalid property selection for chat {chat_id}: {user_message}"
+    # Create LangChain LLM
+    try:
+        llm = create_langchain_llm(llm_provider)
+    except Exception as e:
+        logger.error(f"Failed to create LangChain LLM for chat {chat_id}: {e}", exc_info=True)
+        # Fallback to manual parsing
+        selected_property = _parse_property_selection(
+            user_message=user_message,
+            available_properties=available_properties
         )
         
-        # Generate helpful error message with available options
-        property_names = [p.get("name", "Unknown") for p in available_properties]
-        options_text = ", ".join(property_names)
+        if not selected_property:
+            # Invalid selection
+            logger.warning(
+                f"Invalid property selection for chat {chat_id}: {user_message}"
+            )
+            
+            # Generate helpful error message with available options
+            property_names = [p.get("name", "Unknown") for p in available_properties]
+            options_text = ", ".join(property_names)
+            
+            response = (
+                f"I couldn't find that facility. "
+                f"Please select from the available options: {options_text}"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
         
+        # Valid selection - store in flow_state
+        property_id = str(selected_property.get("id"))
+        property_name = selected_property.get("name", "Unknown Property")
+        
+        flow_state["property_id"] = property_id
+        flow_state["property_name"] = property_name
+        flow_state["step"] = "property_selected"
+        
+        state["flow_state"] = flow_state
+        
+        # Generate confirmation message
         response = (
-            f"I couldn't find that facility. "
-            f"Please select from the available options: {options_text}"
+            f"Great! You've selected {property_name}. "
+            f"Now let's choose a court."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
         
-        # Keep step as select_property to allow retry
+        logger.info(
+            f"Property selected for chat {chat_id}: "
+            f"property_id={property_id}, property_name={property_name}"
+        )
+        
         return state
     
-    # Valid selection - store in flow_state
-    property_id = str(selected_property.get("id"))
-    property_name = selected_property.get("name", "Unknown Property")
+    # Create prompt for property selection
+    prompt = create_select_property_prompt(available_properties)
     
-    flow_state["property_id"] = property_id
-    flow_state["property_name"] = property_name
-    flow_state["step"] = "property_selected"
-    
-    state["flow_state"] = flow_state
-    
-    # Generate confirmation message
-    response = (
-        f"Great! You've selected {property_name}. "
-        f"Now let's choose a court."
-    )
-    
-    state["response_content"] = response
-    state["response_type"] = "text"
-    state["response_metadata"] = {}
-    
-    logger.info(
-        f"Property selected for chat {chat_id}: "
-        f"property_id={property_id}, property_name={property_name}"
-    )
-    
-    return state
+    # Use LLM to parse selection
+    try:
+        messages = prompt.format_messages(input=user_message)
+        response_obj = await llm.ainvoke(messages)
+        agent_response = response_obj.content.strip()
+        
+        logger.debug(f"Agent response for property selection: {agent_response}")
+        
+        # Try to extract property ID from response
+        # Agent should respond with just the property ID number
+        property_id_match = re.search(r'\b(\d+)\b', agent_response)
+        
+        if property_id_match:
+            property_id_str = property_id_match.group(1)
+            
+            # Find property with this ID
+            selected_property = None
+            for prop in available_properties:
+                if str(prop.get("id")) == property_id_str:
+                    selected_property = prop
+                    break
+            
+            if selected_property:
+                # Valid selection - store in flow_state
+                property_id = str(selected_property.get("id"))
+                property_name = selected_property.get("name", "Unknown Property")
+                
+                flow_state["property_id"] = property_id
+                flow_state["property_name"] = property_name
+                flow_state["step"] = "property_selected"
+                
+                state["flow_state"] = flow_state
+                
+                # Generate confirmation message
+                response = (
+                    f"Great! You've selected {property_name}. "
+                    f"Now let's choose a court."
+                )
+                
+                state["response_content"] = response
+                state["response_type"] = "text"
+                state["response_metadata"] = {}
+                
+                logger.info(
+                    f"Property selected for chat {chat_id}: "
+                    f"property_id={property_id}, property_name={property_name}"
+                )
+                
+                return state
+        
+        # Agent is asking for clarification or couldn't parse
+        # Use agent's response directly
+        state["response_content"] = agent_response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        
+        logger.info(f"Agent asking for clarification in chat {chat_id}")
+        
+        return state
+        
+    except Exception as e:
+        logger.error(f"Error using LangChain agent for property selection in chat {chat_id}: {e}", exc_info=True)
+        
+        # Fallback to manual parsing
+        selected_property = _parse_property_selection(
+            user_message=user_message,
+            available_properties=available_properties
+        )
+        
+        if not selected_property:
+            # Invalid selection
+            logger.warning(
+                f"Invalid property selection for chat {chat_id}: {user_message}"
+            )
+            
+            # Generate helpful error message with available options
+            property_names = [p.get("name", "Unknown") for p in available_properties]
+            options_text = ", ".join(property_names)
+            
+            response = (
+                f"I couldn't find that facility. "
+                f"Please select from the available options: {options_text}"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
+        
+        # Valid selection - store in flow_state
+        property_id = str(selected_property.get("id"))
+        property_name = selected_property.get("name", "Unknown Property")
+        
+        flow_state["property_id"] = property_id
+        flow_state["property_name"] = property_name
+        flow_state["step"] = "property_selected"
+        
+        state["flow_state"] = flow_state
+        
+        # Generate confirmation message
+        response = (
+            f"Great! You've selected {property_name}. "
+            f"Now let's choose a court."
+        )
+        
+        state["response_content"] = response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        
+        logger.info(
+            f"Property selected for chat {chat_id}: "
+            f"property_id={property_id}, property_name={property_name}"
+        )
+        
+        return state
 
 
 async def _get_properties_by_ids(

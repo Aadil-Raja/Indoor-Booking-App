@@ -56,6 +56,9 @@ class OpenAIProvider(LLMProvider):
             max_retries: Maximum number of retry attempts
             retry_delay: Initial delay between retries in seconds
         """
+        # Store api_key as attribute for LangChain wrapper
+        self.api_key = api_key
+        
         # Initialize AsyncOpenAI client with only supported parameters
         self.client = AsyncOpenAI(
             api_key=api_key,

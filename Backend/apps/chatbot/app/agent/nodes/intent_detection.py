@@ -15,8 +15,12 @@ from typing import Optional
 import logging
 import re
 
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
+
 from app.agent.state.conversation_state import ConversationState
 from app.services.llm.base import LLMProvider, LLMProviderError
+from app.services.llm.langchain_wrapper import create_langchain_llm
 from app.agent.prompts.intent_prompts import get_intent_prompt
 
 logger = logging.getLogger(__name__)
@@ -30,10 +34,26 @@ GREETING_PATTERNS = [
 ]
 
 SEARCH_PATTERNS = [
+    # General search patterns
     r'\b(search|find|looking\s+for|show\s+me|available)\b',
     r'\b(what|which|where).*(facilities|courts|properties|venues)\b',
     r'\b(tennis|basketball|badminton|squash|volleyball).*(court|facility)\b',
     r'\b(indoor|sports).*(near|in|at)\b',
+    
+    # Availability patterns
+    r'\b(when\s+is|check|see).*(available|availability|open|free)\b',
+    r'\b(available|availability).*(slot|time|court|facility)\b',
+    r'\b(is\s+there|are\s+there).*(available|open|free)\b',
+    
+    # Pricing patterns
+    r'\b(how\s+much|what\'?s?\s+the\s+price|cost|pricing|rate)\b',
+    r'\b(price|prices|pricing).*(court|facility|hour)\b',
+    r'\b(hourly|per\s+hour).*(rate|price|cost)\b',
+    
+    # Media patterns
+    r'\b(show\s+me|see|view).*(photo|picture|image|pic)\b',
+    r'\b(photo|picture|image|pic).*(of|for)\b',
+    r'\b(gallery|media|video)\b',
 ]
 
 BOOKING_PATTERNS = [
@@ -45,8 +65,7 @@ BOOKING_PATTERNS = [
 FAQ_PATTERNS = [
     r'\b(help|what\s+is|explain|tell\s+me\s+about)\b',
     r'\b(question|info|information|details)\b',
-    r'\b(price|prices|cost|payment|refund)\b',
-    r'\bhow\s+much\b',
+    r'\b(payment|refund|policy|cancel)\b',
 ]
 
 
@@ -65,7 +84,7 @@ async def intent_detection(
     Implements Requirements:
     - 6.2: Intent_Detection node that classifies user intent
     - 21.1: Route greeting messages to Greeting node
-    - 21.2: Route facility/sports questions to Indoor_Search node
+    - 21.2: Route facility/sports questions to Information node (LangChain agent)
     - 21.3: Route booking intent to Booking_Subgraph
     - 21.4: Route general questions to FAQ node
     - 21.5: Use LLM_Provider for intent classification when rule-based matching fails
@@ -194,15 +213,19 @@ async def _llm_intent_classification(
     Use LLM to classify intent when rule-based matching fails.
     
     This function uses the INTENT_CLASSIFICATION_PROMPT template to classify
-    the user's intent into one of the four supported categories. It uses a low
-    temperature for consistent classification and validates the LLM's response.
+    the user's intent into one of the four supported categories. It uses LangChain's
+    ChatOpenAI wrapper with a low temperature for consistent classification and 
+    validates the LLM's response.
     
     Implements Requirement 21.5: Use LLM_Provider for intent classification
     when rule-based matching fails.
+    Implements Requirement 9.1: Use ChatOpenAI from langchain-openai
+    Implements Requirement 9.2: Use LangChain agents instead of direct OpenAI calls
+    Implements Requirement 9.3: No tools needed for intent detection
     
     Args:
         message: Original user message
-        llm_provider: LLMProvider instance for generating classification
+        llm_provider: LLMProvider instance for creating ChatOpenAI
         chat_id: Chat ID for logging
         
     Returns:
@@ -215,15 +238,18 @@ async def _llm_intent_classification(
     prompt = get_intent_prompt(message, prompt_type="default")
     
     try:
-        # Call LLM with low temperature for consistent classification
-        response = await llm_provider.generate(
-            prompt=prompt,
-            max_tokens=10,
-            temperature=0.0
+        # Create LangChain ChatOpenAI instance using wrapper
+        llm = create_langchain_llm(
+            llm_provider,
+            temperature=0.0,  # Low temperature for consistent classification
+            max_tokens=10     # Only need a single word response
         )
         
-        # Extract and validate intent
-        intent = response.strip().lower()
+        # Call LLM using LangChain's ainvoke method
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        
+        # Extract and validate intent from response
+        intent = response.content.strip().lower()
         
         # Validate intent is one of the supported types
         valid_intents = ["greeting", "search", "booking", "faq"]

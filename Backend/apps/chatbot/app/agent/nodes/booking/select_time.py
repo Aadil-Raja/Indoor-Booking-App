@@ -2,11 +2,11 @@
 Select time node for booking subgraph.
 
 This module implements the select_time node that handles time slot selection
-in the booking flow. It retrieves available time slots for the selected date,
-gets pricing for each slot, presents them as list options, excludes blocked slots,
+in the booking flow using LangChain agent. It retrieves available time slots for the selected date,
+gets pricing for each slot, uses an LLM agent to parse user selection, excludes blocked slots,
 stores the selected time in flow_state, and handles invalid selections gracefully.
 
-Requirements: 6.3, 10.1-10.6, 20.5, 22.1-22.6, 23.3
+Requirements: 6.3, 9.1, 9.2, 10.1-10.6, 20.5, 22.1-22.6, 23.3
 """
 
 from typing import Optional, Dict, Any, List
@@ -16,12 +16,16 @@ from datetime import datetime, time
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.tools import TOOL_REGISTRY
+from app.services.llm.langchain_wrapper import create_langchain_llm
+from app.agent.prompts.booking_prompts import create_select_time_prompt
+from app.services.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
 async def select_time(
     state: ConversationState,
+    llm_provider: LLMProvider,
     tools: Optional[Dict[str, Any]] = None
 ) -> ConversationState:
     """
@@ -168,6 +172,7 @@ async def select_time(
         # User is responding with a time selection
         return await _process_time_selection(
             state=state,
+            llm_provider=llm_provider,
             tools=tools,
             chat_id=chat_id,
             user_message=user_message,
@@ -306,6 +311,7 @@ async def _present_time_options(
 
 async def _process_time_selection(
     state: ConversationState,
+    llm_provider: LLMProvider,
     tools: Dict[str, Any],
     chat_id: str,
     user_message: str,
@@ -313,13 +319,14 @@ async def _process_time_selection(
     bot_memory: Dict[str, Any]
 ) -> ConversationState:
     """
-    Process user's time slot selection.
+    Process user's time slot selection using LangChain agent.
     
-    This function parses the user's selection (time slot),
-    validates it, and stores the selected time in flow_state.
+    This function uses a LangChain agent to intelligently parse the user's
+    selection, validates it, and stores the selected time in flow_state.
     
     Args:
         state: ConversationState
+        llm_provider: LLMProvider for creating LangChain LLM
         tools: Tool registry
         chat_id: Chat ID for logging
         user_message: User's selection message
@@ -371,78 +378,250 @@ async def _process_time_selection(
             
             return state
     
-    # Parse user selection
-    selected_slot = _parse_time_selection(
-        user_message=user_message,
-        available_slots=available_slots
-    )
-    
-    if not selected_slot:
-        # Invalid selection
-        logger.warning(
-            f"Invalid time selection for chat {chat_id}: {user_message}"
+    # Create LangChain LLM
+    try:
+        llm = create_langchain_llm(llm_provider)
+    except Exception as e:
+        logger.error(f"Failed to create LangChain LLM for chat {chat_id}: {e}", exc_info=True)
+        # Fallback to manual parsing
+        selected_slot = _parse_time_selection(
+            user_message=user_message,
+            available_slots=available_slots
         )
         
-        # Generate helpful error message with available options
-        slot_times = [
-            f"{s.get('start_time')} - {s.get('end_time')}"
-            for s in available_slots[:5]  # Show first 5
-        ]
-        options_text = ", ".join(slot_times)
+        if not selected_slot:
+            # Invalid selection
+            logger.warning(
+                f"Invalid time selection for chat {chat_id}: {user_message}"
+            )
+            
+            # Generate helpful error message with available options
+            slot_times = [
+                f"{s.get('start_time')} - {s.get('end_time')}"
+                for s in available_slots[:5]  # Show first 5
+            ]
+            options_text = ", ".join(slot_times)
+            
+            response = (
+                f"I couldn't find that time slot. "
+                f"Please select from the available options: {options_text}"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
+        
+        # Valid selection - store in flow_state
+        start_time = selected_slot.get("start_time")
+        end_time = selected_slot.get("end_time")
+        price = selected_slot.get("price_per_hour")
+        label = selected_slot.get("label", "")
+        
+        flow_state["start_time"] = start_time
+        flow_state["end_time"] = end_time
+        flow_state["price"] = price
+        flow_state["price_label"] = label
+        flow_state["step"] = "time_selected"
+        
+        state["flow_state"] = flow_state
+        
+        # Generate confirmation message
+        service_name = flow_state.get("service_name", "the court")
+        date_str = flow_state.get("date", "")
+        
+        try:
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+            formatted_date = date_obj.strftime("%A, %B %d, %Y")
+        except ValueError:
+            formatted_date = date_str
+        
+        # Format time for display (remove seconds if present)
+        display_start = _format_time_for_display(start_time)
+        display_end = _format_time_for_display(end_time)
         
         response = (
-            f"I couldn't find that time slot. "
-            f"Please select from the available options: {options_text}"
+            f"Perfect! You've selected {display_start} - {display_end} "
+            f"for {service_name} on {formatted_date}. "
+            f"The price is ${price:.2f}/hour"
         )
+        
+        if label:
+            response += f" ({label})"
+        
+        response += ". Let me prepare your booking summary."
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
         
-        # Keep step as select_time to allow retry
+        logger.info(
+            f"Time selected for chat {chat_id}: "
+            f"start_time={start_time}, end_time={end_time}, price=${price}"
+        )
+        
         return state
     
-    # Valid selection - store in flow_state
-    start_time = selected_slot.get("start_time")
-    end_time = selected_slot.get("end_time")
-    price = selected_slot.get("price_per_hour")
-    label = selected_slot.get("label", "")
-    
-    flow_state["start_time"] = start_time
-    flow_state["end_time"] = end_time
-    flow_state["price"] = price
-    flow_state["price_label"] = label
-    flow_state["step"] = "time_selected"
-    
-    state["flow_state"] = flow_state
-    
-    # Generate confirmation message
+    # Create prompt for time selection
+    property_name = flow_state.get("property_name", "the property")
     service_name = flow_state.get("service_name", "the court")
     date_str = flow_state.get("date", "")
     
+    prompt = create_select_time_prompt(property_name, service_name, date_str, available_slots)
+    
+    # Use LLM to parse selection
     try:
-        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-        formatted_date = date_obj.strftime("%A, %B %d, %Y")
-    except ValueError:
-        formatted_date = date_str
-    
-    # Format time for display (remove seconds if present)
-    display_start = _format_time_for_display(start_time)
-    display_end = _format_time_for_display(end_time)
-    
-    response = (
-        f"Perfect! You've selected {display_start} - {display_end} "
-        f"for {service_name} on {formatted_date}. "
-        f"The price is ${price:.2f}/hour"
-    )
-    
-    if label:
-        response += f" ({label})"
-    
-    response += ". Let me prepare your booking summary."
-    
-    state["response_content"] = response
-    state["response_type"] = "text"
+        messages = prompt.format_messages(input=user_message)
+        response_obj = await llm.ainvoke(messages)
+        agent_response = response_obj.content.strip()
+        
+        logger.debug(f"Agent response for time selection: {agent_response}")
+        
+        # Try to extract start time from response (HH:MM:SS format)
+        time_match = re.search(r'(\d{2}):(\d{2}):(\d{2})', agent_response)
+        
+        if time_match:
+            start_time_str = time_match.group(0)
+            
+            # Find slot with this start time
+            selected_slot = None
+            for slot in available_slots:
+                if slot.get("start_time") == start_time_str:
+                    selected_slot = slot
+                    break
+            
+            if selected_slot:
+                # Valid selection - store in flow_state
+                start_time = selected_slot.get("start_time")
+                end_time = selected_slot.get("end_time")
+                price = selected_slot.get("price_per_hour")
+                label = selected_slot.get("label", "")
+                
+                flow_state["start_time"] = start_time
+                flow_state["end_time"] = end_time
+                flow_state["price"] = price
+                flow_state["price_label"] = label
+                flow_state["step"] = "time_selected"
+                
+                state["flow_state"] = flow_state
+                
+                # Generate confirmation message
+                try:
+                    date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                    formatted_date = date_obj.strftime("%A, %B %d, %Y")
+                except ValueError:
+                    formatted_date = date_str
+                
+                # Format time for display (remove seconds if present)
+                display_start = _format_time_for_display(start_time)
+                display_end = _format_time_for_display(end_time)
+                
+                response = (
+                    f"Perfect! You've selected {display_start} - {display_end} "
+                    f"for {service_name} on {formatted_date}. "
+                    f"The price is ${price:.2f}/hour"
+                )
+                
+                if label:
+                    response += f" ({label})"
+                
+                response += ". Let me prepare your booking summary."
+                
+                state["response_content"] = response
+                state["response_type"] = "text"
+                state["response_metadata"] = {}
+                
+                logger.info(
+                    f"Time selected for chat {chat_id}: "
+                    f"start_time={start_time}, end_time={end_time}, price=${price}"
+                )
+                
+                return state
+        
+        # Agent is asking for clarification or couldn't parse
+        state["response_content"] = agent_response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        
+        logger.info(f"Agent asking for clarification in chat {chat_id}")
+        
+        return state
+        
+    except Exception as e:
+        logger.error(f"Error using LangChain agent for time selection in chat {chat_id}: {e}", exc_info=True)
+        
+        # Fallback to manual parsing
+        selected_slot = _parse_time_selection(
+            user_message=user_message,
+            available_slots=available_slots
+        )
+        
+        if not selected_slot:
+            # Invalid selection
+            logger.warning(
+                f"Invalid time selection for chat {chat_id}: {user_message}"
+            )
+            
+            # Generate helpful error message with available options
+            slot_times = [
+                f"{s.get('start_time')} - {s.get('end_time')}"
+                for s in available_slots[:5]  # Show first 5
+            ]
+            options_text = ", ".join(slot_times)
+            
+            response = (
+                f"I couldn't find that time slot. "
+                f"Please select from the available options: {options_text}"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
+        
+        # Valid selection - store in flow_state
+        start_time = selected_slot.get("start_time")
+        end_time = selected_slot.get("end_time")
+        price = selected_slot.get("price_per_hour")
+        label = selected_slot.get("label", "")
+        
+        flow_state["start_time"] = start_time
+        flow_state["end_time"] = end_time
+        flow_state["price"] = price
+        flow_state["price_label"] = label
+        flow_state["step"] = "time_selected"
+        
+        state["flow_state"] = flow_state
+        
+        # Generate confirmation message
+        service_name = flow_state.get("service_name", "the court")
+        date_str = flow_state.get("date", "")
+        
+        try:
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+            formatted_date = date_obj.strftime("%A, %B %d, %Y")
+        except ValueError:
+            formatted_date = date_str
+        
+        # Format time for display (remove seconds if present)
+        display_start = _format_time_for_display(start_time)
+        display_end = _format_time_for_display(end_time)
+        
+        response = (
+            f"Perfect! You've selected {display_start} - {display_end} "
+            f"for {service_name} on {formatted_date}. "
+            f"The price is ${price:.2f}/hour"
+        )
+        
+        if label:
+            response += f" ({label})"
+        
+        response += ". Let me prepare your booking summary."
+        
+        state["response_content"] = response
+        state["response_type"] = "text"
     state["response_metadata"] = {}
     
     logger.info(

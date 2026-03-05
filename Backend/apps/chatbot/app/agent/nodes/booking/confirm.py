@@ -2,11 +2,11 @@
 Confirm booking node for booking subgraph.
 
 This module implements the confirm node that handles booking confirmation
-in the booking flow. It generates a comprehensive booking summary with all details
-(property, court, date, time, price), asks for explicit user confirmation,
-handles confirmation/cancellation/modification requests, and updates flow_state accordingly.
+in the booking flow using LangChain agent. It generates a comprehensive booking summary,
+uses an LLM agent to parse user confirmation/cancellation/modification requests,
+and updates flow_state accordingly.
 
-Requirements: 6.3, 22.1-22.6
+Requirements: 6.3, 9.1, 9.2, 9.3, 22.1-22.6
 """
 
 from typing import Optional, Dict, Any
@@ -15,12 +15,16 @@ from datetime import datetime
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.tools import TOOL_REGISTRY
+from app.services.llm.langchain_wrapper import create_langchain_llm
+from app.agent.prompts.booking_prompts import create_confirm_booking_prompt
+from app.services.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
 async def confirm_booking(
     state: ConversationState,
+    llm_provider: LLMProvider,
     tools: Optional[Dict[str, Any]] = None
 ) -> ConversationState:
     """
@@ -121,6 +125,7 @@ async def confirm_booking(
         # User is responding to confirmation prompt
         return await _process_confirmation_response(
             state=state,
+            llm_provider=llm_provider,
             chat_id=chat_id,
             user_message=user_message,
             flow_state=flow_state
@@ -280,14 +285,16 @@ async def _present_booking_summary(
 
 async def _process_confirmation_response(
     state: ConversationState,
+    llm_provider: LLMProvider,
     chat_id: str,
     user_message: str,
     flow_state: Dict[str, Any]
 ) -> ConversationState:
     """
-    Process user's confirmation response.
+    Process user's confirmation response using LangChain agent.
     
-    This function parses the user's response to determine if they want to:
+    This function uses a LangChain agent to intelligently parse the user's
+    response to determine if they want to:
     - Confirm the booking (proceed to create booking)
     - Cancel the booking (clear flow_state)
     - Modify the booking (return to appropriate step)
@@ -308,6 +315,201 @@ async def _process_confirmation_response(
     """
     message_lower = user_message.lower().strip()
     
+    # Try using LangChain agent for intelligent parsing
+    try:
+        llm = create_langchain_llm(llm_provider)
+        prompt = create_confirm_booking_prompt(flow_state)
+        
+        messages = prompt.format_messages(input=user_message)
+        response_obj = await llm.ainvoke(messages)
+        agent_response = response_obj.content.strip().upper()
+        
+        logger.debug(f"Agent response for confirmation: {agent_response}")
+        
+        # Handle agent response
+        if agent_response == "CONFIRM":
+            # User confirmed the booking
+            logger.info(f"User confirmed booking for chat {chat_id}")
+            
+            response = (
+                "Great! I'm creating your booking now..."
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            # Update flow state to confirmed
+            flow_state["step"] = "confirmed"
+            state["flow_state"] = flow_state
+            
+            return state
+            
+        elif agent_response == "CANCEL":
+            # User cancelled the booking
+            logger.info(f"User cancelled booking for chat {chat_id}")
+            
+            response = (
+                "No problem! Your booking has been cancelled. "
+                "Is there anything else I can help you with?"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            # Clear all booking fields from flow_state
+            booking_fields = [
+                "property_id", "property_name",
+                "service_id", "service_name", "sport_type",
+                "date", "start_time", "end_time",
+                "price", "price_label", "total_price", "duration_hours"
+            ]
+            
+            for field in booking_fields:
+                flow_state.pop(field, None)
+            
+            flow_state["step"] = "cancelled"
+            flow_state["intent"] = None
+            state["flow_state"] = flow_state
+            
+            return state
+            
+        elif agent_response == "CHANGE_PROPERTY":
+            # User wants to change property
+            logger.info(f"User requested property change for chat {chat_id}")
+            
+            response = (
+                "No problem! Let's select a different facility. "
+                "Which facility would you like to book?"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            # Clear property and subsequent selections
+            flow_state.pop("property_id", None)
+            flow_state.pop("property_name", None)
+            flow_state.pop("service_id", None)
+            flow_state.pop("service_name", None)
+            flow_state.pop("sport_type", None)
+            flow_state.pop("date", None)
+            flow_state.pop("start_time", None)
+            flow_state.pop("end_time", None)
+            flow_state.pop("price", None)
+            flow_state.pop("price_label", None)
+            flow_state.pop("total_price", None)
+            flow_state.pop("duration_hours", None)
+            
+            flow_state["step"] = "select_property"
+            state["flow_state"] = flow_state
+            
+            return state
+            
+        elif agent_response == "CHANGE_SERVICE":
+            # User wants to change court
+            logger.info(f"User requested court change for chat {chat_id}")
+            
+            response = (
+                "No problem! Let's select a different court. "
+                "Which court would you like to book?"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            # Clear service and subsequent selections
+            flow_state.pop("service_id", None)
+            flow_state.pop("service_name", None)
+            flow_state.pop("sport_type", None)
+            flow_state.pop("date", None)
+            flow_state.pop("start_time", None)
+            flow_state.pop("end_time", None)
+            flow_state.pop("price", None)
+            flow_state.pop("price_label", None)
+            flow_state.pop("total_price", None)
+            flow_state.pop("duration_hours", None)
+            
+            flow_state["step"] = "property_selected"
+            state["flow_state"] = flow_state
+            
+            return state
+            
+        elif agent_response == "CHANGE_DATE":
+            # User wants to change date
+            logger.info(f"User requested date change for chat {chat_id}")
+            
+            response = (
+                "No problem! Let's select a different date. "
+                "When would you like to book?"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            # Clear date and subsequent selections
+            flow_state.pop("date", None)
+            flow_state.pop("start_time", None)
+            flow_state.pop("end_time", None)
+            flow_state.pop("price", None)
+            flow_state.pop("price_label", None)
+            flow_state.pop("total_price", None)
+            flow_state.pop("duration_hours", None)
+            
+            flow_state["step"] = "service_selected"
+            state["flow_state"] = flow_state
+            
+            return state
+            
+        elif agent_response == "CHANGE_TIME":
+            # User wants to change time
+            logger.info(f"User requested time change for chat {chat_id}")
+            
+            response = (
+                "No problem! Let's select a different time slot. "
+                "What time would you like to book?"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            # Clear time and price
+            flow_state.pop("start_time", None)
+            flow_state.pop("end_time", None)
+            flow_state.pop("price", None)
+            flow_state.pop("price_label", None)
+            flow_state.pop("total_price", None)
+            flow_state.pop("duration_hours", None)
+            
+            flow_state["step"] = "date_selected"
+            state["flow_state"] = flow_state
+            
+            return state
+            
+        elif agent_response == "CLARIFY":
+            # Agent is asking for clarification - response should be conversational
+            # Use the agent's actual response (before we uppercased it)
+            messages = prompt.format_messages(input=user_message)
+            response_obj = await llm.ainvoke(messages)
+            agent_clarification = response_obj.content.strip()
+            
+            state["response_content"] = agent_clarification
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            logger.info(f"Agent asking for clarification in chat {chat_id}")
+            
+            return state
+            
+    except Exception as e:
+        logger.error(f"Error using LangChain agent for confirmation in chat {chat_id}: {e}", exc_info=True)
+        # Fall through to manual parsing below
+    
+    # Fallback to manual parsing
     # Detect confirmation intent
     confirmation_keywords = [
         "yes", "confirm", "book", "proceed", "ok", "okay",

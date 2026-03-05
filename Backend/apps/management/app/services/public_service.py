@@ -1,6 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_
-from app.repositories import media_repo
 from shared.repositories import property_repo, court_repo, pricing_repo, availability_repo
 from shared.services import public_service
 from shared.utils.response_utils import make_response

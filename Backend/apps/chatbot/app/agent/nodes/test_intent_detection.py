@@ -6,7 +6,7 @@ into the correct intents using both rule-based patterns and LLM fallback.
 """
 
 import pytest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from typing import Dict, Any
 
 from .intent_detection import intent_detection, _rule_based_classification
@@ -42,7 +42,10 @@ def base_state() -> ConversationState:
 def mock_llm_provider() -> Mock:
     """Create a mock LLM provider."""
     provider = Mock(spec=LLMProvider)
-    provider.generate = AsyncMock()
+    provider.api_key = "test-api-key"
+    provider.model = "gpt-4o-mini"
+    provider.temperature = 0.7
+    provider.max_tokens = 500
     return provider
 
 
@@ -199,42 +202,63 @@ class TestIntentDetectionNode:
     async def test_llm_fallback_success(self, base_state, mock_llm_provider):
         """Test LLM fallback for ambiguous messages."""
         base_state["user_message"] = "I need something for tomorrow"
-        mock_llm_provider.generate.return_value = "booking"
         
-        result = await intent_detection(base_state, mock_llm_provider)
+        # Mock the ChatOpenAI response
+        mock_response = Mock()
+        mock_response.content = "booking"
         
-        assert result["intent"] == "booking"
-        assert result["flow_state"]["intent"] == "booking"
-        # LLM should be called for ambiguous message
-        mock_llm_provider.generate.assert_called_once()
-        call_args = mock_llm_provider.generate.call_args
-        assert "I need something for tomorrow" in call_args.kwargs["prompt"]
-        assert call_args.kwargs["temperature"] == 0.0
-        assert call_args.kwargs["max_tokens"] == 10
+        with patch('app.agent.nodes.intent_detection.create_langchain_llm') as mock_create_llm:
+            mock_llm = AsyncMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_llm.return_value = mock_llm
+            
+            result = await intent_detection(base_state, mock_llm_provider)
+            
+            assert result["intent"] == "booking"
+            assert result["flow_state"]["intent"] == "booking"
+            # LLM should be called for ambiguous message
+            mock_create_llm.assert_called_once()
+            mock_llm.ainvoke.assert_called_once()
+            # Verify temperature and max_tokens were set correctly
+            call_args = mock_create_llm.call_args
+            assert call_args.kwargs["temperature"] == 0.0
+            assert call_args.kwargs["max_tokens"] == 10
     
     @pytest.mark.asyncio
     async def test_llm_fallback_invalid_response(self, base_state, mock_llm_provider):
         """Test LLM fallback with invalid response defaults to FAQ."""
         base_state["user_message"] = "ambiguous message"
-        mock_llm_provider.generate.return_value = "invalid_intent"
         
-        result = await intent_detection(base_state, mock_llm_provider)
+        # Mock the ChatOpenAI response with invalid intent
+        mock_response = Mock()
+        mock_response.content = "invalid_intent"
         
-        assert result["intent"] == "faq"
-        assert result["flow_state"]["intent"] == "faq"
-        mock_llm_provider.generate.assert_called_once()
+        with patch('app.agent.nodes.intent_detection.create_langchain_llm') as mock_create_llm:
+            mock_llm = AsyncMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_llm.return_value = mock_llm
+            
+            result = await intent_detection(base_state, mock_llm_provider)
+            
+            assert result["intent"] == "faq"
+            assert result["flow_state"]["intent"] == "faq"
+            mock_llm.ainvoke.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_llm_fallback_error(self, base_state, mock_llm_provider):
         """Test LLM fallback error handling defaults to FAQ."""
         base_state["user_message"] = "ambiguous message"
-        mock_llm_provider.generate.side_effect = LLMProviderError("API error")
         
-        result = await intent_detection(base_state, mock_llm_provider)
-        
-        assert result["intent"] == "faq"
-        assert result["flow_state"]["intent"] == "faq"
-        mock_llm_provider.generate.assert_called_once()
+        with patch('app.agent.nodes.intent_detection.create_langchain_llm') as mock_create_llm:
+            mock_llm = AsyncMock()
+            mock_llm.ainvoke = AsyncMock(side_effect=Exception("API error"))
+            mock_create_llm.return_value = mock_llm
+            
+            result = await intent_detection(base_state, mock_llm_provider)
+            
+            assert result["intent"] == "faq"
+            assert result["flow_state"]["intent"] == "faq"
+            mock_llm.ainvoke.assert_called_once()
     
     @pytest.mark.asyncio
     async def test_no_llm_provider(self, base_state):
@@ -285,10 +309,19 @@ class TestIntentDetectionNode:
         
         # Test with informal booking - needs LLM fallback
         base_state["user_message"] = "wanna book a court"
-        mock_llm_provider.generate = AsyncMock(return_value="booking")
-        result = await intent_detection(base_state, mock_llm_provider)
-        # Should use LLM fallback for "wanna"
-        assert result["intent"] == "booking"
+        
+        # Mock the ChatOpenAI response
+        mock_response = Mock()
+        mock_response.content = "booking"
+        
+        with patch('app.agent.nodes.intent_detection.create_langchain_llm') as mock_create_llm:
+            mock_llm = AsyncMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_llm.return_value = mock_llm
+            
+            result = await intent_detection(base_state, mock_llm_provider)
+            # Should use LLM fallback for "wanna"
+            assert result["intent"] == "booking"
 
 
 # Edge Cases
@@ -362,20 +395,36 @@ class TestEdgeCases:
     async def test_llm_returns_whitespace(self, base_state, mock_llm_provider):
         """Test LLM returning whitespace is handled correctly."""
         base_state["user_message"] = "ambiguous"
-        mock_llm_provider.generate.return_value = "  search  \n"
         
-        result = await intent_detection(base_state, mock_llm_provider)
+        # Mock the ChatOpenAI response with whitespace
+        mock_response = Mock()
+        mock_response.content = "  search  \n"
         
-        # Should strip whitespace and recognize valid intent
-        assert result["intent"] == "search"
+        with patch('app.agent.nodes.intent_detection.create_langchain_llm') as mock_create_llm:
+            mock_llm = AsyncMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_llm.return_value = mock_llm
+            
+            result = await intent_detection(base_state, mock_llm_provider)
+            
+            # Should strip whitespace and recognize valid intent
+            assert result["intent"] == "search"
     
     @pytest.mark.asyncio
     async def test_llm_returns_uppercase(self, base_state, mock_llm_provider):
         """Test LLM returning uppercase is handled correctly."""
         base_state["user_message"] = "ambiguous"
-        mock_llm_provider.generate.return_value = "BOOKING"
         
-        result = await intent_detection(base_state, mock_llm_provider)
+        # Mock the ChatOpenAI response with uppercase
+        mock_response = Mock()
+        mock_response.content = "BOOKING"
         
-        # Should convert to lowercase and recognize valid intent
-        assert result["intent"] == "booking"
+        with patch('app.agent.nodes.intent_detection.create_langchain_llm') as mock_create_llm:
+            mock_llm = AsyncMock()
+            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create_llm.return_value = mock_llm
+            
+            result = await intent_detection(base_state, mock_llm_provider)
+            
+            # Should convert to lowercase and recognize valid intent
+            assert result["intent"] == "booking"
