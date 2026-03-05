@@ -8,7 +8,7 @@ conditional routing based on detected intent.
 The main graph includes:
 - Basic flow nodes (receive_message, load_chat, append_user_message)
 - Intent detection node
-- Handler nodes (greeting, information, faq)
+- Handler nodes (greeting, information)
 - Booking subgraph (integrated as a node)
 
 Requirements: 6.1-6.8
@@ -23,9 +23,8 @@ from app.agent.state.conversation_state import ConversationState
 from app.agent.nodes.basic_nodes import receive_message, load_chat, append_user_message
 from app.agent.nodes.intent_detection import intent_detection
 from app.agent.nodes.greeting import greeting_handler
-# from app.agent.nodes.indoor_search import indoor_search_handler  # Replaced by information_node
-from app.agent.nodes.information import information_node  # New LangChain agent-based node
-from app.agent.nodes.faq import faq_handler
+# from app.agent.nodes.indoor_search import indoor_search_handler  # Replaced by information_handler
+from app.agent.nodes.information import information_handler  # New LangChain agent-based node
 from app.agent.graphs.booking_subgraph import create_booking_subgraph
 
 logger = logging.getLogger(__name__)
@@ -47,20 +46,23 @@ def create_main_graph(
     1. receive_message: Entry point, validates incoming message
     2. load_chat: Loads chat history and context
     3. append_user_message: Adds user message to bot_memory
-    4. intent_detection: Classifies user intent
-    5. [Handler nodes]: Routes to appropriate handler based on intent
+    4. intent_detection: Uses LLM to determine next_node routing decision
+    5. [Handler nodes]: Routes to appropriate handler based on LLM's next_node
        - greeting: Handles greetings
        - information: Handles facility search, availability, pricing, media (LangChain agent)
        - booking: Handles booking flow (subgraph)
-       - faq: Handles general questions
     6. END: Terminates the graph execution
     
     Routing:
-    - Conditional routing from intent_detection based on detected intent
+    - LLM-driven routing from intent_detection based on next_node decision
     - All handler nodes route to END
-    - Unknown intents default to FAQ handler
+    - Unknown next_node values default to greeting handler
     
     Implements Requirements:
+    - 2.1: LLM SHALL return next_node field
+    - 2.2: Remove rule-based logic for intent determination
+    - 2.3: LLM makes routing decisions
+    - 2.4: Route to node specified by LLM's next_node decision
     - 6.1: LangGraph high-level graph with all required nodes
     - 6.2: Intent_Detection node routes to appropriate handler
     - 6.3: Booking_Subgraph integrated as a node
@@ -130,14 +132,10 @@ def create_main_graph(
         return await greeting_handler(state, llm_provider)
     
     async def information_handler_node(state):
-        return await information_node(state, llm_provider)
-    
-    async def faq_node(state):
-        return await faq_handler(state, llm_provider)
+        return await information_handler(state, llm_provider)
     
     graph.add_node("greeting", greeting_node)
     graph.add_node("information", information_handler_node)
-    graph.add_node("faq", faq_node)
     
     # Add booking subgraph as a node
     booking_subgraph = create_booking_subgraph(tools)
@@ -149,17 +147,14 @@ def create_main_graph(
     graph.add_edge("load_chat", "append_user_message")
     graph.add_edge("append_user_message", "intent_detection")
     
-    # Add conditional routing from intent detection
+    # Add conditional routing from intent detection based on LLM's next_node decision
     graph.add_conditional_edges(
         "intent_detection",
-        route_by_intent,
+        route_by_next_node,
         {
             "greeting": "greeting",
-            "search": "information",  # Route search intent to information node
-            "information": "information",  # Route information intent to information node
-            "booking": "booking",
-            "faq": "faq",
-            "unknown": "faq"  # Default to FAQ for unknown intents
+            "information": "information",
+            "booking": "booking"
         }
     )
     
@@ -167,7 +162,6 @@ def create_main_graph(
     graph.add_edge("greeting", END)
     graph.add_edge("information", END)
     graph.add_edge("booking", END)
-    graph.add_edge("faq", END)
     
     logger.info("Main conversation graph created successfully")
     
@@ -175,59 +169,62 @@ def create_main_graph(
     return graph.compile()
 
 
-def route_by_intent(state: ConversationState) -> str:
+def route_by_next_node(state: ConversationState) -> str:
     """
-    Route to appropriate handler based on detected intent.
+    Route to appropriate handler based on LLM's next_node decision.
     
-    This function examines the intent field in the ConversationState and
-    returns the corresponding handler node name. It's used as the routing
-    function for the conditional edge from intent_detection.
+    This function examines the next_node field in the ConversationState (set by
+    the intent_detection node) and returns the corresponding handler node name.
+    It's used as the routing function for the conditional edge from intent_detection.
     
     The function handles:
     - greeting: Route to greeting handler
-    - search: Route to information node (LangChain agent)
     - information: Route to information node (LangChain agent)
     - booking: Route to booking subgraph
-    - faq: Route to FAQ handler
-    - unknown/missing: Default to FAQ handler
+    - unknown/missing: Default to information handler (handles all informational queries)
     
-    Implements Requirement 6.2: Intent_Detection node routes to appropriate
-    handler node.
+    Implements Requirements:
+    - 1.1: Remove FAQ node from conversation flow
+    - 1.2: Route FAQ-like queries to information handler
+    - 1.3: Route all informational queries to information handler
+    - 2.1: LLM SHALL return next_node field
+    - 2.4: Route to node specified by LLM's next_node decision
     
     Args:
-        state: ConversationState containing the detected intent
+        state: ConversationState containing the next_node decision
         
     Returns:
-        Handler node name: "greeting", "search", "information", "booking", "faq", or "unknown"
+        Handler node name: "greeting", "information", or "booking"
         
     Example:
-        state = {"intent": "booking", ...}
-        route = route_by_intent(state)
+        state = {"next_node": "booking", ...}
+        route = route_by_next_node(state)
         # Returns: "booking"
         
-        state = {"intent": "search", ...}
-        route = route_by_intent(state)
-        # Returns: "search" (which maps to "information" in conditional_edges)
+        state = {"next_node": "information", ...}
+        route = route_by_next_node(state)
+        # Returns: "information"
         
-        state = {"intent": "unknown", ...}
-        route = route_by_intent(state)
-        # Returns: "unknown" (which maps to "faq" in conditional_edges)
+        state = {}  # Missing next_node
+        route = route_by_next_node(state)
+        # Returns: "information" (handles unknown intents)
     """
-    intent = state.get("intent", "unknown")
+    next_node = state.get("next_node", "information")
     
     logger.debug(
-        f"Routing by intent for chat {state.get('chat_id')}: {intent}"
+        f"Routing by next_node for chat {state.get('chat_id')}: {next_node}"
     )
     
-    # Validate intent is one of the expected values
-    valid_intents = ["greeting", "search", "information", "booking", "faq"]
+    # Validate next_node is one of the expected values
+    valid_nodes = ["greeting", "information", "booking"]
     
-    if intent in valid_intents:
-        return intent
+    if next_node in valid_nodes:
+        return next_node
     else:
-        # Unknown or invalid intent, default to unknown (which maps to faq)
+        # Unknown or invalid next_node, default to information handler
+        # This ensures FAQ-like queries and unknown intents are handled by information
         logger.warning(
-            f"Unknown intent '{intent}' for chat {state.get('chat_id')}, "
-            f"routing to unknown (faq)"
+            f"Unknown next_node '{next_node}' for chat {state.get('chat_id')}, "
+            f"routing to information handler"
         )
-        return "unknown"
+        return "information"

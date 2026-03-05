@@ -206,3 +206,266 @@ def _handle_court_availability(
             logger.info(f"Stored availability check: court {court_id} on {date}")
     except Exception as e:
         logger.error(f"Error handling court_availability: {e}", exc_info=True)
+
+
+
+async def load_bot_memory(
+    chat_id: str,
+    db_session
+) -> Dict[str, Any]:
+    """
+    Retrieve bot_memory from database.
+    
+    Loads the persistent bot_memory for a chat session from the database.
+    If the chat doesn't exist or bot_memory is empty, returns an initialized
+    empty bot_memory structure.
+    
+    Args:
+        chat_id: UUID string of the chat session
+        db_session: AsyncSession for database operations
+        
+    Returns:
+        Dict[str, Any]: Bot memory dictionary with conversation_history,
+                       user_preferences, and inferred_information
+                       
+    Example:
+        from uuid import UUID
+        bot_memory = await load_bot_memory(
+            chat_id=str(chat_id),
+            db_session=db
+        )
+        
+    Requirements: 4.1, 4.2, 4.6, 15.2, 15.4
+    """
+    from uuid import UUID
+    from app.repositories.chat_repository import ChatRepository
+    
+    try:
+        # Convert string to UUID
+        chat_uuid = UUID(chat_id)
+        
+        # Load chat from database
+        chat_repo = ChatRepository(db_session)
+        chat = await chat_repo.get_by_id(chat_uuid)
+        
+        if not chat:
+            logger.warning(f"Chat not found: {chat_id}, returning empty bot_memory")
+            return _initialize_bot_memory()
+        
+        # Get bot_memory from chat
+        bot_memory = chat.bot_memory
+        
+        if not bot_memory or not isinstance(bot_memory, dict):
+            logger.info(f"Empty or invalid bot_memory for chat {chat_id}, initializing")
+            return _initialize_bot_memory()
+        
+        # Ensure required structure exists
+        bot_memory = _ensure_bot_memory_structure(bot_memory)
+        
+        logger.debug(f"Loaded bot_memory for chat {chat_id}")
+        return bot_memory
+        
+    except ValueError as e:
+        logger.error(f"Invalid chat_id format: {chat_id}, error: {e}")
+        return _initialize_bot_memory()
+    except Exception as e:
+        logger.error(f"Error loading bot_memory for chat {chat_id}: {e}", exc_info=True)
+        return _initialize_bot_memory()
+
+
+async def save_bot_memory(
+    chat_id: str,
+    bot_memory: Dict[str, Any],
+    db_session
+) -> bool:
+    """
+    Persist bot_memory to database.
+    
+    Saves the bot_memory dictionary to the database for the specified chat.
+    Updates the chat's bot_memory field and commits the transaction.
+    
+    Args:
+        chat_id: UUID string of the chat session
+        bot_memory: Bot memory dictionary to persist
+        db_session: AsyncSession for database operations
+        
+    Returns:
+        bool: True if save successful, False otherwise
+        
+    Example:
+        success = await save_bot_memory(
+            chat_id=str(chat_id),
+            bot_memory=updated_memory,
+            db_session=db
+        )
+        
+    Requirements: 4.1, 4.2, 4.6, 15.2, 15.4
+    """
+    from uuid import UUID
+    from app.repositories.chat_repository import ChatRepository
+    
+    try:
+        # Convert string to UUID
+        chat_uuid = UUID(chat_id)
+        
+        # Load chat from database
+        chat_repo = ChatRepository(db_session)
+        chat = await chat_repo.get_by_id(chat_uuid)
+        
+        if not chat:
+            logger.error(f"Cannot save bot_memory: chat not found: {chat_id}")
+            return False
+        
+        # Validate bot_memory structure
+        if not isinstance(bot_memory, dict):
+            logger.error(f"Invalid bot_memory type: {type(bot_memory)}, expected dict")
+            return False
+        
+        # Update chat with new bot_memory
+        await chat_repo.update(chat, {"bot_memory": bot_memory})
+        
+        # Commit is handled by the session context manager
+        logger.debug(f"Saved bot_memory for chat {chat_id}")
+        return True
+        
+    except ValueError as e:
+        logger.error(f"Invalid chat_id format: {chat_id}, error: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Error saving bot_memory for chat {chat_id}: {e}", exc_info=True)
+        return False
+
+
+def update_bot_memory_preferences(
+    bot_memory: Dict[str, Any],
+    preferences: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Merge preference updates into bot_memory.
+    
+    Updates the user_preferences section of bot_memory with new preference
+    values. Performs a shallow merge, updating only the specified preference
+    fields while preserving others.
+    
+    Args:
+        bot_memory: Current bot memory dictionary
+        preferences: Dictionary of preference updates
+                    (preferred_time, preferred_sport, preferred_property, preferred_court)
+        
+    Returns:
+        Dict[str, Any]: Updated bot_memory
+        
+    Example:
+        updated = update_bot_memory_preferences(
+            bot_memory=current_memory,
+            preferences={"preferred_time": "morning", "preferred_sport": "tennis"}
+        )
+        
+    Requirements: 4.1, 4.2, 4.3, 4.4
+    """
+    if not isinstance(bot_memory, dict):
+        logger.warning("Bot memory is not a dict, initializing new memory")
+        bot_memory = _initialize_bot_memory()
+    
+    if not isinstance(preferences, dict):
+        logger.warning(f"Preferences is not a dict: {type(preferences)}, skipping update")
+        return bot_memory
+    
+    # Ensure user_preferences exists
+    if "user_preferences" not in bot_memory:
+        bot_memory["user_preferences"] = {}
+    
+    # Update preferences
+    bot_memory["user_preferences"].update(preferences)
+    
+    logger.debug(f"Updated user preferences: {list(preferences.keys())}")
+    return bot_memory
+
+
+def update_bot_memory_inferred(
+    bot_memory: Dict[str, Any],
+    inferred_info: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Merge inferred information into bot_memory.
+    
+    Updates the inferred_information section of bot_memory with new inferred
+    data. Performs a shallow merge, updating only the specified fields while
+    preserving others.
+    
+    Args:
+        bot_memory: Current bot memory dictionary
+        inferred_info: Dictionary of inferred information updates
+                      (booking_frequency, interests, context_notes)
+        
+    Returns:
+        Dict[str, Any]: Updated bot_memory
+        
+    Example:
+        updated = update_bot_memory_inferred(
+            bot_memory=current_memory,
+            inferred_info={"booking_frequency": "regular", "interests": ["tennis"]}
+        )
+        
+    Requirements: 4.1, 4.2
+    """
+    if not isinstance(bot_memory, dict):
+        logger.warning("Bot memory is not a dict, initializing new memory")
+        bot_memory = _initialize_bot_memory()
+    
+    if not isinstance(inferred_info, dict):
+        logger.warning(f"Inferred info is not a dict: {type(inferred_info)}, skipping update")
+        return bot_memory
+    
+    # Ensure inferred_information exists
+    if "inferred_information" not in bot_memory:
+        bot_memory["inferred_information"] = {}
+    
+    # Update inferred information
+    bot_memory["inferred_information"].update(inferred_info)
+    
+    logger.debug(f"Updated inferred information: {list(inferred_info.keys())}")
+    return bot_memory
+
+
+def _initialize_bot_memory() -> Dict[str, Any]:
+    """
+    Create an empty bot_memory with default structure.
+    
+    Returns:
+        Dict[str, Any]: Empty bot_memory with proper structure
+    """
+    return {
+        "conversation_history": [],
+        "user_preferences": {},
+        "inferred_information": {},
+        "context": {}
+    }
+
+
+def _ensure_bot_memory_structure(bot_memory: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure bot_memory has all required fields.
+    
+    Adds missing fields to bot_memory if they don't exist.
+    This handles backward compatibility with older bot_memory structures.
+    
+    Args:
+        bot_memory: Bot memory dictionary to validate
+        
+    Returns:
+        Dict[str, Any]: Bot memory with all required fields
+    """
+    if "conversation_history" not in bot_memory:
+        bot_memory["conversation_history"] = []
+    
+    if "user_preferences" not in bot_memory:
+        bot_memory["user_preferences"] = {}
+    
+    if "inferred_information" not in bot_memory:
+        bot_memory["inferred_information"] = {}
+    
+    if "context" not in bot_memory:
+        bot_memory["context"] = {}
+    
+    return bot_memory

@@ -1,13 +1,26 @@
 """
-Indoor search handler node for LangGraph conversation management.
+DEPRECATED: Indoor search handler node - REPLACED by information_handler
 
-NOTE: This node has been REPLACED by the information_node (app/agent/nodes/information.py)
+This node has been REPLACED by the information_handler (app/agent/nodes/information.py)
 which uses LangChain agents with automatic tool calling to handle all information-related
 queries including search, availability, pricing, and media.
 
-This file is kept for reference only and is NOT used in the main graph.
+This file is kept for backward compatibility and reference only.
+DO NOT USE THIS NODE IN NEW CODE - Use information_handler instead.
+
+MIGRATION GUIDE:
+- Old: from app.agent.nodes.indoor_search import indoor_search_handler
+- New: from app.agent.nodes.information import information_handler
+
+- Old: graph.add_node("indoor_search", indoor_search_handler)
+- New: graph.add_node("information", information_handler)
+
+- Old routing: "search": "indoor_search"
+- New routing: "information": "information"
 
 ---
+
+Legacy Documentation:
 
 This module implements the indoor_search_handler node that processes facility
 search requests. It extracts search parameters from user messages, calls property

@@ -9,22 +9,27 @@ execute appropriate tools based on user queries.
 Requirements: 8.4, 10.1
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 
 # =============================================================================
-# SYSTEM TEMPLATE - Information Assistant Instructions
+# SYSTEM TEMPLATE - Information Assistant Instructions (ReAct Pattern)
 # =============================================================================
 
-SYSTEM_TEMPLATE = """You are a helpful sports facility information assistant.
+SYSTEM_TEMPLATE = """You are a helpful sports facility information assistant using the ReAct (Reasoning + Acting) pattern.
 
-You help users find and learn about sports facilities, courts, availability, and pricing.
+You are {business_name}'s assistant, helping users find and learn about our sports facilities, courts, availability, and pricing.
+
+IMPORTANT: You only show and provide information about {business_name}'s properties. All search results and information are specific to our facilities.
 
 Owner Profile ID: {owner_profile_id}
 
 Context from previous conversation:
 {context}
+
+Fuzzy Search Context:
+{fuzzy_context}
 
 Available tools:
 - search_properties: Search for facilities by location and sport type
@@ -34,6 +39,17 @@ Available tools:
 - get_court_pricing: Get pricing information for a court
 - get_property_media: Get photos/videos of a property
 - get_court_media: Get photos/videos of a court
+
+ReAct Pattern Guidelines:
+You should use the following format:
+
+Thought: Think about what information you need to answer the user's question
+Action: The action to take, should be one of [search_properties, get_property_details, get_court_details, get_court_availability, get_court_pricing, get_property_media, get_court_media]
+Action Input: The input to the action
+Observation: The result of the action
+... (this Thought/Action/Action Input/Observation can repeat N times)
+Thought: I now know the final answer
+Final Answer: The final answer to the original input question
 
 Guidelines:
 - Use tools to get accurate, up-to-date information
@@ -46,6 +62,13 @@ Guidelines:
 - When showing multiple results, present them in a numbered list
 - Include relevant details like property name, location, sport type, and pricing when available
 - If a query requires multiple pieces of information, gather all data before responding
+
+Fuzzy Search Support:
+- If fuzzy_context indicates a sport name correction was made, acknowledge it naturally in your response
+- Common sport variations are automatically handled (e.g., "football" → "futsal", "soccer" → "futsal")
+- When a fuzzy match occurs, confirm the correction with the user: "I understood you're looking for [corrected_term] (you mentioned [original_term])."
+- Be friendly and natural when confirming fuzzy matches - make it conversational
+- If the user seems confused by the correction, explain that we offer [corrected_term] facilities
 
 Important:
 - Always pass owner_profile_id parameter when calling search_properties tool
@@ -62,19 +85,24 @@ Important:
 
 def create_information_prompt(
     owner_profile_id: int,
-    bot_memory: Dict[str, Any]
+    bot_memory: Dict[str, Any],
+    business_name: Optional[str] = None,
+    fuzzy_context: Optional[Dict[str, Any]] = None
 ) -> ChatPromptTemplate:
     """
-    Create a context-aware prompt for the information agent.
+    Create a context-aware prompt for the information agent using ReAct pattern.
     
     This function builds a ChatPromptTemplate that includes:
-    - System instructions for the information assistant
+    - System instructions for the information assistant with ReAct pattern
+    - Business name personalization for the assistant identity
+    - Context that bot only shows owner's properties
     - Context extracted from bot_memory (previous searches, preferences)
+    - Fuzzy search context for sport name corrections with confirmation prompts
     - Message placeholders for chat history and agent scratchpad
-    - Partial variables for owner_profile_id and context
+    - Partial variables for owner_profile_id, business_name, context, and fuzzy_context
     
-    The prompt is designed to work with LangChain's create_openai_functions_agent
-    and includes all necessary placeholders for agent execution.
+    The prompt is designed to work with LangChain's create_react_agent
+    and includes all necessary placeholders for ReAct agent execution.
     
     Args:
         owner_profile_id: The owner profile ID to filter properties by
@@ -92,6 +120,15 @@ def create_information_prompt(
                     "preferred_sport": "tennis"
                 }
             }
+        business_name: Optional business name for personalization (e.g., "ABC Sports Center")
+            If not provided, defaults to "our facility"
+        fuzzy_context: Optional dictionary with fuzzy search information
+            {
+                "fuzzy_match": True,
+                "original_term": "football",
+                "corrected_term": "futsal",
+                "confirmation_message": "I understood you're looking for futsal..."
+            }
             
     Returns:
         ChatPromptTemplate with partial variables injected
@@ -101,12 +138,15 @@ def create_information_prompt(
         ...     "context": {"last_search_results": ["6", "12"]},
         ...     "user_preferences": {"preferred_sport": "tennis"}
         ... }
+        >>> fuzzy_context = {"fuzzy_match": True, "original_term": "football"}
         >>> prompt = create_information_prompt(
         ...     owner_profile_id=1,
-        ...     bot_memory=bot_memory
+        ...     bot_memory=bot_memory,
+        ...     business_name="ABC Sports Center",
+        ...     fuzzy_context=fuzzy_context
         ... )
-        >>> # Use with LangChain agent
-        >>> agent = create_openai_functions_agent(llm, tools, prompt)
+        >>> # Use with LangChain ReAct agent
+        >>> agent = create_react_agent(llm, tools, prompt)
     """
     # Extract context from bot_memory
     context_parts = []
@@ -152,7 +192,20 @@ def create_information_prompt(
     # Build context string
     context = "\n".join(context_parts) if context_parts else "No previous context"
     
-    # Create prompt template with message placeholders
+    # Build fuzzy context string
+    fuzzy_context = fuzzy_context or {}
+    if fuzzy_context.get("fuzzy_match"):
+        fuzzy_str = (
+            f"Sport name correction applied: '{fuzzy_context.get('original_term')}' "
+            f"→ '{fuzzy_context.get('corrected_term')}'"
+        )
+    else:
+        fuzzy_str = "No fuzzy corrections applied"
+    
+    # Use business_name or default to "our facility"
+    business_name_str = business_name or "our facility"
+    
+    # Create prompt template with message placeholders for ReAct pattern
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_TEMPLATE),
         MessagesPlaceholder(variable_name="chat_history", optional=True),
@@ -160,10 +213,12 @@ def create_information_prompt(
         MessagesPlaceholder(variable_name="agent_scratchpad")
     ])
     
-    # Inject owner_profile_id and context as partial variables
+    # Inject owner_profile_id, business_name, context, and fuzzy_context as partial variables
     return prompt.partial(
         owner_profile_id=str(owner_profile_id),
-        context=context
+        business_name=business_name_str,
+        context=context,
+        fuzzy_context=fuzzy_str
     )
 
 

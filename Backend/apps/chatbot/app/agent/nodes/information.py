@@ -5,8 +5,8 @@ This module implements the information_node that handles all information-related
 queries using LangChain AgentExecutor with automatic tool calling. It processes
 queries about properties, courts, availability, pricing, and media.
 
-The node uses LangChain's create_openai_functions_agent to automatically select
-and execute appropriate tools based on user queries, without manual tool extraction.
+The node uses LangChain's create_react_agent (ReAct pattern) to automatically select
+and execute appropriate tools based on user queries, with reasoning and acting steps.
 
 Requirements: 1.1-1.5, 2.1-2.5, 3.1-3.5, 4.1-4.5, 5.1-5.5, 6.1-6.5, 7.1-7.5,
              8.1-8.5, 9.1-9.6, 10.1-10.5, 11.1-11.5
@@ -15,7 +15,8 @@ Requirements: 1.1-1.5, 2.1-2.5, 3.1-3.5, 4.1-4.5, 5.1-5.5, 6.1-6.5, 7.1-7.5,
 from typing import Optional
 import logging
 
-from langchain.agents import create_openai_functions_agent, AgentExecutor
+from langchain.agents import create_react_agent, AgentExecutor
+from langchain import hub
 
 from app.agent.state.conversation_state import ConversationState
 from app.services.llm.base import LLMProvider
@@ -24,62 +25,66 @@ from app.agent.tools.information_tools import INFORMATION_TOOLS
 from app.agent.tools.langchain_converter import create_langchain_tools
 from app.agent.prompts.information_prompts import create_information_prompt
 from app.agent.state.memory_manager import update_bot_memory
+from app.agent.state.llm_response_parser import parse_llm_response
 
 logger = logging.getLogger(__name__)
 
 
-async def information_node(
+async def information_handler(
     state: ConversationState,
     llm_provider: Optional[LLMProvider] = None
 ) -> ConversationState:
     """
-    Handle information queries using LangChain agent with automatic tool calling.
+    Handle information queries using LangChain ReAct agent with automatic tool calling.
     
     This node processes all information-related queries about properties, courts,
-    availability, pricing, and media. It uses a LangChain AgentExecutor that
+    availability, pricing, and media. It uses a LangChain ReAct AgentExecutor that
     automatically selects and executes appropriate tools based on the user's query.
+    
+    The ReAct (Reasoning + Acting) pattern allows the agent to:
+    - Reason about what information is needed
+    - Act by calling appropriate tools
+    - Observe the results
+    - Reason about next steps
+    - Continue until the query is fully answered
     
     The node follows the standard LangGraph node pattern:
     1. Extract state (user_message, owner_profile_id, bot_memory, flow_state)
     2. Create LangChain tools from INFORMATION_TOOLS registry
-    3. Build context-aware prompt with bot_memory
+    3. Build context-aware prompt with bot_memory and fuzzy search guidance
     4. Create ChatOpenAI LLM using create_langchain_llm()
-    5. Create agent using create_openai_functions_agent()
+    5. Create agent using create_react_agent()
     6. Execute AgentExecutor with automatic tool calling
-    7. Update bot_memory with results
-    8. Return updated state with response
+    7. Apply fuzzy search logic for sports and court names
+    8. Update bot_memory with results
+    9. Return updated state with response and next_node decision
     
     Implements Requirements:
-    - 1.1-1.5: Property search functionality
-    - 2.1-2.5: Property details retrieval
-    - 3.1-3.5: Court details retrieval
-    - 4.1-4.5: Court availability checking
-    - 5.1-5.5: Court pricing information
-    - 6.1-6.5: Media retrieval for properties and courts
-    - 7.1-7.5: Complex multi-tool queries
-    - 8.1-8.5: Context-aware conversations with bot_memory
-    - 9.1-9.6: LangChain agent with ChatOpenAI and automatic tool calling
-    - 10.1-10.5: LangGraph integration and routing
-    - 11.1-11.5: State management with bot_memory updates
+    - 9.2: Information_Handler processes all non-booking informational queries
+    - 9.3: Information_Handler uses existing search tools to retrieve information
+    - 9.4: LLM decides when to use search tools versus answering from context
+    - 9.5: Property details queries handled by Information_Handler
+    - 9.6: Court availability queries handled by Information_Handler
     
     Args:
         state: ConversationState containing user message and context
         llm_provider: LLMProvider instance for creating ChatOpenAI
         
     Returns:
-        ConversationState: Updated state with response_content and bot_memory
+        ConversationState: Updated state with response_content, bot_memory, and next_node
         
     Example:
         state = {
-            "user_message": "Show me tennis courts in New York",
+            "user_message": "Show me football courts in New York",
             "owner_profile_id": "1",
             "bot_memory": {},
             ...
         }
         
-        result = await information_node(state, llm_provider=provider)
+        result = await information_handler(state, llm_provider=provider)
         # result["response_content"] contains the agent's response
         # result["bot_memory"] contains updated context
+        # Fuzzy search: "football" → "futsal" with confirmation
     """
     # 1. Extract state
     chat_id = state["chat_id"]
@@ -94,12 +99,25 @@ async def information_node(
     )
     
     try:
-        # 2. Convert tools to LangChain format
+        # 2. Apply fuzzy search logic for sports and court names
+        fuzzy_message, fuzzy_context = _apply_fuzzy_search(user_message)
+        
+        # 3. Fetch owner profile to get business_name for personalization
+        logger.debug(f"Fetching owner profile for personalization - owner_profile_id={owner_profile_id}")
+        owner_profile = await _fetch_owner_profile(owner_profile_id, chat_id)
+        business_name = owner_profile.get("business_name") if owner_profile else None
+        
+        if business_name:
+            logger.info(f"Using business_name '{business_name}' for personalization in chat {chat_id}")
+        else:
+            logger.warning(f"No business_name found for owner_profile_id={owner_profile_id}, using default")
+        
+        # 4. Convert tools to LangChain format
         logger.debug("Converting information tools to LangChain format")
         langchain_tools = create_langchain_tools(INFORMATION_TOOLS)
         logger.info(f"Created {len(langchain_tools)} LangChain tools")
         
-        # 3. Create ChatOpenAI LLM using wrapper
+        # 5. Create ChatOpenAI LLM using wrapper
         if not llm_provider:
             raise ValueError("llm_provider is required for information node")
         
@@ -110,46 +128,59 @@ async def information_node(
             max_tokens=1000   # Allow longer responses for detailed information
         )
         
-        # 4. Build context-aware prompt
-        logger.debug("Building context-aware prompt with bot_memory")
+        # 6. Build context-aware prompt with business_name and fuzzy search guidance
+        logger.debug("Building context-aware ReAct prompt with bot_memory and business_name")
         prompt = create_information_prompt(
             owner_profile_id=int(owner_profile_id),
-            bot_memory=bot_memory
+            bot_memory=bot_memory,
+            business_name=business_name,
+            fuzzy_context=fuzzy_context
         )
         
-        # 5. Create agent using create_openai_functions_agent
-        logger.debug("Creating OpenAI functions agent")
-        agent = create_openai_functions_agent(llm, langchain_tools, prompt)
+        # 7. Create agent using create_react_agent (ReAct pattern)
+        logger.debug("Creating ReAct agent")
+        agent = create_react_agent(llm, langchain_tools, prompt)
         
-        # 6. Create AgentExecutor with agent and tools
+        # 8. Create AgentExecutor with agent and tools
         logger.debug("Creating AgentExecutor")
         agent_executor = AgentExecutor(
             agent=agent,
             tools=langchain_tools,
             verbose=True,  # Enable verbose logging for debugging
             max_iterations=5,  # Limit iterations to prevent infinite loops
-            handle_parsing_errors=True  # Gracefully handle parsing errors
+            handle_parsing_errors=True,  # Gracefully handle parsing errors
+            return_intermediate_steps=True  # Return tool calls for debugging
         )
         
-        # 7. Execute agent with ainvoke() passing user_message
-        logger.info(f"Executing agent for chat {chat_id}")
+        # 9. Execute agent with ainvoke() passing fuzzy-corrected message
+        logger.info(f"Executing ReAct agent for chat {chat_id}")
         result = await agent_executor.ainvoke({
-            "input": user_message,
+            "input": fuzzy_message,
             "chat_history": [],  # Could be populated from bot_memory if needed
         })
         
-        # 8. Update state with response_content from agent result
+        # 10. Update state with response_content from agent result
         response_content = result.get("output", "")
+        
+        # 11. Add fuzzy search confirmation if applicable
+        if fuzzy_context.get("fuzzy_match"):
+            confirmation = fuzzy_context["confirmation_message"]
+            response_content = f"{confirmation}\n\n{response_content}"
+        
         state["response_content"] = response_content
         state["response_type"] = "text"
-        state["response_metadata"] = {}
+        state["response_metadata"] = {
+            "fuzzy_match": fuzzy_context.get("fuzzy_match", False),
+            "original_term": fuzzy_context.get("original_term"),
+            "corrected_term": fuzzy_context.get("corrected_term")
+        }
         
         logger.info(
             f"Agent execution completed for chat {chat_id} - "
             f"response_length={len(response_content)}"
         )
         
-        # 9. Update bot_memory using update_bot_memory()
+        # 12. Update bot_memory using update_bot_memory()
         logger.debug("Updating bot_memory with agent results")
         updated_bot_memory = update_bot_memory(bot_memory, result)
         state["bot_memory"] = updated_bot_memory
@@ -159,10 +190,18 @@ async def information_node(
         if tools_used:
             logger.info(f"Tools used in this interaction: {', '.join(tools_used)}")
         
-        logger.info(f"Information node completed successfully for chat {chat_id}")
+        # 13. Determine next_node based on conversation flow
+        # Information handler typically stays in information mode unless user switches intent
+        next_node = _determine_next_node(user_message, response_content, flow_state)
+        state["next_node"] = next_node
+        
+        logger.info(
+            f"Information node completed successfully for chat {chat_id} - "
+            f"next_node={next_node}"
+        )
         
     except Exception as e:
-        # 10. Handle exceptions and return error message on failure
+        # 14. Handle exceptions and return error message on failure
         logger.error(
             f"Error in information node for chat {chat_id}: {e}",
             exc_info=True
@@ -174,5 +213,170 @@ async def information_node(
         )
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "information"  # Stay in information mode
     
     return state
+
+
+def _apply_fuzzy_search(user_message: str) -> tuple[str, dict]:
+    """
+    Apply fuzzy search logic for sports and court names.
+    
+    This function detects common variations and typos in sport names and
+    suggests corrections. For example:
+    - "football" → "futsal"
+    - "soccer" → "futsal"
+    - "hoops" → "basketball"
+    
+    Args:
+        user_message: Original user message
+        
+    Returns:
+        Tuple of (corrected_message, fuzzy_context)
+        - corrected_message: Message with fuzzy corrections applied
+        - fuzzy_context: Dict with fuzzy match information
+    """
+    # Sport name mappings (common variations → standard names)
+    sport_mappings = {
+        "football": "futsal",
+        "soccer": "futsal",
+        "hoops": "basketball",
+        "b-ball": "basketball",
+        "ping pong": "table tennis",
+        "pingpong": "table tennis",
+    }
+    
+    fuzzy_context = {
+        "fuzzy_match": False,
+        "original_term": None,
+        "corrected_term": None,
+        "confirmation_message": ""
+    }
+    
+    # Check for fuzzy matches (case-insensitive)
+    message_lower = user_message.lower()
+    corrected_message = user_message
+    
+    for original, corrected in sport_mappings.items():
+        if original in message_lower:
+            # Replace the term in the message
+            corrected_message = user_message.replace(original, corrected)
+            corrected_message = corrected_message.replace(original.title(), corrected.title())
+            corrected_message = corrected_message.replace(original.upper(), corrected.upper())
+            
+            # Build confirmation message
+            fuzzy_context["fuzzy_match"] = True
+            fuzzy_context["original_term"] = original
+            fuzzy_context["corrected_term"] = corrected
+            fuzzy_context["confirmation_message"] = (
+                f"I understood you're looking for {corrected} "
+                f"(you mentioned {original})."
+            )
+            
+            logger.info(
+                f"Fuzzy search applied: '{original}' → '{corrected}'"
+            )
+            break
+    
+    return corrected_message, fuzzy_context
+
+
+def _determine_next_node(
+    user_message: str,
+    response_content: str,
+    flow_state: dict
+) -> str:
+    """
+    Determine the next node based on conversation context.
+    
+    This function analyzes the user message and response to decide if the
+    conversation should stay in information mode or transition to booking.
+    
+    Args:
+        user_message: User's message
+        response_content: Agent's response
+        flow_state: Current flow state
+        
+    Returns:
+        Next node name: "information", "booking", or "greeting"
+    """
+    # Check for booking intent keywords
+    booking_keywords = [
+        "book", "reserve", "reservation", "schedule",
+        "book it", "i want to book", "make a booking"
+    ]
+    
+    message_lower = user_message.lower()
+    
+    # If user explicitly wants to book, transition to booking
+    for keyword in booking_keywords:
+        if keyword in message_lower:
+            logger.info("Detected booking intent, transitioning to booking node")
+            return "booking"
+    
+    # Check if already in booking flow
+    if flow_state.get("current_intent") == "booking":
+        return "booking"
+    
+    # Default: stay in information mode
+    return "information"
+
+
+async def _fetch_owner_profile(owner_profile_id: str, chat_id: str) -> dict:
+    """
+    Fetch owner profile to get business_name and other details for personalization.
+    
+    This function retrieves the owner profile from the database to extract
+    the business_name field, which is used to personalize the assistant's
+    identity in the information prompts.
+    
+    Args:
+        owner_profile_id: Owner profile ID
+        chat_id: Chat ID for logging
+        
+    Returns:
+        Dictionary with owner profile data including business_name
+        Returns empty dict if profile not found or error occurs
+        
+    Example:
+        >>> profile = await _fetch_owner_profile("1", "chat_123")
+        >>> print(profile["business_name"])
+        "ABC Sports Center"
+    """
+    try:
+        from sqlalchemy.orm import Session
+        from shared.models import OwnerProfile
+        from app.agent.tools.sync_bridge import call_sync_service
+        
+        def get_owner_profile_sync(db: Session, profile_id: int) -> dict:
+            """Sync function to fetch owner profile"""
+            profile = db.query(OwnerProfile).filter(OwnerProfile.id == profile_id).first()
+            if profile:
+                return {
+                    "id": profile.id,
+                    "business_name": profile.business_name,
+                    "phone": profile.phone,
+                    "address": profile.address,
+                    "verified": profile.verified
+                }
+            return {}
+        
+        # Call sync service using the bridge
+        profile_data = await call_sync_service(
+            get_owner_profile_sync,
+            db=None,  # Auto-managed by sync bridge
+            profile_id=int(owner_profile_id)
+        )
+        
+        logger.info(
+            f"Fetched owner profile for personalization - "
+            f"owner_profile_id={owner_profile_id}, chat={chat_id}"
+        )
+        return profile_data
+        
+    except Exception as e:
+        logger.error(
+            f"Error fetching owner profile for information node in chat {chat_id}: {e}",
+            exc_info=True
+        )
+        return {}

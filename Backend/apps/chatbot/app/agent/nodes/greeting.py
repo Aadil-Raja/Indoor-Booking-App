@@ -1,18 +1,25 @@
 """
 Greeting handler node for LangGraph conversation management.
 
-This module implements the greeting_handler node that responds to greeting intents.
-It generates contextual greetings based on session history, differentiating between
-new users (first message) and returning users (continuing conversation).
+This module implements the greeting_handler node that initializes conversation state
+and responds to greeting intents. It generates contextual greetings based on session
+history, differentiating between new users (first message) and returning users
+(continuing conversation).
 
-For new users, it fetches and displays property information to introduce the facility.
+For new users, it fetches and displays property information to introduce the facility,
+and caches the fetched properties in flow_state.owner_properties for later use in
+the booking flow. This ensures properties are available for both display and booking
+without redundant API calls.
+
+The greeting handler initializes flow_state and bot_memory but does NOT make routing
+decisions - intent detection handles routing to the appropriate next node.
 
 This node uses rule-based logic and does not require LangChain agents or tools,
 as greetings are deterministic based on user state. While the node accepts an
 llm_provider parameter for consistency with other nodes, it does not use LangChain
 or make any LLM calls.
 
-Requirements: 6.1, 21.1, 9.2, 9.3
+Requirements: 5.1, 5.2, 5.3, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6
 """
 
 from typing import Optional, Dict, Any
@@ -22,6 +29,8 @@ from app.agent.state.conversation_state import ConversationState
 from app.services.llm.base import LLMProvider
 from app.services.llm.langchain_wrapper import create_langchain_llm
 from app.agent.tools import TOOL_REGISTRY
+from app.agent.state.flow_state_manager import initialize_flow_state, validate_flow_state
+from app.agent.state.memory_manager import _initialize_bot_memory, _ensure_bot_memory_structure
 
 logger = logging.getLogger(__name__)
 
@@ -31,46 +40,76 @@ async def greeting_handler(
     llm_provider: Optional[LLMProvider] = None
 ) -> ConversationState:
     """
-    Handle greeting intents with contextual responses.
+    Handle greeting intents with contextual responses and state initialization.
     
-    This node generates friendly, contextual greetings based on the user's
-    conversation history. It differentiates between:
+    This node initializes conversation state (flow_state and bot_memory) and generates
+    friendly, contextual greetings based on the user's conversation history.
+    
+    It differentiates between:
     - New users: First message in the conversation (fetches property info to introduce facility)
     - Returning users: Continuing an existing conversation (has message history)
     
-    For new users, it fetches property details and displays them in a rich format
-    with property name, address, city, and map link.
+    For new users, it fetches property details, displays them in a rich format
+    with property name, address, city, and map link, and caches the fetched properties
+    in flow_state.owner_properties for later use in the booking flow. This ensures
+    properties are available for both display and booking without redundant API calls.
+    
+    IMPORTANT: This node does NOT make routing decisions. Intent detection handles
+    routing to the appropriate next node based on user intent.
     
     This node follows the standard LangGraph node pattern:
-    1. Extract state (user_message, bot_memory, flow_state)
-    2. Process (generate contextual greeting)
-    3. Return updated state (response_content, response_type, response_metadata)
+    1. Initialize flow_state and bot_memory if needed
+    2. Extract state (user_message, bot_memory, flow_state)
+    3. Process (generate contextual greeting)
+    4. Return updated state (response_content, response_type, response_metadata)
     
     Note: This node does not use LangChain agents or tools as greeting generation
     is rule-based and deterministic. The llm_provider parameter is accepted for
     consistency with other nodes but is not used.
     
     Implements Requirements:
-    - 6.1: LangGraph high-level graph with Greeting handler node
-    - 21.1: Route greeting messages to Greeting node
-    - 9.2: Use LangChain for all LLM interactions (N/A - no LLM needed)
-    - 9.3: No tools needed for greeting node (tools=None)
+    - 5.1: Fetch owner_properties in greeting handler
+    - 5.2: Display available properties to user in greeting message
+    - 5.3: Cache fetched properties in flow_state.owner_properties
+    - 10.1: Initialize Flow_State when a conversation begins
+    - 10.2: Initialize Bot_Memory when a conversation begins
+    - 10.3: Set up conversation context for subsequent nodes
+    - 10.4: First node to process message when user starts conversation
+    - 10.5: Remain as separate node in conversation flow
+    - 10.6: Introduce assistant and present available properties
     
     Args:
         state: ConversationState containing user message and bot_memory
         llm_provider: Optional LLMProvider (not used in this node)
         
     Returns:
-        ConversationState: State with response_content, response_type, and response_metadata set
+        ConversationState: State with initialized flow_state, bot_memory, and greeting response
     """
-    # 1. Extract state
+    # 1. Initialize flow_state if not present or invalid (Requirement 10.1)
+    flow_state = state.get("flow_state", {})
+    if not flow_state or not validate_flow_state(flow_state):
+        logger.info(f"Initializing flow_state for chat {state['chat_id']}")
+        state["flow_state"] = initialize_flow_state()
+        flow_state = state["flow_state"]
+    
+    # 2. Initialize bot_memory if not present (Requirement 10.2)
+    bot_memory = state.get("bot_memory", {})
+    if not bot_memory or not isinstance(bot_memory, dict):
+        logger.info(f"Initializing bot_memory for chat {state['chat_id']}")
+        state["bot_memory"] = _initialize_bot_memory()
+        bot_memory = state["bot_memory"]
+    else:
+        # Ensure bot_memory has proper structure
+        state["bot_memory"] = _ensure_bot_memory_structure(bot_memory)
+        bot_memory = state["bot_memory"]
+    
+    # 3. Set up conversation context (Requirement 10.3)
     chat_id = state["chat_id"]
     owner_profile_id = state["owner_profile_id"]
-    bot_memory = state.get("bot_memory", {})
     
     logger.info(f"Processing greeting for chat {chat_id}")
     
-    # 2. Process - Generate contextual greeting
+    # 4. Process - Generate contextual greeting
     # Check if this is a returning user by examining bot_memory
     is_returning = _is_returning_user(bot_memory)
     
@@ -82,28 +121,37 @@ async def greeting_handler(
         state["response_metadata"] = {}
         logger.debug(f"Generated returning user greeting for chat {chat_id}")
     else:
-        # New user - fetch property details and create rich greeting
+        # New user - fetch owner profile and property details (Requirement 10.6)
+        owner_profile = await _fetch_owner_profile(owner_profile_id, chat_id)
         properties = await _fetch_owner_properties(owner_profile_id, chat_id)
         
+        # Cache fetched properties in flow_state for later use (Requirements 5.1, 5.2, 5.3)
         if properties:
-            # Generate rich greeting with property information
-            response, response_type, metadata = _generate_new_user_greeting_with_properties(properties)
+            flow_state["owner_properties"] = properties
+            logger.info(f"Cached {len(properties)} properties in flow_state for chat {chat_id}")
+        
+        if properties:
+            # Generate rich greeting with business_name and property information
+            response, response_type, metadata = _generate_new_user_greeting_with_properties(
+                owner_profile, properties
+            )
             state["response_content"] = response
             state["response_type"] = response_type
             state["response_metadata"] = metadata
             logger.debug(f"Generated new user greeting with {len(properties)} properties for chat {chat_id}")
         else:
             # Fallback to simple greeting if no properties found
-            response = _generate_new_user_greeting()
+            response = _generate_new_user_greeting(owner_profile)
             state["response_content"] = response
             state["response_type"] = "text"
             state["response_metadata"] = {}
             logger.debug(f"Generated simple new user greeting (no properties) for chat {chat_id}")
     
-    # 3. Return updated state
+    # 5. Return updated state
+    # NOTE: This node does NOT set next_node - intent detection handles routing
     logger.info(
         f"Greeting handler completed for chat {chat_id} - "
-        f"is_returning={is_returning}"
+        f"is_returning={is_returning}, flow_state initialized, bot_memory initialized"
     )
     
     return state
@@ -154,7 +202,7 @@ def _is_returning_user(bot_memory: dict) -> bool:
     return False
 
 
-def _generate_new_user_greeting() -> str:
+def _generate_new_user_greeting(owner_profile: dict) -> str:
     """
     Generate a simple greeting for a new user (fallback).
     
@@ -162,26 +210,82 @@ def _generate_new_user_greeting() -> str:
     helping new users understand the available functionality.
     Used as fallback when property information is not available.
     
+    Args:
+        owner_profile: Owner profile dictionary with business_name
+    
     Returns:
         str: Greeting message for new users
     """
+    business_name = owner_profile.get("business_name") or "our facility"
+    
     return (
-        "Hello! I'm your sports booking assistant. "
-        "I can help you find and book indoor sports facilities. "
+        f"Hello! I am {business_name}'s assistant. "
+        "I can show you indoors and courts where you can play futsal, cricket, etc. "
         "What would you like to do today?"
     )
 
 
-async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
+async def _fetch_owner_profile(owner_profile_id: str, chat_id: str) -> dict:
     """
-    Fetch properties for the owner to display in greeting.
+    Fetch owner profile to get business_name and other details.
     
     Args:
         owner_profile_id: Owner profile ID
         chat_id: Chat ID for logging
         
     Returns:
-        List of property dictionaries with details
+        Dictionary with owner profile data including business_name
+    """
+    try:
+        from sqlalchemy.orm import Session
+        from shared.models import OwnerProfile
+        from app.agent.tools.sync_bridge import call_sync_service
+        
+        def get_owner_profile_sync(db: Session, profile_id: int) -> dict:
+            """Sync function to fetch owner profile"""
+            profile = db.query(OwnerProfile).filter(OwnerProfile.id == profile_id).first()
+            if profile:
+                return {
+                    "id": profile.id,
+                    "business_name": profile.business_name,
+                    "phone": profile.phone,
+                    "address": profile.address,
+                    "verified": profile.verified
+                }
+            return {}
+        
+        # Call sync service using the bridge
+        profile_data = await call_sync_service(
+            get_owner_profile_sync,
+            db=None,  # Auto-managed by sync bridge
+            profile_id=int(owner_profile_id)
+        )
+        
+        logger.info(f"Fetched owner profile for owner_profile_id={owner_profile_id} in chat {chat_id}")
+        return profile_data
+        
+    except Exception as e:
+        logger.error(f"Error fetching owner profile for greeting in chat {chat_id}: {e}", exc_info=True)
+        return {}
+
+
+async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
+    """
+    Fetch properties for the owner to display in greeting and cache in flow_state.
+    
+    This function retrieves all properties owned by the owner profile using the
+    get_owner_properties tool. The fetched properties are displayed to the user
+    in the greeting message and cached in flow_state.owner_properties for later
+    use in the booking flow, ensuring no redundant API calls.
+    
+    Args:
+        owner_profile_id: Owner profile ID
+        chat_id: Chat ID for logging
+        
+    Returns:
+        List of property dictionaries with details (id, name, address, city, etc.)
+        
+    Requirements: 5.1, 5.2, 5.3
     """
     try:
         # Get the property tool from registry
@@ -202,61 +306,64 @@ async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
         return []
 
 
-def _generate_new_user_greeting_with_properties(properties: list) -> tuple:
+def _generate_new_user_greeting_with_properties(owner_profile: dict, properties: list) -> tuple:
     """
     Generate a rich greeting with property information for new users.
     
     Creates a personalized welcome message that introduces the facility
-    with property name, address, city, and map link.
+    with business_name, property name, address, city, and map link.
     
     Args:
+        owner_profile: Owner profile dictionary with business_name
         properties: List of property dictionaries
         
     Returns:
         Tuple of (response_content, response_type, response_metadata)
     """
     if not properties:
-        return _generate_new_user_greeting(), "text", {}
+        return _generate_new_user_greeting(owner_profile), "text", {}
     
-    # Get the first property (or primary property)
-    property_info = properties[0]
+    # Get business_name from owner profile
+    business_name = owner_profile.get("business_name") or "our facility"
     
-    property_name = property_info.get("name", "our facility")
-    address = property_info.get("address", "")
-    city = property_info.get("city", "")
-    state_name = property_info.get("state", "")
-    maps_link = property_info.get("maps_link", "")
+    # Create greeting message with business_name personalization
+    greeting_text = f"Hello, I am {business_name}'s assistant. I can show you indoors and courts where you can play futsal, cricket, etc.\n\n"
     
-    # Build location string
-    location_parts = []
-    if address:
-        location_parts.append(address)
-    if city:
-        location_parts.append(city)
-    if state_name:
-        location_parts.append(state_name)
+    # Add available properties information
+    greeting_text += "Here are our available facilities:\n\n"
     
-    location = ", ".join(location_parts) if location_parts else "our location"
+    for idx, property_info in enumerate(properties, 1):
+        property_name = property_info.get("name", "Facility")
+        address = property_info.get("address", "")
+        city = property_info.get("city", "")
+        state_name = property_info.get("state", "")
+        maps_link = property_info.get("maps_link", "")
+        
+        # Build location string
+        location_parts = []
+        if address:
+            location_parts.append(address)
+        if city:
+            location_parts.append(city)
+        if state_name:
+            location_parts.append(state_name)
+        
+        location = ", ".join(location_parts) if location_parts else "Location not specified"
+        
+        # Add property information
+        greeting_text += f"{idx}. {property_name}\n"
+        greeting_text += f"   Location: {location}\n"
+        
+        # Add map link if available
+        if maps_link:
+            greeting_text += f"   View on map: {maps_link}\n"
+        
+        greeting_text += "\n"
     
-    # Create greeting message with proper formatting
-    greeting_text = f"Welcome to {property_name}!\n\n"
-    greeting_text += "I'm your booking assistant, here to help you find and reserve sports facilities.\n\n"
-    
-    # Add location information
-    greeting_text += f"Location: {location}\n"
-    
-    # Add map link if available
-    if maps_link:
-        greeting_text += f"View on map: {maps_link}\n"
-    
-    greeting_text += "\nHow can I help you today? I can:\n"
+    greeting_text += "How can I help you today? I can:\n"
     greeting_text += "• Show you available courts and facilities\n"
     greeting_text += "• Help you make a booking\n"
     greeting_text += "• Answer questions about pricing and availability"
-    
-    # If multiple properties, mention them
-    if len(properties) > 1:
-        greeting_text += f"\n\nWe have {len(properties)} facilities available for you to explore!"
     
     return greeting_text, "text", {}
 

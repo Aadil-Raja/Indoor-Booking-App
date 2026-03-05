@@ -8,7 +8,7 @@ Requirements: 8.1-8.5, 11.2, 11.3
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from typing import Dict, Any
 
 # Import memory manager to test
@@ -566,3 +566,231 @@ def test_bot_memory_structure_after_availability_check(
     assert "date" in updated_memory["context"]["last_availability_check"]
     assert isinstance(updated_memory["context"]["last_availability_check"]["court_id"], int)
     assert isinstance(updated_memory["context"]["last_availability_check"]["date"], str)
+
+
+
+# Tests for bot_memory persistence functions
+
+@pytest.mark.asyncio
+async def test_load_bot_memory_success():
+    """Test loading bot_memory from database successfully."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+    from apps.chatbot.app.agent.state.memory_manager import load_bot_memory
+    
+    # Mock chat with bot_memory
+    chat_id = str(uuid4())
+    mock_chat = MagicMock()
+    mock_chat.bot_memory = {
+        "conversation_history": [{"role": "user", "content": "Hello"}],
+        "user_preferences": {"preferred_sport": "tennis"},
+        "inferred_information": {"booking_frequency": "regular"},
+        "context": {}
+    }
+    
+    # Mock repository
+    mock_repo = MagicMock()
+    mock_repo.get_by_id = AsyncMock(return_value=mock_chat)
+    
+    # Mock session
+    mock_session = MagicMock()
+    
+    # Patch ChatRepository
+    with patch('apps.chatbot.app.agent.state.memory_manager.ChatRepository', return_value=mock_repo):
+        bot_memory = await load_bot_memory(chat_id, mock_session)
+    
+    # Verify bot_memory was loaded
+    assert bot_memory["user_preferences"]["preferred_sport"] == "tennis"
+    assert bot_memory["inferred_information"]["booking_frequency"] == "regular"
+    assert len(bot_memory["conversation_history"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_load_bot_memory_chat_not_found():
+    """Test loading bot_memory when chat doesn't exist."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+    from apps.chatbot.app.agent.state.memory_manager import load_bot_memory
+    
+    chat_id = str(uuid4())
+    
+    # Mock repository returning None
+    mock_repo = MagicMock()
+    mock_repo.get_by_id = AsyncMock(return_value=None)
+    
+    mock_session = MagicMock()
+    
+    with patch('apps.chatbot.app.agent.state.memory_manager.ChatRepository', return_value=mock_repo):
+        bot_memory = await load_bot_memory(chat_id, mock_session)
+    
+    # Should return initialized empty bot_memory
+    assert bot_memory["conversation_history"] == []
+    assert bot_memory["user_preferences"] == {}
+    assert bot_memory["inferred_information"] == {}
+
+
+@pytest.mark.asyncio
+async def test_load_bot_memory_empty_memory():
+    """Test loading bot_memory when it's empty in database."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+    from apps.chatbot.app.agent.state.memory_manager import load_bot_memory
+    
+    chat_id = str(uuid4())
+    
+    # Mock chat with empty bot_memory
+    mock_chat = MagicMock()
+    mock_chat.bot_memory = {}
+    
+    mock_repo = MagicMock()
+    mock_repo.get_by_id = AsyncMock(return_value=mock_chat)
+    
+    mock_session = MagicMock()
+    
+    with patch('apps.chatbot.app.agent.state.memory_manager.ChatRepository', return_value=mock_repo):
+        bot_memory = await load_bot_memory(chat_id, mock_session)
+    
+    # Should return initialized empty bot_memory
+    assert bot_memory["conversation_history"] == []
+    assert bot_memory["user_preferences"] == {}
+    assert bot_memory["inferred_information"] == {}
+
+
+@pytest.mark.asyncio
+async def test_save_bot_memory_success():
+    """Test saving bot_memory to database successfully."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+    from apps.chatbot.app.agent.state.memory_manager import save_bot_memory
+    
+    chat_id = str(uuid4())
+    bot_memory = {
+        "conversation_history": [],
+        "user_preferences": {"preferred_sport": "tennis"},
+        "inferred_information": {},
+        "context": {}
+    }
+    
+    # Mock chat
+    mock_chat = MagicMock()
+    
+    # Mock repository
+    mock_repo = MagicMock()
+    mock_repo.get_by_id = AsyncMock(return_value=mock_chat)
+    mock_repo.update = AsyncMock(return_value=mock_chat)
+    
+    mock_session = MagicMock()
+    
+    with patch('apps.chatbot.app.agent.state.memory_manager.ChatRepository', return_value=mock_repo):
+        success = await save_bot_memory(chat_id, bot_memory, mock_session)
+    
+    # Verify save was successful
+    assert success is True
+    mock_repo.update.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_save_bot_memory_chat_not_found():
+    """Test saving bot_memory when chat doesn't exist."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+    from apps.chatbot.app.agent.state.memory_manager import save_bot_memory
+    
+    chat_id = str(uuid4())
+    bot_memory = {"user_preferences": {}}
+    
+    # Mock repository returning None
+    mock_repo = MagicMock()
+    mock_repo.get_by_id = AsyncMock(return_value=None)
+    
+    mock_session = MagicMock()
+    
+    with patch('apps.chatbot.app.agent.state.memory_manager.ChatRepository', return_value=mock_repo):
+        success = await save_bot_memory(chat_id, bot_memory, mock_session)
+    
+    # Should return False
+    assert success is False
+
+
+@pytest.mark.asyncio
+async def test_save_bot_memory_invalid_type():
+    """Test saving bot_memory with invalid type."""
+    from unittest.mock import AsyncMock, MagicMock
+    from uuid import uuid4
+    from apps.chatbot.app.agent.state.memory_manager import save_bot_memory
+    
+    chat_id = str(uuid4())
+    invalid_memory = "not a dict"
+    
+    mock_session = MagicMock()
+    
+    success = await save_bot_memory(chat_id, invalid_memory, mock_session)
+    
+    # Should return False
+    assert success is False
+
+
+def test_update_bot_memory_preferences():
+    """Test updating user preferences in bot_memory."""
+    from apps.chatbot.app.agent.state.memory_manager import update_bot_memory_preferences
+    
+    bot_memory = {
+        "user_preferences": {"preferred_sport": "tennis"},
+        "inferred_information": {},
+        "context": {}
+    }
+    
+    preferences = {
+        "preferred_time": "morning",
+        "preferred_sport": "basketball"  # Override existing
+    }
+    
+    updated = update_bot_memory_preferences(bot_memory, preferences)
+    
+    assert updated["user_preferences"]["preferred_time"] == "morning"
+    assert updated["user_preferences"]["preferred_sport"] == "basketball"
+
+
+def test_update_bot_memory_preferences_empty_memory():
+    """Test updating preferences with empty bot_memory."""
+    from apps.chatbot.app.agent.state.memory_manager import update_bot_memory_preferences
+    
+    bot_memory = {}
+    preferences = {"preferred_sport": "tennis"}
+    
+    updated = update_bot_memory_preferences(bot_memory, preferences)
+    
+    assert updated["user_preferences"]["preferred_sport"] == "tennis"
+
+
+def test_update_bot_memory_inferred():
+    """Test updating inferred information in bot_memory."""
+    from apps.chatbot.app.agent.state.memory_manager import update_bot_memory_inferred
+    
+    bot_memory = {
+        "user_preferences": {},
+        "inferred_information": {"booking_frequency": "regular"},
+        "context": {}
+    }
+    
+    inferred_info = {
+        "interests": ["tennis", "basketball"],
+        "booking_frequency": "occasional"  # Override existing
+    }
+    
+    updated = update_bot_memory_inferred(bot_memory, inferred_info)
+    
+    assert updated["inferred_information"]["interests"] == ["tennis", "basketball"]
+    assert updated["inferred_information"]["booking_frequency"] == "occasional"
+
+
+def test_update_bot_memory_inferred_empty_memory():
+    """Test updating inferred info with empty bot_memory."""
+    from apps.chatbot.app.agent.state.memory_manager import update_bot_memory_inferred
+    
+    bot_memory = {}
+    inferred_info = {"booking_frequency": "regular"}
+    
+    updated = update_bot_memory_inferred(bot_memory, inferred_info)
+    
+    assert updated["inferred_information"]["booking_frequency"] == "regular"

@@ -1,19 +1,19 @@
 """
 Intent detection node for LangGraph conversation management.
 
-This module implements the intent_detection node that classifies user messages
-into one of four intents: greeting, search, booking, or faq. It uses rule-based
-pattern matching for common intents and falls back to LLM for complex cases.
+This module implements the intent_detection node that uses LLM to make explicit
+routing decisions. The LLM analyzes the user message and returns a next_node
+decision, eliminating rule-based transitions.
 
-The detected intent is used to route the conversation to the appropriate handler
+The next_node decision is used to route the conversation to the appropriate handler
 node in the LangGraph flow.
 
-Requirements: 6.2, 21.1-21.6
+Requirements: 2.1, 2.2, 2.3, 2.4
 """
 
 from typing import Optional
 import logging
-import re
+import json
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
@@ -21,52 +21,10 @@ from langchain_core.messages import HumanMessage
 from app.agent.state.conversation_state import ConversationState
 from app.services.llm.base import LLMProvider, LLMProviderError
 from app.services.llm.langchain_wrapper import create_langchain_llm
-from app.agent.prompts.intent_prompts import get_intent_prompt
+from app.agent.prompts.intent_prompts import get_routing_prompt
+from app.agent.state.llm_response_parser import parse_llm_response
 
 logger = logging.getLogger(__name__)
-
-
-# Intent classification patterns
-GREETING_PATTERNS = [
-    r'\b(hi|hello|hey|greetings|good\s+(morning|afternoon|evening|day))\b',
-    r'\b(howdy|hiya|sup|yo)\b',
-    r'^(hi|hello|hey|heyyy?)[\s!.]*$',
-]
-
-SEARCH_PATTERNS = [
-    # General search patterns
-    r'\b(search|find|looking\s+for|show\s+me|available)\b',
-    r'\b(what|which|where).*(facilities|courts|properties|venues)\b',
-    r'\b(tennis|basketball|badminton|squash|volleyball).*(court|facility)\b',
-    r'\b(indoor|sports).*(near|in|at)\b',
-    
-    # Availability patterns
-    r'\b(when\s+is|check|see).*(available|availability|open|free)\b',
-    r'\b(available|availability).*(slot|time|court|facility)\b',
-    r'\b(is\s+there|are\s+there).*(available|open|free)\b',
-    
-    # Pricing patterns
-    r'\b(how\s+much|what\'?s?\s+the\s+price|cost|pricing|rate)\b',
-    r'\b(price|prices|pricing).*(court|facility|hour)\b',
-    r'\b(hourly|per\s+hour).*(rate|price|cost)\b',
-    
-    # Media patterns
-    r'\b(show\s+me|see|view).*(photo|picture|image|pic)\b',
-    r'\b(photo|picture|image|pic).*(of|for)\b',
-    r'\b(gallery|media|video)\b',
-]
-
-BOOKING_PATTERNS = [
-    r'\b(book|reserve|schedule|make\s+a\s+booking)\b',
-    r'\b(i\s+want\s+to|i\'d\s+like\s+to|can\s+i).*(book|reserve)\b',
-    r'\b(appointment|reservation)\b',
-]
-
-FAQ_PATTERNS = [
-    r'\b(help|what\s+is|explain|tell\s+me\s+about)\b',
-    r'\b(question|info|information|details)\b',
-    r'\b(payment|refund|policy|cancel)\b',
-]
 
 
 async def intent_detection(
@@ -74,28 +32,24 @@ async def intent_detection(
     llm_provider: Optional[LLMProvider] = None
 ) -> ConversationState:
     """
-    Classify user intent using rule-based matching and LLM fallback.
+    Determine next_node using LLM-based routing decision.
     
-    This node analyzes the user's message to determine their intent, which is
-    used to route the conversation to the appropriate handler node. It first
-    attempts rule-based classification using keyword patterns, then falls back
-    to LLM for complex or ambiguous messages.
+    This node analyzes the user's message using the LLM to determine which
+    handler node should process the message next. It uses the LLM to make
+    an explicit routing decision, eliminating rule-based transitions.
     
     Implements Requirements:
-    - 6.2: Intent_Detection node that classifies user intent
-    - 21.1: Route greeting messages to Greeting node
-    - 21.2: Route facility/sports questions to Information node (LangChain agent)
-    - 21.3: Route booking intent to Booking_Subgraph
-    - 21.4: Route general questions to FAQ node
-    - 21.5: Use LLM_Provider for intent classification when rule-based matching fails
-    - 21.6: Handle typos and informal language
+    - 2.1: LLM SHALL return next_node field in response
+    - 2.2: Remove rule-based logic for intent determination
+    - 2.3: LLM makes routing decisions
+    - 2.4: Route to node specified by LLM's next_node decision
     
     Args:
         state: ConversationState containing the user message
-        llm_provider: Optional LLMProvider for fallback classification
+        llm_provider: Optional LLMProvider for routing decision
         
     Returns:
-        ConversationState: State with detected intent and updated flow_state
+        ConversationState: State with next_node decision and updated flow_state
         
     Example:
         state = {
@@ -105,123 +59,76 @@ async def intent_detection(
         }
         
         result = await intent_detection(state, llm_provider=provider)
-        # result["intent"] = "booking"
-        # result["flow_state"]["intent"] = "booking"
+        # result["next_node"] = "booking"
+        # result["flow_state"]["current_intent"] = "booking"
     """
     user_message = state["user_message"]
     flow_state = state.get("flow_state", {})
     
     logger.info(
-        f"Detecting intent for chat {state['chat_id']} - "
+        f"Determining routing for chat {state['chat_id']} - "
         f"message_preview={user_message[:50]}..."
     )
     
-    # Normalize message for pattern matching
-    normalized_message = user_message.lower().strip()
-    
-    # Rule-based intent detection
-    intent = _rule_based_classification(normalized_message)
-    
-    # If rule-based classification is uncertain, use LLM fallback
-    if intent == "unknown" and llm_provider:
-        logger.debug(
-            f"Rule-based classification uncertain for chat {state['chat_id']}, "
-            f"using LLM fallback"
-        )
-        intent = await _llm_intent_classification(
+    # Use LLM for routing decision
+    if llm_provider:
+        next_node, message, state_updates = await _llm_routing_decision(
             user_message, 
             llm_provider,
             state['chat_id']
         )
-    elif intent == "unknown":
-        # No LLM provider available, default to FAQ
+    else:
+        # No LLM provider available, default to greeting
         logger.warning(
-            f"No LLM provider available for fallback classification, "
-            f"defaulting to FAQ for chat {state['chat_id']}"
+            f"No LLM provider available for routing decision, "
+            f"defaulting to greeting for chat {state['chat_id']}"
         )
-        intent = "faq"
+        next_node = "greeting"
+        message = "Hello! How can I help you today?"
+        state_updates = {}
     
-    # Update state with detected intent
-    state["intent"] = intent
+    # Store next_node in state for routing (this is what the graph will use)
+    state["next_node"] = next_node
     
-    # Update flow_state with detected intent (Requirement 6.2)
-    flow_state["intent"] = intent
-    state["flow_state"] = flow_state
+    # Apply state updates to flow_state
+    if "flow_state" in state_updates:
+        flow_state.update(state_updates["flow_state"])
+        state["flow_state"] = flow_state
+    
+    # Apply state updates to bot_memory
+    if "bot_memory" in state_updates:
+        bot_memory = state.get("bot_memory", {})
+        bot_memory.update(state_updates["bot_memory"])
+        state["bot_memory"] = bot_memory
+    
+    # Store the LLM's message (optional, for debugging or transition messages)
+    if message:
+        state["response_content"] = message
     
     logger.info(
-        f"Intent detected for chat {state['chat_id']}: {intent}"
+        f"Routing decision for chat {state['chat_id']}: next_node={next_node}"
     )
     
     return state
 
 
-def _rule_based_classification(message: str) -> str:
-    """
-    Classify intent using rule-based pattern matching.
-    
-    This function checks the message against predefined patterns for each
-    intent type. It returns the first matching intent or "unknown" if no
-    patterns match.
-    
-    The order of checking is important:
-    1. Greeting - checked first as greetings are usually short and distinct
-    2. Booking - checked before search as booking implies search
-    3. Search - checked after booking to avoid false positives
-    4. FAQ - checked last as it's the most general category
-    
-    Args:
-        message: Normalized (lowercase, stripped) user message
-        
-    Returns:
-        Intent string: "greeting", "search", "booking", "faq", or "unknown"
-    """
-    # Check greeting patterns
-    for pattern in GREETING_PATTERNS:
-        if re.search(pattern, message, re.IGNORECASE):
-            logger.debug(f"Matched greeting pattern: {pattern}")
-            return "greeting"
-    
-    # Check booking patterns (before search to prioritize booking intent)
-    for pattern in BOOKING_PATTERNS:
-        if re.search(pattern, message, re.IGNORECASE):
-            logger.debug(f"Matched booking pattern: {pattern}")
-            return "booking"
-    
-    # Check search patterns
-    for pattern in SEARCH_PATTERNS:
-        if re.search(pattern, message, re.IGNORECASE):
-            logger.debug(f"Matched search pattern: {pattern}")
-            return "search"
-    
-    # Check FAQ patterns
-    for pattern in FAQ_PATTERNS:
-        if re.search(pattern, message, re.IGNORECASE):
-            logger.debug(f"Matched FAQ pattern: {pattern}")
-            return "faq"
-    
-    # No patterns matched
-    logger.debug("No rule-based patterns matched")
-    return "unknown"
-
-
-async def _llm_intent_classification(
+async def _llm_routing_decision(
     message: str, 
     llm_provider: LLMProvider,
     chat_id: str
-) -> str:
+) -> tuple[str, str, dict]:
     """
-    Use LLM to classify intent when rule-based matching fails.
+    Use LLM to make routing decision.
     
-    This function uses the INTENT_CLASSIFICATION_PROMPT template to classify
-    the user's intent into one of the four supported categories. It uses LangChain's
-    ChatOpenAI wrapper with a low temperature for consistent classification and 
-    validates the LLM's response.
+    This function uses the INTENT_ROUTING_PROMPT template to get the LLM's
+    routing decision. The LLM returns a structured JSON response containing
+    next_node, message, and state_updates.
     
-    Implements Requirement 21.5: Use LLM_Provider for intent classification
-    when rule-based matching fails.
-    Implements Requirement 9.1: Use ChatOpenAI from langchain-openai
-    Implements Requirement 9.2: Use LangChain agents instead of direct OpenAI calls
-    Implements Requirement 9.3: No tools needed for intent detection
+    Implements Requirements:
+    - 2.1: LLM SHALL return next_node field
+    - 2.2: Remove rule-based logic for intent determination
+    - 2.3: LLM makes routing decisions
+    - 2.4: Route to node specified by LLM's next_node decision
     
     Args:
         message: Original user message
@@ -229,51 +136,58 @@ async def _llm_intent_classification(
         chat_id: Chat ID for logging
         
     Returns:
-        Intent string: "greeting", "search", "booking", or "faq"
+        Tuple of (next_node, message, state_updates)
         
     Note:
-        If LLM classification fails or returns invalid intent, defaults to "faq"
+        If LLM routing fails or returns invalid response, defaults to "greeting"
     """
     # Get formatted prompt from template
-    prompt = get_intent_prompt(message, prompt_type="default")
+    prompt = get_routing_prompt(message)
     
     try:
         # Create LangChain ChatOpenAI instance using wrapper
         llm = create_langchain_llm(
             llm_provider,
-            temperature=0.0,  # Low temperature for consistent classification
-            max_tokens=10     # Only need a single word response
+            temperature=0.0,  # Low temperature for consistent routing
+            max_tokens=200    # Enough for JSON response
         )
         
         # Call LLM using LangChain's ainvoke method
         response = await llm.ainvoke([HumanMessage(content=prompt)])
         
-        # Extract and validate intent from response
-        intent = response.content.strip().lower()
+        # Parse JSON response
+        try:
+            llm_response = json.loads(response.content.strip())
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Failed to parse LLM JSON response for chat {chat_id}: {e}. "
+                f"Response content: {response.content[:200]}"
+            )
+            # Return safe defaults
+            return "greeting", "Hello! How can I help you?", {}
         
-        # Validate intent is one of the supported types
-        valid_intents = ["greeting", "search", "booking", "faq"]
-        if intent in valid_intents:
-            logger.info(
-                f"LLM classified intent as '{intent}' for chat {chat_id}"
-            )
-            return intent
-        else:
-            logger.warning(
-                f"LLM returned invalid intent '{intent}' for chat {chat_id}, "
-                f"defaulting to 'faq'"
-            )
-            return "faq"
+        # Parse and validate LLM response using parser utility
+        next_node, msg, state_updates = parse_llm_response(
+            llm_response,
+            current_node="greeting",
+            strict=False
+        )
+        
+        logger.info(
+            f"LLM routing decision for chat {chat_id}: next_node={next_node}"
+        )
+        
+        return next_node, msg, state_updates
             
     except LLMProviderError as e:
         logger.error(
-            f"LLM intent classification failed for chat {chat_id}: {e}",
+            f"LLM routing decision failed for chat {chat_id}: {e}",
             exc_info=True
         )
-        return "faq"
+        return "greeting", "Hello! How can I help you?", {}
     except Exception as e:
         logger.error(
-            f"Unexpected error during LLM intent classification for chat {chat_id}: {e}",
+            f"Unexpected error during LLM routing decision for chat {chat_id}: {e}",
             exc_info=True
         )
-        return "faq"
+        return "greeting", "Hello! How can I help you?", {}

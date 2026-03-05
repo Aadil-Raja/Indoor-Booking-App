@@ -1,7 +1,7 @@
 """
-Integration tests for information node.
+Integration tests for information handler.
 
-This module tests complete flows through the information_node, including
+This module tests complete flows through the information_handler, including
 LangChain agent execution, tool calling, bot_memory updates, and context
 handling. Tests use mocked LLM responses for predictable behavior.
 
@@ -34,14 +34,14 @@ if str(backend_path) not in sys.path:
 import importlib.util
 import os
 
-# Load information_node module directly
+# Load information_handler module directly
 spec = importlib.util.spec_from_file_location(
     "information",
     os.path.join(backend_path, "apps", "chatbot", "app", "agent", "nodes", "information.py")
 )
 information_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(information_module)
-information_node = information_module.information_node
+information_handler = information_module.information_handler
 
 # Import ConversationState type for type hints
 from typing import TypedDict, List, Dict, Any, Optional
@@ -249,7 +249,7 @@ async def test_simple_search_query_flow(
     
     # Execute with mocked components
     with mock_langchain_components(mock_agent_result):
-        result_state = await information_node(state, mock_llm_provider)
+        result_state = await information_handler(state, mock_llm_provider)
     
     # Verify response
     assert result_state["response_content"] == mock_agent_result["output"]
@@ -307,7 +307,7 @@ async def test_property_details_query_flow(
     
     # Execute with mocked components
     with mock_langchain_components(mock_agent_result):
-        result_state = await information_node(state, mock_llm_provider)
+        result_state = await information_handler(state, mock_llm_provider)
     
     # Verify response
     assert result_state["response_content"] == mock_agent_result["output"]
@@ -361,7 +361,7 @@ async def test_court_availability_query_flow(
     
     # Execute with mocked components
     with mock_langchain_components(mock_agent_result):
-        result_state = await information_node(state, mock_llm_provider)
+        result_state = await information_handler(state, mock_llm_provider)
     
     # Verify response
     assert result_state["response_content"] == mock_agent_result["output"]
@@ -433,7 +433,7 @@ async def test_complex_multi_tool_query(
     
     # Execute with mocked components
     with mock_langchain_components(mock_agent_result):
-        result_state = await information_node(state, mock_llm_provider)
+        result_state = await information_handler(state, mock_llm_provider)
     
     # Verify response contains information from all tools
     assert result_state["response_content"] == mock_agent_result["output"]
@@ -519,7 +519,7 @@ async def test_context_reference_using_bot_memory(
     
     # Execute with mocked components
     with mock_langchain_components(mock_agent_result):
-        result_state = await information_node(state, mock_llm_provider)
+        result_state = await information_handler(state, mock_llm_provider)
     
     # Verify response
     assert result_state["response_content"] == mock_agent_result["output"]
@@ -570,7 +570,7 @@ async def test_error_handling_in_information_node(
                         mock_executor_class.return_value = mock_executor
                         
                         # Execute node
-                        result_state = await information_node(state, mock_llm_provider)
+                        result_state = await information_handler(state, mock_llm_provider)
     
     # Verify error message is returned
     assert result_state["response_content"] == (
@@ -594,7 +594,7 @@ async def test_missing_llm_provider(base_state):
     state["user_message"] = "Show me tennis courts"
     
     # Execute node without llm_provider
-    result_state = await information_node(state, llm_provider=None)
+    result_state = await information_handler(state, llm_provider=None)
     
     # Verify error message is returned
     assert "error" in result_state["response_content"].lower()

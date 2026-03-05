@@ -1,166 +1,83 @@
 """
-Intent classification prompts for LLM-based intent detection.
+Intent classification prompts for LLM-based routing decisions.
 
-This module defines prompt templates used by the intent_detection node when
-rule-based classification is insufficient. The prompts guide the LLM to classify
-user messages into one of four intent categories: greeting, search, booking, or faq.
+This module defines prompt templates used by the intent_detection node to make
+explicit routing decisions. The LLM determines the next_node to route to based
+on the user's message, eliminating rule-based transitions.
 
-Requirements: 21.5
+Requirements: 2.1, 2.2, 2.3, 2.4
 """
 
-INTENT_CLASSIFICATION_PROMPT = """You are an intent classifier for a sports facility booking chatbot. Your task is to classify the user's message into exactly ONE of the following intents:
+INTENT_ROUTING_PROMPT = """You are a routing assistant for a sports facility booking chatbot. Your task is to analyze the user's message and determine which conversation handler should process it next.
 
-**Intent Categories:**
+**Available Handlers (next_node options):**
 
-1. **greeting** - User is greeting the bot or starting a conversation
+1. **greeting** - For greetings and conversation starters
    - Examples: "hi", "hello", "good morning", "hey there", "what's up"
+   - Use when: User is starting or restarting a conversation
    
-2. **search** - User wants to search for, find, or browse sports facilities or courts
-   - Examples: "show me tennis courts", "find basketball facilities", "what courts are available", "looking for badminton courts near downtown"
+2. **information** - For all informational queries about facilities, courts, availability, pricing, and general questions
+   - Examples: "show me tennis courts", "what courts are available", "how much does it cost", "tell me about your facilities", "what are your hours"
+   - Use when: User wants to search, browse, or learn about facilities, courts, pricing, or policies
+   - Note: This handler uses a LangChain agent with access to all information tools
    
-3. **booking** - User wants to book, reserve, or schedule a facility
-   - Examples: "I want to book a court", "reserve a tennis court for tomorrow", "can I schedule a booking", "make a reservation"
-   
-4. **faq** - User has questions, needs help, or wants information about pricing, policies, or general topics
-   - Examples: "how much does it cost", "what are your hours", "can I cancel a booking", "tell me about your facilities", "help"
+3. **booking** - For booking, reserving, or scheduling facilities
+   - Examples: "I want to book a court", "reserve a tennis court for tomorrow", "can I schedule a booking", "make a reservation", "book it"
+   - Use when: User explicitly wants to create a booking or reservation
 
-**Classification Rules:**
+**Routing Rules:**
 
-- If the message contains booking-related words (book, reserve, schedule, appointment), classify as **booking**
-- If the message is about finding or searching for facilities, classify as **search**
-- If the message is a simple greeting or conversation starter, classify as **greeting**
-- If the message asks questions about pricing, policies, or general information, classify as **faq**
-- When in doubt between search and booking, prefer **booking** if there's any indication of wanting to make a reservation
-- When in doubt between search and faq, prefer **search** if the user is looking for facilities
+- If the message contains booking-related words (book, reserve, schedule, appointment, reservation), route to **booking**
+- If the message is about finding, searching, browsing facilities, or asking questions (pricing, hours, policies, availability), route to **information**
+- If the message is a simple greeting or conversation starter, route to **greeting**
+- When in doubt between information and booking, prefer **booking** if there's clear intent to make a reservation
 - Handle typos, informal language, and abbreviations gracefully
 
 **User Message:**
 "{message}"
 
 **Instructions:**
-Respond with ONLY the intent name (greeting, search, booking, or faq). Do not include any explanation, punctuation, or additional text.
+Respond with a JSON object containing:
+- next_node: The handler to route to ("greeting", "information", or "booking")
+- message: A brief acknowledgment or transition message for the user
+- state_updates: Any updates to flow_state (set current_intent to match the routing decision)
 
-**Your Classification:**"""
-
-
-# Alternative prompt with few-shot examples for better accuracy
-INTENT_CLASSIFICATION_PROMPT_FEW_SHOT = """You are an intent classifier for a sports facility booking chatbot. Classify the user's message into exactly ONE intent: greeting, search, booking, or faq.
-
-**Examples:**
-
-User: "hi there"
-Intent: greeting
-
-User: "show me available tennis courts"
-Intent: search
-
-User: "I want to book a basketball court for tomorrow"
-Intent: booking
-
-User: "how much does it cost to rent a court?"
-Intent: faq
-
-User: "good morning!"
-Intent: greeting
-
-User: "find badminton facilities near downtown"
-Intent: search
-
-User: "can I reserve a court for 3pm?"
-Intent: booking
-
-User: "what are your cancellation policies?"
-Intent: faq
-
-User: "looking for volleyball courts"
-Intent: search
-
-User: "schedule an appointment for tennis"
-Intent: booking
-
-User: "hey"
-Intent: greeting
-
-User: "tell me about your facilities"
-Intent: faq
-
-**Now classify this message:**
-
-User: "{message}"
-Intent:"""
-
-
-# Structured prompt for JSON output (for future use with structured outputs)
-INTENT_CLASSIFICATION_PROMPT_STRUCTURED = """Classify the user's message into one of these intents for a sports facility booking chatbot:
-
-- greeting: User is greeting or starting conversation
-- search: User wants to find/search for facilities or courts
-- booking: User wants to book/reserve a facility
-- faq: User has questions about pricing, policies, or general info
-
-User message: "{message}"
-
-Respond in JSON format:
+**Response Format:**
 {{
-  "intent": "greeting|search|booking|faq",
-  "confidence": "high|medium|low",
-  "reasoning": "brief explanation"
-}}"""
+  "next_node": "greeting" | "information" | "booking",
+  "message": "Brief acknowledgment message",
+  "state_updates": {{
+    "flow_state": {{
+      "current_intent": "greeting" | "information" | "booking"
+    }}
+  }}
+}}
+
+**Your Response:**"""
 
 
-# Prompt for handling edge cases and ambiguous messages
-INTENT_CLASSIFICATION_PROMPT_EDGE_CASES = """You are an intent classifier for a sports facility booking chatbot. Classify the user's message into exactly ONE intent: greeting, search, booking, or faq.
-
-**Intent Definitions:**
-- greeting: Greetings, conversation starters, casual hellos
-- search: Looking for, finding, browsing facilities or courts
-- booking: Making reservations, scheduling, booking facilities
-- faq: Questions about pricing, policies, hours, general information
-
-**Special Cases:**
-- "I need a court" → booking (implies wanting to reserve)
-- "Do you have tennis courts?" → search (asking about availability)
-- "What courts do you have?" → search (browsing options)
-- "Can I book?" → booking (asking about booking capability)
-- "How do I book?" → faq (asking about process)
-- "Show me prices" → faq (asking for information)
-- "Available courts?" → search (looking for options)
-
-**User Message:**
-"{message}"
-
-**Classification (respond with only the intent name):**"""
-
-
-def get_intent_prompt(message: str, prompt_type: str = "default") -> str:
+def get_routing_prompt(message: str) -> str:
     """
-    Get the appropriate intent classification prompt for a user message.
+    Get the routing prompt for LLM-driven next_node decision.
     
-    This function selects and formats the appropriate prompt template based on
-    the specified prompt type. Different prompt types can be used for different
-    scenarios or to experiment with prompt engineering.
+    This function formats the routing prompt template with the user's message.
+    The LLM will analyze the message and return a structured JSON response
+    containing the next_node decision, a message for the user, and state updates.
     
     Args:
-        message: The user message to classify
-        prompt_type: Type of prompt to use. Options:
-            - "default": Standard prompt with clear instructions
-            - "few_shot": Prompt with multiple examples for better accuracy
-            - "structured": Prompt requesting JSON output (for future use)
-            - "edge_cases": Prompt with special handling for ambiguous cases
-            
+        message: The user message to analyze for routing
+        
     Returns:
         Formatted prompt string ready for LLM
         
+    Requirements:
+        - 2.1: LLM SHALL return next_node field
+        - 2.2: Remove rule-based logic for intent determination
+        - 2.3: LLM makes routing decisions
+        - 2.4: Route to node specified by LLM's next_node decision
+        
     Example:
-        >>> prompt = get_intent_prompt("I want to book a court", "default")
-        >>> # Returns formatted INTENT_CLASSIFICATION_PROMPT
+        >>> prompt = get_routing_prompt("I want to book a court")
+        >>> # Returns formatted INTENT_ROUTING_PROMPT with message
     """
-    prompts = {
-        "default": INTENT_CLASSIFICATION_PROMPT,
-        "few_shot": INTENT_CLASSIFICATION_PROMPT_FEW_SHOT,
-        "structured": INTENT_CLASSIFICATION_PROMPT_STRUCTURED,
-        "edge_cases": INTENT_CLASSIFICATION_PROMPT_EDGE_CASES,
-    }
-    
-    prompt_template = prompts.get(prompt_type, INTENT_CLASSIFICATION_PROMPT)
-    return prompt_template.format(message=message)
+    return INTENT_ROUTING_PROMPT.format(message=message)

@@ -238,26 +238,25 @@ graph = StateGraph(ConversationState)
 # Add FAQ node
 graph.add_node("faq", faq_handler)
 
-# Route from intent detection
+# Route from intent detection (DEPRECATED - Use LLM-driven routing)
+# Old routing logic - replaced by next_node based routing
 graph.add_conditional_edges(
     "intent_detection",
-    route_by_intent,
+    route_by_next_node,
     {
         "greeting": "greeting",
-        "search": "indoor_search",
-        "booking": "booking",
-        "faq": "faq",
-        "unknown": "faq"  # Default to FAQ for unknown intents
+        "information": "information",  # Replaces both "search" and "faq"
+        "booking": "booking"
     }
 )
 
-# FAQ returns to END
-graph.add_edge("faq", END)
+# Information handler returns to END
+graph.add_edge("information", END)
 ```
 
-### Routing Logic
+### Routing Logic (Updated)
 
-The FAQ handler receives messages when:
+The information handler (which replaces FAQ handler) receives messages when:
 1. Intent detection classifies message as "faq"
 2. Intent detection returns "unknown" (defaults to FAQ)
 3. User asks general questions about pricing, policies, or help

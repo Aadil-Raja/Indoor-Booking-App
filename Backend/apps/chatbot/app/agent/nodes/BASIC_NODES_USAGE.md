@@ -287,10 +287,9 @@ python -m pytest apps/chatbot/app/agent/nodes/test_basic_nodes.py -v
 
 After implementing these basic nodes, the next nodes to implement are:
 
-1. **intent_detection**: Classify user intent (greeting, search, booking, FAQ)
+1. **intent_detection**: Classify user intent (greeting, information, booking)
 2. **greeting_handler**: Handle greeting intents
-3. **indoor_search_handler**: Handle facility search requests
-4. **faq_handler**: Handle general questions
-5. **Booking subgraph nodes**: Multi-step booking flow
+3. **information_handler**: Handle information queries (properties, courts, availability, pricing)
+4. **Booking subgraph nodes**: Multi-step booking flow
 
-These will be implemented in subsequent tasks (8.2-8.5 and 9.1-9.6).
+Note: The old `indoor_search_handler` and `faq_handler` have been replaced by `information_handler` which uses LangChain agents for better query handling.

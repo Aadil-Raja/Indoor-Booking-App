@@ -156,8 +156,14 @@ async def _present_property_options(
     """
     Present property options to the user as buttons.
     
-    This function retrieves properties from bot_memory search results and
-    presents them as button options for the user to select from.
+    This function retrieves properties from flow_state.owner_properties (cached)
+    or fetches them if not available. It presents them as button options for
+    the user to select from.
+    
+    Implements Requirements:
+    - 5.2: Use cached data if owner_properties exists in flow_state
+    - 5.3: Cache in flow_state.owner_properties if fetched
+    - 5.4: Ensure booking flow always has property data without redundant API calls
     
     Args:
         state: ConversationState
@@ -169,13 +175,69 @@ async def _present_property_options(
     Returns:
         Updated ConversationState with button options
     """
-    # Check if user has previous search results
-    last_search = bot_memory.get("context", {}).get("last_search_results", [])
+    properties = None
     
-    if not last_search:
-        # No previous search, prompt user to search first
+    # Check if owner_properties exists in flow_state (cached from greeting)
+    # Requirements 5.2, 5.3, 5.4
+    if flow_state.get("owner_properties"):
+        properties = flow_state["owner_properties"]
         logger.info(
-            f"No search results found for chat {chat_id}, "
+            f"Using cached properties from flow_state for chat {chat_id}: "
+            f"{len(properties)} properties"
+        )
+    else:
+        # Properties not cached - check if user has previous search results
+        last_search = bot_memory.get("context", {}).get("last_search_results", [])
+        
+        if last_search:
+            # Retrieve property details for the search results
+            properties = await _get_properties_by_ids(
+                tools=tools,
+                property_ids=last_search[:5],  # Limit to 5 properties
+                chat_id=chat_id
+            )
+            
+            # Cache in flow_state for future use (Requirement 5.3)
+            if properties:
+                flow_state["owner_properties"] = properties
+                logger.info(
+                    f"Fetched and cached {len(properties)} properties in flow_state "
+                    f"for chat {chat_id}"
+                )
+        else:
+            # Edge case/error recovery: No cached properties and no search results
+            # Try to fetch owner properties directly
+            logger.warning(
+                f"No cached properties or search results for chat {chat_id}, "
+                f"attempting to fetch owner properties"
+            )
+            
+            owner_profile_id = state.get("owner_profile_id")
+            if owner_profile_id:
+                get_owner_properties = tools.get("get_owner_properties")
+                if get_owner_properties:
+                    try:
+                        properties = await get_owner_properties(
+                            owner_profile_id=int(owner_profile_id)
+                        )
+                        
+                        # Cache in flow_state for future use (Requirement 5.3)
+                        if properties:
+                            flow_state["owner_properties"] = properties
+                            logger.info(
+                                f"Fetched and cached {len(properties)} owner properties "
+                                f"in flow_state for chat {chat_id}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"Error fetching owner properties for chat {chat_id}: {e}",
+                            exc_info=True
+                        )
+    
+    # If still no properties, prompt user to search first
+    if not properties:
+        logger.info(
+            f"No properties available for chat {chat_id}, "
             f"prompting user to search first"
         )
         
@@ -193,29 +255,6 @@ async def _present_property_options(
         # Update flow state to indicate we're waiting for search
         flow_state["step"] = "awaiting_search"
         state["flow_state"] = flow_state
-        
-        return state
-    
-    # Retrieve property details for the search results
-    properties = await _get_properties_by_ids(
-        tools=tools,
-        property_ids=last_search[:5],  # Limit to 5 properties
-        chat_id=chat_id
-    )
-    
-    if not properties:
-        logger.warning(
-            f"Failed to retrieve property details for chat {chat_id}"
-        )
-        
-        response = (
-            "I'm having trouble retrieving the facility details. "
-            "Would you like to search again?"
-        )
-        
-        state["response_content"] = response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
         
         return state
     
@@ -263,6 +302,15 @@ async def _process_property_selection(
     This function uses a LangChain agent to intelligently parse the user's
     selection, validates it, and stores the selected property_id in flow_state.
     
+    It first checks flow_state.owner_properties for cached property data,
+    then falls back to bot_memory property_details, and finally attempts
+    to fetch from last_search_results if needed.
+    
+    Implements Requirements:
+    - 5.2: Use cached data if owner_properties exists in flow_state
+    - 5.3: Cache in flow_state.owner_properties if fetched
+    - 5.4: Ensure booking flow always has property data without redundant API calls
+    
     Args:
         state: ConversationState
         llm_provider: LLMProvider for creating LangChain LLM
@@ -275,37 +323,56 @@ async def _process_property_selection(
     Returns:
         Updated ConversationState with selected property_id in flow_state
     """
-    # Get available properties from bot_memory
-    available_properties = bot_memory.get("context", {}).get("property_details", [])
+    available_properties = None
     
-    if not available_properties:
-        # Fallback: retrieve from last_search_results
-        last_search = bot_memory.get("context", {}).get("last_search_results", [])
-        if last_search:
-            available_properties = await _get_properties_by_ids(
-                tools=tools,
-                property_ids=last_search[:5],
-                chat_id=chat_id
-            )
-        else:
-            logger.error(
-                f"No available properties found in bot_memory for chat {chat_id}"
-            )
-            
-            response = (
-                "I couldn't find the available facilities. "
-                "Let's start over. What type of facility are you looking for?"
-            )
-            
-            state["response_content"] = response
-            state["response_type"] = "text"
-            state["response_metadata"] = {}
-            
-            # Reset flow state
-            flow_state["step"] = "awaiting_search"
-            state["flow_state"] = flow_state
-            
-            return state
+    # Check flow_state.owner_properties first (cached from greeting or previous fetch)
+    # Requirements 5.2, 5.3, 5.4
+    if flow_state.get("owner_properties"):
+        available_properties = flow_state["owner_properties"]
+        logger.debug(
+            f"Using cached properties from flow_state for selection in chat {chat_id}: "
+            f"{len(available_properties)} properties"
+        )
+    else:
+        # Fallback: Get available properties from bot_memory
+        available_properties = bot_memory.get("context", {}).get("property_details", [])
+        
+        if not available_properties:
+            # Second fallback: retrieve from last_search_results
+            last_search = bot_memory.get("context", {}).get("last_search_results", [])
+            if last_search:
+                available_properties = await _get_properties_by_ids(
+                    tools=tools,
+                    property_ids=last_search[:5],
+                    chat_id=chat_id
+                )
+                
+                # Cache in flow_state for future use (Requirement 5.3)
+                if available_properties:
+                    flow_state["owner_properties"] = available_properties
+                    logger.info(
+                        f"Fetched and cached {len(available_properties)} properties "
+                        f"in flow_state for chat {chat_id}"
+                    )
+            else:
+                logger.error(
+                    f"No available properties found in flow_state or bot_memory for chat {chat_id}"
+                )
+                
+                response = (
+                    "I couldn't find the available facilities. "
+                    "Let's start over. What type of facility are you looking for?"
+                )
+                
+                state["response_content"] = response
+                state["response_type"] = "text"
+                state["response_metadata"] = {}
+                
+                # Reset flow state
+                flow_state["step"] = "awaiting_search"
+                state["flow_state"] = flow_state
+                
+                return state
     
     # Create LangChain LLM
     try:

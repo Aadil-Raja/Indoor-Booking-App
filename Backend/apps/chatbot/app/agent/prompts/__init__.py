@@ -10,7 +10,7 @@ Modules:
 - information_prompts: Prompts for information node agent
 """
 
-from app.agent.prompts.intent_prompts import get_intent_prompt
+from app.agent.prompts.intent_prompts import get_routing_prompt
 from app.agent.prompts.conversation_prompts import (
     get_greeting_prompt,
     get_search_prompt,
@@ -23,7 +23,7 @@ from app.agent.prompts.information_prompts import (
 )
 
 __all__ = [
-    "get_intent_prompt",
+    "get_routing_prompt",
     "get_greeting_prompt",
     "get_search_prompt",
     "get_booking_prompt",
