@@ -50,25 +50,46 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Test state update merging logic
     - Test error handling for corrupted state
 
-- [ ] 3. Refactor greeting handler with LLM-driven routing
-  - [ ] 3.1 Update greeting_handler to return structured LLM response
-    - Modify greeting prompt to request next_node decision
-    - Parse LLM response to extract next_node, message, state_updates
-    - Initialize flow_state with current_intent
-    - Initialize bot_memory if not exists
-    - Return structured response with routing decision
-    - _Requirements: 2.1, 2.3, 2.4, 10.1, 10.2, 10.3, 10.4_
+- [ ] 3. Refactor intent detection node to use LLM-based routing
+  - [ ] 3.1 Remove rule-based intent detection logic
+    - Remove hardcoded keyword matching for intents (e.g., "book", "search", "faq")
+    - Remove conditional logic that maps keywords to intents
+    - Remove any if/else statements that route based on pattern matching
+    - _Requirements: 2.2, 2.3_
   
-  - [ ] 3.2 Update greeting handler to use business_name personalization
+  - [ ] 3.2 Update intent_detection node to use LLM for routing decisions
+    - Modify intent detection to call LLM with user message
+    - Update prompt to ask LLM to determine next_node ("greeting", "information", "booking")
+    - Parse LLM response to extract next_node decision
+    - Return next_node for routing (no intermediate "intent" field)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4_
+  
+  - [ ]* 3.3 Write unit test for LLM-based intent detection
+    - Test booking intent routes to booking node via LLM decision
+    - Test information query routes to information node via LLM decision
+    - Test no rule-based routing is used
+    - Test LLM makes routing decision for ambiguous queries
+
+- [ ] 4. Update greeting handler for initialization only
+  - [ ] 4.1 Update greeting_handler to initialize conversation state
+    - Initialize flow_state (empty or with minimal context)
+    - Initialize bot_memory if not exists
+    - Greeting handler does NOT make routing decisions (intent detection handles that)
+    - Return greeting message only
+    - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
+  
+  - [ ] 4.2 Update greeting handler to use business_name personalization
     - Fetch owner_profile attributes from owner_profile_id
     - Extract business_name from owner_profile
     - Update greeting prompt to include: "Hello, I am {business_name}'s assistant. I can show you indoors and courts where you can play futsal, cricket, etc."
-    - _Requirements: 10.1, 10.3_
+    - Fetch and present available properties to the user in the greeting
+    - _Requirements: 10.1, 10.3, 10.6_
   
-  - [ ]* 3.3 Write unit test for greeting handler
+  - [ ]* 4.3 Write unit test for greeting handler
     - Test greeting handler is first node (Requirement 10.4)
     - Test flow_state and bot_memory initialization
     - Test personalized greeting with business_name
+    - Test greeting handler does NOT make routing decisions
 
 - [ ] 4. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
@@ -181,15 +202,19 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
 - [ ] 11. Implement date selection with LLM parsing
   - [ ] 11.1 Create select_date_node in booking subgraph
     - Check if date exists in flow_state (skip if exists)
+    - Pass current date (YYYY-MM-DD format) to LLM in the prompt context
     - Use LLM to parse date from user message (natural language → YYYY-MM-DD)
+    - Support natural language like "tomorrow", "next Monday", etc. by providing current date context
     - Validate date format and future date
     - If date parsed: store in flow_state and update booking_step to "date_selected"
     - If date not parsed: ask user for date
     - Return next_node decision
-    - _Requirements: 7.3, 8.2, 8.5_
+    - _Requirements: 7.3, 8.2, 8.5, 17.1, 17.2, 17.3, 17.4, 17.5_
   
   - [ ]* 11.2 Write unit tests for date selection
     - Test date parsing from natural language
+    - Test "tomorrow" converts to current_date + 1 day
+    - Test "next Monday" calculates correct future date
     - Test date validation (format, future date)
     - Test date skipping when exists in flow_state
 
@@ -264,16 +289,20 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
 - [ ] 16. Implement reversibility in information subgraph
   - [ ] 16.1 Update information handler to support attribute changes
     - Add logic to detect when user wants to change property/court/date/slot
-    - Update only the changed attribute in flow_state
+    - When user changes property: clear only property_id and property_name in flow_state, save new value
+    - When user changes court: clear only court_id and court_name in flow_state, save new value
+    - When user changes date: clear only date field in flow_state, save new value
+    - When user changes time slot: clear only time_slot field in flow_state, save new value
     - Continue from where left off (don't restart entire flow)
     - Maintain other attributes unchanged
-    - _Requirements: 7.5, 7.6_
+    - _Requirements: 7.5, 7.6, 16.1, 16.2, 16.3, 16.4, 16.5, 16.6_
   
   - [ ]* 16.2 Write unit tests for reversibility
-    - Test changing property keeps court/date/slot
-    - Test changing court keeps property/date/slot
-    - Test changing date keeps property/court/slot
-    - Test changing slot keeps property/court/date
+    - Test changing property clears only property fields and keeps court/date/slot
+    - Test changing court clears only court fields and keeps property/date/slot
+    - Test changing date clears only date field and keeps property/court/slot
+    - Test changing slot clears only time_slot field and keeps property/court/date
+    - Test new values are saved correctly in flow_state
 
 - [ ] 17. Update main graph routing to use LLM decisions
   - [ ] 17.1 Remove rule-based routing from main_graph.py
@@ -313,22 +342,33 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Use preferences to pre-fill or suggest options
     - _Requirements: 4.5_
   
-  - [ ]* 19.3 Write property test for bot_memory preference storage
+  - [ ] 19.3 Add current date context to all date-related prompts
+    - Update all LLM prompts that involve date selection to include current_date in ISO format
+    - Update date selection node prompt to include current_date
+    - Update time selection node prompt to include current_date
+    - Update confirmation node prompt to include current_date for validation
+    - _Requirements: 17.1, 17.5_
+  
+  - [ ]* 19.4 Write property test for bot_memory preference storage
     - **Property 5: Bot Memory Preference Storage**
     - **Validates: Requirements 4.1, 4.2**
   
-  - [ ]* 19.4 Write property test for bot_memory prevents redundant questions
+  - [ ]* 19.5 Write property test for bot_memory prevents redundant questions
     - **Property 6: Bot Memory Prevents Redundant Questions**
     - **Validates: Requirements 4.5**
   
-  - [ ]* 19.5 Write property test for bot_memory persistence across sessions
+  - [ ]* 19.6 Write property test for bot_memory persistence across sessions
     - **Property 7: Bot Memory Persistence Across Sessions**
     - **Validates: Requirements 4.6**
   
-  - [ ]* 19.6 Write unit test for preference storage
+  - [ ]* 19.7 Write unit test for preference storage
     - Test morning preference stored in bot_memory (Requirement 4.3)
     - Test sport preference storage
     - Test property preference storage
+  
+  - [ ]* 19.8 Write unit test for current date context
+    - Test current_date is passed to LLM in date selection prompts
+    - Test LLM receives current_date in correct ISO format
 
 - [ ] 20. Add comprehensive error handling
   - [ ] 20.1 Add LLM response error handling
@@ -382,10 +422,19 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
   - [ ]* 21.4 Write property test for flow_state cleared after completion
     - **Property 18: Flow State Cleared After Booking Completion**
     - **Validates: Requirements 15.5**
+  
+  - [ ]* 21.5 Write property test for selective field updates
+    - **Property 19: Selective Field Updates in Flow State**
+    - **Validates: Requirements 16.1, 16.2, 16.3, 16.4, 16.5, 16.6**
+    - Test that changing property clears only property fields
+    - Test that changing court clears only court fields
+    - Test that changing date clears only date field
+    - Test that changing time_slot clears only time_slot field
+    - Test that other fields remain unchanged
 
 - [ ] 22. Final checkpoint and integration verification
   - [ ] 22.1 Run all property tests (minimum 100 iterations each)
-    - Verify all 18 correctness properties pass
+    - Verify all 19 correctness properties pass
     - Check test coverage for all requirements
   
   - [ ] 22.2 Run all unit tests
@@ -413,3 +462,5 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
 - Bot personality is personalized using business_name from owner_profile
 - Fuzzy search enables flexible user queries with confirmation
 - Reversibility allows users to change any attribute without restarting the flow
+- Current date context enables natural language date parsing (e.g., "tomorrow", "next Monday")
+- Selective field updates allow users to modify specific booking details without losing other information

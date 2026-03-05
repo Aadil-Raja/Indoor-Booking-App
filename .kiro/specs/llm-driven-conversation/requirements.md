@@ -142,6 +142,7 @@ This document specifies the requirements for refactoring the chatbot agent to us
 3. THE Greeting_Handler SHALL set up conversation context for subsequent nodes
 4. WHEN a user starts a conversation, THE Greeting_Handler SHALL be the first node to process the message
 5. THE Greeting_Handler SHALL remain as a separate node in the conversation flow
+6. THE Greeting_Handler SHALL introduce the assistant and present available properties to the user
 
 ### Requirement 11: LangGraph Architecture Compatibility
 
@@ -201,3 +202,28 @@ This document specifies the requirements for refactoring the chatbot agent to us
 3. WHEN a user sends a new message, THE Chatbot_Agent SHALL load the existing Flow_State
 4. WHEN a conversation ends, THE Chatbot_Agent SHALL persist Bot_Memory for future sessions
 5. THE Chatbot_Agent SHALL clear Flow_State when a booking is completed or cancelled
+
+### Requirement 16: Selective Field Updates in Flow State
+
+**User Story:** As a user, I want to change specific booking details without losing other information, so that I can modify my booking efficiently.
+
+#### Acceptance Criteria
+
+1. WHEN a user changes the property selection, THE Chatbot_Agent SHALL clear only the property_id and property_name fields in Flow_State
+2. WHEN a user changes the court selection, THE Chatbot_Agent SHALL clear only the court_id and court_name fields in Flow_State
+3. WHEN a user changes the date, THE Chatbot_Agent SHALL clear only the date field in Flow_State
+4. WHEN a user changes the time slot, THE Chatbot_Agent SHALL clear only the time_slot field in Flow_State
+5. THE Chatbot_Agent SHALL preserve all other Flow_State fields when a user changes a specific booking detail
+6. WHEN a user changes a booking detail, THE Chatbot_Agent SHALL save the new value in the appropriate Flow_State field
+
+### Requirement 17: Current Date Context for LLM
+
+**User Story:** As a user, I want to use natural language for dates like "tomorrow" or "next Monday", so that I can book more naturally.
+
+#### Acceptance Criteria
+
+1. THE LLM SHALL receive the current date in ISO format (YYYY-MM-DD) as part of the conversation context
+2. WHEN a user says "tomorrow", THE LLM SHALL calculate the date as current_date + 1 day
+3. WHEN a user says "next Monday", THE LLM SHALL calculate the appropriate future date based on the current date
+4. THE LLM SHALL convert all natural language date references to YYYY-MM-DD format before storing in Flow_State
+5. THE current date SHALL be included in all LLM prompts that involve date selection or parsing
