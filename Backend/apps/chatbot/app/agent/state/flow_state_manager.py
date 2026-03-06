@@ -53,6 +53,7 @@ def initialize_flow_state() -> Dict[str, Any]:
         "time_slot": None,
         "booking_step": None,
         "owner_properties": None,
+        "last_node": None,
         "context": {}
     }
     

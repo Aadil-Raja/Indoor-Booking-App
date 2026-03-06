@@ -306,6 +306,10 @@ async def information_handler(
         next_node = _determine_next_node(user_message, response_content, flow_state)
         state["next_node"] = next_node
         
+        # Track last node for better routing context
+        flow_state["last_node"] = "information"
+        state["flow_state"] = flow_state
+        
         logger.info(
             f"Information node completed successfully for chat {chat_id} - "
             f"next_node={next_node}"
@@ -325,6 +329,10 @@ async def information_handler(
         state["response_type"] = "text"
         state["response_metadata"] = {}
         state["next_node"] = "information"  # Stay in information mode
+        
+        # Track last node even on error
+        flow_state["last_node"] = "information"
+        state["flow_state"] = flow_state
     
     return state
 

@@ -49,15 +49,24 @@ def create_main_graph(
     # Create graph
     graph = StateGraph(ConversationState)
     
-    # Add basic nodes (load history)
-    graph.add_node("load_chat", lambda s: load_chat(s, chat_service, message_service))
+    # Add basic nodes (load history) - use async lambda for async functions
+    async def load_chat_wrapper(s):
+        return await load_chat(s, chat_service, message_service)
+    graph.add_node("load_chat", load_chat_wrapper)
     
     # Add intent detection (asks LLM where to route)
-    graph.add_node("intent_detection", lambda s: intent_detection(s, llm_provider))
+    async def intent_detection_wrapper(s):
+        return await intent_detection(s, llm_provider)
+    graph.add_node("intent_detection", intent_detection_wrapper)
     
     # Add handler nodes
-    graph.add_node("greeting", lambda s: greeting_handler(s, llm_provider))
-    graph.add_node("information", lambda s: information_handler(s, llm_provider))
+    async def greeting_wrapper(s):
+        return await greeting_handler(s, llm_provider)
+    graph.add_node("greeting", greeting_wrapper)
+    
+    async def information_wrapper(s):
+        return await information_handler(s, llm_provider)
+    graph.add_node("information", information_wrapper)
     
     # Add booking subgraph
     booking_subgraph = create_booking_subgraph(tools)

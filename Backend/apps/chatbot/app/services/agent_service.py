@@ -154,28 +154,28 @@ class AgentService:
         Ensures all required fields are initialized:
         - Chat IDs (from chat object)
         - Current message
-        - flow_state (defaults to {})
-        - bot_memory with conversation_history (defaults to {})
+        - flow_state (properly initialized with all fields)
+        - bot_memory (properly initialized with all fields)
         - All response fields with defaults
         """
         # Initialize bot_memory with proper structure
+        from app.agent.state.memory_manager import _initialize_bot_memory, _ensure_bot_memory_structure
+        
         bot_memory = chat.bot_memory or {}
+        if not bot_memory or not isinstance(bot_memory, dict):
+            bot_memory = _initialize_bot_memory()
+            logger.info(f"Initialized bot_memory for chat {chat.id}")
+        else:
+            # Ensure bot_memory has proper structure
+            bot_memory = _ensure_bot_memory_structure(bot_memory)
         
-        # Ensure conversation_history exists
-        if "conversation_history" not in bot_memory:
-            bot_memory["conversation_history"] = []
+        # Initialize flow_state properly with all fields
+        from app.agent.state.flow_state_manager import initialize_flow_state, validate_flow_state
         
-        # Ensure user_preferences exists
-        if "user_preferences" not in bot_memory:
-            bot_memory["user_preferences"] = {}
-        
-        # Ensure inferred_information exists
-        if "inferred_information" not in bot_memory:
-            bot_memory["inferred_information"] = {}
-        
-        # Ensure context exists
-        if "context" not in bot_memory:
-            bot_memory["context"] = {}
+        flow_state = chat.flow_state or {}
+        if not flow_state or not validate_flow_state(flow_state):
+            flow_state = initialize_flow_state()
+            logger.info(f"Initialized flow_state for chat {chat.id}")
         
         return {
             # IDs (always present from chat object)
@@ -187,7 +187,7 @@ class AgentService:
             "user_message": user_message,
             
             # State from database (with defaults)
-            "flow_state": chat.flow_state or {},
+            "flow_state": flow_state,
             "bot_memory": bot_memory,
             "messages": [],  # Will be loaded by load_chat node
             
