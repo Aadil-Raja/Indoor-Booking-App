@@ -17,8 +17,8 @@ import logging
 
 from langgraph.graph import StateGraph, END
 
-from ..state.conversation_state import ConversationState
-from ..nodes.booking import (
+from app.agent.state.conversation_state import ConversationState
+from app.agent.nodes.booking import (
     select_property,
     select_service,
     select_date,
@@ -84,13 +84,31 @@ def create_booking_subgraph(tools: Dict[str, Any]) -> StateGraph:
     # Initialize graph with ConversationState
     graph = StateGraph(ConversationState)
     
-    # Add all booking nodes
-    graph.add_node("select_property", lambda state: select_property(state, tools))
-    graph.add_node("select_service", lambda state: select_service(state, tools))
-    graph.add_node("select_date", lambda state: select_date(state, tools))
-    graph.add_node("select_time", lambda state: select_time(state, tools))
-    graph.add_node("confirm", lambda state: confirm_booking(state, tools))
-    graph.add_node("create_booking", lambda state: create_pending_booking(state, tools))
+    # Add all booking nodes with proper async wrappers
+    async def select_property_node(state):
+        return await select_property(state, tools)
+    
+    async def select_service_node(state):
+        return await select_service(state, tools)
+    
+    async def select_date_node(state):
+        return await select_date(state, tools)
+    
+    async def select_time_node(state):
+        return await select_time(state, tools)
+    
+    async def confirm_booking_node(state):
+        return await confirm_booking(state, tools)
+    
+    async def create_pending_booking_node(state):
+        return await create_pending_booking(state, tools)
+    
+    graph.add_node("select_property", select_property_node)
+    graph.add_node("select_service", select_service_node)
+    graph.add_node("select_date", select_date_node)
+    graph.add_node("select_time", select_time_node)
+    graph.add_node("confirm", confirm_booking_node)
+    graph.add_node("create_booking", create_pending_booking_node)
     
     # Set entry point
     graph.set_entry_point("select_property")

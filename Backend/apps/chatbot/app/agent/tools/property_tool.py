@@ -5,6 +5,7 @@ This module provides tools for searching properties and retrieving property deta
 by integrating with the sync property_service through the sync bridge.
 
 Note: Properties are linked to OwnerProfile in the main database.
+Services expect OwnerContext with owner_profile_id.
 """
 
 import logging
@@ -12,52 +13,16 @@ from typing import List, Dict, Any, Optional
 from uuid import UUID
 
 from app.agent.tools.sync_bridge import call_sync_service
+from shared.utils import OwnerContext
 
 logger = logging.getLogger(__name__)
 
-
-def _get_management_services():
-    """
-    Dynamically import management services to avoid import conflicts.
-    
-    This function imports the management app services at runtime to prevent
-    conflicts with the chatbot's app.services module.
-    """
-    import sys
-    from pathlib import Path
-    
-    # Add Backend path for shared modules
-    backend_path = Path(__file__).parent.parent.parent.parent.parent.parent
-    if str(backend_path) not in sys.path:
-        sys.path.insert(0, str(backend_path))
-    
-    # Add management app path at the beginning to prioritize it
-    management_path = backend_path / "apps" / "management"
-    if str(management_path) not in sys.path:
-        sys.path.insert(0, str(management_path))
-    
-    # Import services from management app
-    # We need to temporarily remove chatbot path to avoid conflicts
-    chatbot_path = str(Path(__file__).parent.parent.parent.parent.parent)
-    original_path = sys.path.copy()
-    
-    try:
-        # Remove chatbot path temporarily
-        if chatbot_path in sys.path:
-            sys.path.remove(chatbot_path)
-        
-        # Import from management app
-        from app.services import property_service, public_service
-        return property_service, public_service
-    finally:
-        # Restore original path
-        sys.path = original_path
 
 logger = logging.getLogger(__name__)
 
 
 async def search_properties_tool(
-    owner_id: str,
+    owner_profile_id: int,
     city: Optional[str] = None,
     sport_type: Optional[str] = None,
     min_price: Optional[float] = None,
@@ -67,12 +32,11 @@ async def search_properties_tool(
     """
     Search for properties with optional filters.
     
-    This tool searches for active properties, optionally filtering by city,
-    sport type, and price range. It uses the public_service.search_properties
-    for comprehensive search capabilities.
+    This tool searches for active properties owned by the specified owner_profile_id,
+    optionally filtering by city, sport type, and price range.
     
     Args:
-        owner_id: Owner ID to filter properties (optional for public search)
+        owner_profile_id: Owner profile ID to filter properties
         city: City name to filter by (optional)
         sport_type: Sport type to filter courts by (optional)
         min_price: Minimum price per hour (optional)
@@ -84,39 +48,48 @@ async def search_properties_tool(
         
     Example:
         properties = await search_properties_tool(
-            owner_id="123e4567-e89b-12d3-a456-426614174000",
+            owner_profile_id=123,
             sport_type="tennis",
             city="New York"
         )
     """
     try:
         logger.info(
-            f"Searching properties: city={city}, sport_type={sport_type}, "
+            f"Searching properties for owner_profile_id={owner_profile_id}: "
+            f"city={city}, sport_type={sport_type}, "
             f"min_price={min_price}, max_price={max_price}, limit={limit}"
         )
         
-        # Get management services
-        property_service, public_service = _get_management_services()
+        # Import services
+        from shared.services import property_service
+        
+        # Create OwnerContext for service call
+        owner_context = OwnerContext(
+            user_id=None,  # Not needed for property search
+            owner_profile_id=owner_profile_id
+        )
         
         # Call sync service using the bridge
         result = await call_sync_service(
-            public_service.search_properties,
+            property_service.get_owner_properties,
             db=None,  # Auto-managed by sync bridge
-            city=city,
-            sport_type=sport_type,
-            min_price=min_price,
-            max_price=max_price,
-            page=1,
-            limit=limit
+            current_owner=owner_context
         )
         
-        # Extract data from response
-        if result.get('success'):
-            properties = result.get('data', {}).get('items', [])
-            logger.info(f"Found {len(properties)} properties")
-            return properties
+        # Extract data from JSONResponse
+        # The service returns a JSONResponse, we need to get the body content
+        if hasattr(result, 'body'):
+            import json
+            response_data = json.loads(result.body.decode('utf-8'))
+            if response_data.get('success'):
+                properties = response_data.get('data', [])
+                logger.info(f"Found {len(properties)} properties for owner_profile_id={owner_profile_id}")
+                return properties
+            else:
+                logger.warning(f"Property search failed: {response_data.get('message')}")
+                return []
         else:
-            logger.warning(f"Property search failed: {result.get('message')}")
+            logger.error(f"Unexpected response type from property service: {type(result)}")
             return []
             
     except Exception as e:
@@ -126,18 +99,17 @@ async def search_properties_tool(
 
 async def get_property_details_tool(
     property_id: int,
-    owner_id: Optional[str] = None
+    owner_profile_id: int
 ) -> Optional[Dict[str, Any]]:
     """
     Get detailed information about a specific property.
     
     This tool retrieves comprehensive property details including courts,
-    amenities, and media. If owner_id is provided, it uses the owner-specific
-    service which includes additional ownership information.
+    amenities, and media.
     
     Args:
         property_id: ID of the property to retrieve
-        owner_id: Owner ID for ownership verification (optional)
+        owner_profile_id: Owner profile ID for ownership verification
         
     Returns:
         Property details dictionary or None if not found
@@ -145,41 +117,45 @@ async def get_property_details_tool(
     Example:
         details = await get_property_details_tool(
             property_id=123,
-            owner_id="123e4567-e89b-12d3-a456-426614174000"
+            owner_profile_id=456
         )
     """
     try:
-        logger.info(f"Getting property details: property_id={property_id}, owner_id={owner_id}")
+        logger.info(f"Getting property details: property_id={property_id}, owner_profile_id={owner_profile_id}")
         
-        # Get management services
-        property_service, public_service = _get_management_services()
+        # Import services
+        from shared.services import property_service
         
-        if owner_id:
-            # Use owner-specific service for detailed access
-            result = await call_sync_service(
-                property_service.get_property_details,
-                db=None,
-                property_id=property_id,
-                owner_id=int(owner_id) if isinstance(owner_id, str) else owner_id
-            )
+        # Create OwnerContext for service call
+        owner_context = OwnerContext(
+            user_id=None,
+            owner_profile_id=owner_profile_id
+        )
+        
+        # Call sync service using the bridge
+        result = await call_sync_service(
+            property_service.get_property_details,
+            db=None,
+            property_id=property_id,
+            current_owner=owner_context
+        )
+        
+        # Extract data from JSONResponse
+        if hasattr(result, 'body'):
+            import json
+            response_data = json.loads(result.body.decode('utf-8'))
+            if response_data.get('success'):
+                property_data = response_data.get('data')
+                logger.info(f"Retrieved property details for property_id={property_id}")
+                return property_data
+            else:
+                logger.warning(
+                    f"Failed to get property details: {response_data.get('message')} "
+                    f"(property_id={property_id})"
+                )
+                return None
         else:
-            # Use public service for general access
-            result = await call_sync_service(
-                public_service.get_property_details,
-                db=None,
-                property_id=property_id
-            )
-        
-        # Extract data from response
-        if result.get('success'):
-            property_data = result.get('data')
-            logger.info(f"Retrieved property details for property_id={property_id}")
-            return property_data
-        else:
-            logger.warning(
-                f"Failed to get property details: {result.get('message')} "
-                f"(property_id={property_id})"
-            )
+            logger.error(f"Unexpected response type from property service: {type(result)}")
             return None
             
     except Exception as e:
@@ -187,47 +163,53 @@ async def get_property_details_tool(
         return None
 
 
-async def get_owner_properties_tool(owner_id: str) -> List[Dict[str, Any]]:
+async def get_owner_properties_tool(owner_profile_id: int) -> List[Dict[str, Any]]:
     """
     Get all properties owned by a specific owner.
     
     This tool retrieves all properties associated with an owner profile.
-    Note: Properties are linked to OwnerProfile, not directly to User.
     
     Args:
-        owner_id: Owner ID (from OwnerProfile)
+        owner_profile_id: Owner profile ID
         
     Returns:
         List of property dictionaries owned by the specified owner
         
     Example:
-        properties = await get_owner_properties_tool(
-            owner_id="123e4567-e89b-12d3-a456-426614174000"
-        )
+        properties = await get_owner_properties_tool(owner_profile_id=123)
     """
     try:
-        logger.info(f"Getting properties for owner_id={owner_id}")
+        logger.info(f"Getting properties for owner_profile_id={owner_profile_id}")
         
-        # Get management services
-        property_service, public_service = _get_management_services()
+        # Import services
+        from shared.services import property_service
         
-        # Convert UUID string to int if needed
-        owner_id_int = int(owner_id) if isinstance(owner_id, str) and owner_id.isdigit() else owner_id
+        # Create OwnerContext for service call
+        owner_context = OwnerContext(
+            user_id=None,
+            owner_profile_id=owner_profile_id
+        )
         
         # Call sync service using the bridge
         result = await call_sync_service(
             property_service.get_owner_properties,
             db=None,
-            owner_id=owner_id_int
+            current_owner=owner_context
         )
         
-        # Extract data from response
-        if result.get('success'):
-            properties = result.get('data', [])
-            logger.info(f"Found {len(properties)} properties for owner_id={owner_id}")
-            return properties
+        # Extract data from JSONResponse
+        if hasattr(result, 'body'):
+            import json
+            response_data = json.loads(result.body.decode('utf-8'))
+            if response_data.get('success'):
+                properties = response_data.get('data', [])
+                logger.info(f"Found {len(properties)} properties for owner_profile_id={owner_profile_id}")
+                return properties
+            else:
+                logger.warning(f"Failed to get owner properties: {response_data.get('message')}")
+                return []
         else:
-            logger.warning(f"Failed to get owner properties: {result.get('message')}")
+            logger.error(f"Unexpected response type from property service: {type(result)}")
             return []
             
     except Exception as e:

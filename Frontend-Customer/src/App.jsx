@@ -8,6 +8,7 @@ import CourtDetails from './pages/user/CourtDetails';
 import BookCourt from './pages/user/BookCourt';
 import UserBookings from './pages/user/UserBookings';
 import UserProfile from './pages/user/UserProfile';
+import ChatbotTest from './pages/customer/ChatbotTest';
 import './styles/theme.css';
 import './styles/common.css';
 import './App.css';
@@ -64,6 +65,12 @@ function App() {
                 <UserProfile />
               </ProtectedRoute>
             } 
+          />
+          
+          {/* Chatbot Test Route */}
+          <Route 
+            path="/chatbot-test" 
+            element={<ChatbotTest />} 
           />
           
           {/* Fallback - redirect unknown routes to dashboard */}

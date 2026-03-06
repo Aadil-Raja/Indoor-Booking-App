@@ -13,13 +13,12 @@ repository access, ensuring clean separation of concerns.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Tuple
-from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
-
-from ..repositories.chat_repository import ChatRepository
-from ..repositories.message_repository import MessageRepository
-from ..models.chat import Chat
+from uuid import UUID
+from app.repositories.chat_repository import ChatRepository
+from app.repositories.message_repository import MessageRepository
+from app.models.chat import Chat
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +57,8 @@ class ChatService:
     
     async def determine_session(
         self, 
-        user_id: UUID, 
-        owner_id: UUID,
+        user_id: int, 
+        owner_profile_id: int,
         user_message: str
     ) -> Tuple[Chat, bool]:
         """
@@ -77,7 +76,7 @@ class ChatService:
         
         Args:
             user_id: UUID of the user
-            owner_id: UUID of the property owner
+            owner_profile_id: UUID of the owner profile
             user_message: User's message content for intent detection
             
         Returns:
@@ -97,24 +96,24 @@ class ChatService:
                 pass
         """
         logger.info(
-            f"Determining session for user={user_id}, owner={owner_id}"
+            f"Determining session for user={user_id}, owner_profile={owner_profile_id}"
         )
         
         # Check for explicit new session intent (Requirement 4.7)
         if self._is_new_session_intent(user_message):
             logger.info("New session intent detected in user message")
-            new_chat = await self._create_new_session(user_id, owner_id)
+            new_chat = await self._create_new_session(user_id, owner_profile_id)
             return new_chat, True
         
         # Look for existing session (Requirement 4.1)
         existing_chat = await self.chat_repo.get_latest_by_user_owner(
-            user_id, owner_id
+            user_id, owner_profile_id
         )
         
         # No existing session - create new one (Requirement 4.2)
         if not existing_chat:
             logger.info("No existing session found, creating new chat")
-            new_chat = await self._create_new_session(user_id, owner_id)
+            new_chat = await self._create_new_session(user_id, owner_profile_id)
             return new_chat, True
         
         # Check if session expired (Requirement 4.3, 4.4)
@@ -135,8 +134,8 @@ class ChatService:
     
     async def create_chat(
         self, 
-        user_id: UUID, 
-        owner_id: UUID
+        user_id: int, 
+        owner_profile_id: int
     ) -> Chat:
         """
         Create a new chat session.
@@ -159,9 +158,9 @@ class ChatService:
             )
         """
         logger.info(
-            f"Creating new chat for user={user_id}, owner={owner_id}"
+            f"Creating new chat for user={user_id}, owner_profile={owner_profile_id}"
         )
-        return await self._create_new_session(user_id, owner_id)
+        return await self._create_new_session(user_id, owner_profile_id)
     
     async def update_chat_state(
         self, 
@@ -194,7 +193,7 @@ class ChatService:
                 bot_memory={"context": {"last_search": [...]}}
             )
         """
-        update_data = {"last_message_at": datetime.utcnow()}
+        update_data = {"last_message_at": datetime.now(timezone.utc)}
         
         if flow_state is not None:
             update_data["flow_state"] = flow_state
@@ -286,8 +285,8 @@ class ChatService:
     
     async def _create_new_session(
         self, 
-        user_id: UUID, 
-        owner_id: UUID
+        user_id: int, 
+        owner_profile_id: int
     ) -> Chat:
         """
         Internal method to create new chat session.
@@ -300,14 +299,14 @@ class ChatService:
         
         Args:
             user_id: UUID of the user
-            owner_id: UUID of the property owner
+            owner_profile_id: UUID of the owner profile
             
         Returns:
             Chat: Newly created chat instance
         """
         chat_data = {
             "user_id": user_id,
-            "owner_id": owner_id,
+            "owner_profile_id": owner_profile_id,
             "status": "active",
             "flow_state": {},
             "bot_memory": {}
@@ -317,7 +316,7 @@ class ChatService:
         
         logger.info(
             f"Created new chat session: {chat.id} "
-            f"(user={user_id}, owner={owner_id})"
+            f"(user={user_id}, owner_profile={owner_profile_id})"
         )
         
         return chat

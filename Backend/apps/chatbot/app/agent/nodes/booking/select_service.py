@@ -2,25 +2,29 @@
 Select service node for booking subgraph.
 
 This module implements the select_service node that handles court (service) selection
-in the booking flow. It retrieves courts for the selected property, presents them as
-list options with sport type information, parses user selection (court ID or court name),
-stores the selected service_id in flow_state, and handles invalid selections gracefully.
+in the booking flow using LangChain agent. It retrieves courts for the selected property,
+uses an LLM agent to parse user selection, stores the selected service_id in flow_state,
+and handles invalid selections gracefully.
 
-Requirements: 6.3, 20.3, 22.1-22.6, 23.3
+Requirements: 6.3, 9.1, 9.2, 20.3, 22.1-22.6, 23.3
 """
 
 from typing import Optional, Dict, Any, List
 import logging
 import re
 
-from ...state.conversation_state import ConversationState
-from ...tools import TOOL_REGISTRY
+from app.agent.state.conversation_state import ConversationState
+from app.agent.tools import TOOL_REGISTRY
+from app.services.llm.langchain_wrapper import create_langchain_llm
+from app.agent.prompts.booking_prompts import create_select_service_prompt
+from app.services.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
 async def select_service(
     state: ConversationState,
+    llm_provider: LLMProvider,
     tools: Optional[Dict[str, Any]] = None
 ) -> ConversationState:
     """
@@ -138,6 +142,7 @@ async def select_service(
         # User is responding with a selection
         return await _process_service_selection(
             state=state,
+            llm_provider=llm_provider,
             tools=tools,
             chat_id=chat_id,
             user_message=user_message,
@@ -237,6 +242,7 @@ async def _present_service_options(
 
 async def _process_service_selection(
     state: ConversationState,
+    llm_provider: LLMProvider,
     tools: Dict[str, Any],
     chat_id: str,
     user_message: str,
@@ -244,13 +250,14 @@ async def _process_service_selection(
     bot_memory: Dict[str, Any]
 ) -> ConversationState:
     """
-    Process user's service (court) selection.
+    Process user's service (court) selection using LangChain agent.
     
-    This function parses the user's selection (court ID or court name),
-    validates it, and stores the selected service_id in flow_state.
+    This function uses a LangChain agent to intelligently parse the user's
+    selection, validates it, and stores the selected service_id in flow_state.
     
     Args:
         state: ConversationState
+        llm_provider: LLMProvider for creating LangChain LLM
         tools: Tool registry
         chat_id: Chat ID for logging
         user_message: User's selection message
@@ -292,66 +299,198 @@ async def _process_service_selection(
             
             return state
     
-    # Parse user selection
-    selected_court = _parse_court_selection(
-        user_message=user_message,
-        available_courts=available_courts
-    )
-    
-    if not selected_court:
-        # Invalid selection
-        logger.warning(
-            f"Invalid court selection for chat {chat_id}: {user_message}"
+    # Create LangChain LLM
+    try:
+        llm = create_langchain_llm(llm_provider)
+    except Exception as e:
+        logger.error(f"Failed to create LangChain LLM for chat {chat_id}: {e}", exc_info=True)
+        # Fallback to manual parsing
+        selected_court = _parse_court_selection(
+            user_message=user_message,
+            available_courts=available_courts
         )
         
-        # Generate helpful error message with available options
-        court_names = [
-            f"{c.get('name', 'Unknown')} ({c.get('sport_type', 'Unknown sport')})"
-            for c in available_courts
-        ]
-        options_text = ", ".join(court_names)
+        if not selected_court:
+            # Invalid selection
+            logger.warning(
+                f"Invalid court selection for chat {chat_id}: {user_message}"
+            )
+            
+            # Generate helpful error message with available options
+            court_names = [
+                f"{c.get('name', 'Unknown')} ({c.get('sport_type', 'Unknown sport')})"
+                for c in available_courts
+            ]
+            options_text = ", ".join(court_names)
+            
+            response = (
+                f"I couldn't find that court. "
+                f"Please select from the available options: {options_text}"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
         
+        # Valid selection - store in flow_state
+        service_id = str(selected_court.get("id"))
+        service_name = selected_court.get("name", "Unknown Court")
+        sport_type = selected_court.get("sport_type", "Unknown")
+        
+        flow_state["service_id"] = service_id
+        flow_state["service_name"] = service_name
+        flow_state["sport_type"] = sport_type
+        flow_state["step"] = "service_selected"
+        
+        state["flow_state"] = flow_state
+        
+        # Generate confirmation message
         response = (
-            f"I couldn't find that court. "
-            f"Please select from the available options: {options_text}"
+            f"Perfect! You've selected {service_name} ({sport_type}). "
+            f"Now let's choose a date for your booking."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
         
-        # Keep step as select_service to allow retry
+        logger.info(
+            f"Service selected for chat {chat_id}: "
+            f"service_id={service_id}, service_name={service_name}, "
+            f"sport_type={sport_type}"
+        )
+        
         return state
     
-    # Valid selection - store in flow_state
-    service_id = str(selected_court.get("id"))
-    service_name = selected_court.get("name", "Unknown Court")
-    sport_type = selected_court.get("sport_type", "Unknown")
+    # Create prompt for service selection
+    property_name = flow_state.get("property_name", "the property")
+    prompt = create_select_service_prompt(property_name, available_courts)
     
-    flow_state["service_id"] = service_id
-    flow_state["service_name"] = service_name
-    flow_state["sport_type"] = sport_type
-    flow_state["step"] = "service_selected"
-    
-    state["flow_state"] = flow_state
-    
-    # Generate confirmation message
-    response = (
-        f"Perfect! You've selected {service_name} ({sport_type}). "
-        f"Now let's choose a date for your booking."
-    )
-    
-    state["response_content"] = response
-    state["response_type"] = "text"
-    state["response_metadata"] = {}
-    
-    logger.info(
-        f"Service selected for chat {chat_id}: "
-        f"service_id={service_id}, service_name={service_name}, "
-        f"sport_type={sport_type}"
-    )
-    
-    return state
+    # Use LLM to parse selection
+    try:
+        messages = prompt.format_messages(input=user_message)
+        response_obj = await llm.ainvoke(messages)
+        agent_response = response_obj.content.strip()
+        
+        logger.debug(f"Agent response for service selection: {agent_response}")
+        
+        # Try to extract court ID from response
+        court_id_match = re.search(r'\b(\d+)\b', agent_response)
+        
+        if court_id_match:
+            court_id_str = court_id_match.group(1)
+            
+            # Find court with this ID
+            selected_court = None
+            for court in available_courts:
+                if str(court.get("id")) == court_id_str:
+                    selected_court = court
+                    break
+            
+            if selected_court:
+                # Valid selection - store in flow_state
+                service_id = str(selected_court.get("id"))
+                service_name = selected_court.get("name", "Unknown Court")
+                sport_type = selected_court.get("sport_type", "Unknown")
+                
+                flow_state["service_id"] = service_id
+                flow_state["service_name"] = service_name
+                flow_state["sport_type"] = sport_type
+                flow_state["step"] = "service_selected"
+                
+                state["flow_state"] = flow_state
+                
+                # Generate confirmation message
+                response = (
+                    f"Perfect! You've selected {service_name} ({sport_type}). "
+                    f"Now let's choose a date for your booking."
+                )
+                
+                state["response_content"] = response
+                state["response_type"] = "text"
+                state["response_metadata"] = {}
+                
+                logger.info(
+                    f"Service selected for chat {chat_id}: "
+                    f"service_id={service_id}, service_name={service_name}, "
+                    f"sport_type={sport_type}"
+                )
+                
+                return state
+        
+        # Agent is asking for clarification or couldn't parse
+        state["response_content"] = agent_response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        
+        logger.info(f"Agent asking for clarification in chat {chat_id}")
+        
+        return state
+        
+    except Exception as e:
+        logger.error(f"Error using LangChain agent for service selection in chat {chat_id}: {e}", exc_info=True)
+        
+        # Fallback to manual parsing
+        selected_court = _parse_court_selection(
+            user_message=user_message,
+            available_courts=available_courts
+        )
+        
+        if not selected_court:
+            # Invalid selection
+            logger.warning(
+                f"Invalid court selection for chat {chat_id}: {user_message}"
+            )
+            
+            # Generate helpful error message with available options
+            court_names = [
+                f"{c.get('name', 'Unknown')} ({c.get('sport_type', 'Unknown sport')})"
+                for c in available_courts
+            ]
+            options_text = ", ".join(court_names)
+            
+            response = (
+                f"I couldn't find that court. "
+                f"Please select from the available options: {options_text}"
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            
+            return state
+        
+        # Valid selection - store in flow_state
+        service_id = str(selected_court.get("id"))
+        service_name = selected_court.get("name", "Unknown Court")
+        sport_type = selected_court.get("sport_type", "Unknown")
+        
+        flow_state["service_id"] = service_id
+        flow_state["service_name"] = service_name
+        flow_state["sport_type"] = sport_type
+        flow_state["step"] = "service_selected"
+        
+        state["flow_state"] = flow_state
+        
+        # Generate confirmation message
+        response = (
+            f"Perfect! You've selected {service_name} ({sport_type}). "
+            f"Now let's choose a date for your booking."
+        )
+        
+        state["response_content"] = response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        
+        logger.info(
+            f"Service selected for chat {chat_id}: "
+            f"service_id={service_id}, service_name={service_name}, "
+            f"sport_type={sport_type}"
+        )
+        
+        return state
 
 
 async def _get_property_courts(

@@ -10,6 +10,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from app.agent.tools.sync_bridge import call_sync_service
+from shared.services import court_service
 
 logger = logging.getLogger(__name__)
 

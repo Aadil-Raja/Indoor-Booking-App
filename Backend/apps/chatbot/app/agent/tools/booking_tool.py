@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional
 from datetime import date, time
 
 from app.agent.tools.sync_bridge import call_sync_service
+from shared.services import booking_service
 
 logger = logging.getLogger(__name__)
 

@@ -26,7 +26,7 @@ Usage:
 from typing import Dict, Callable, Any
 import logging
 
-from .sync_bridge import (
+from app.agent.tools.sync_bridge import (
     run_sync_in_executor,
     sync_to_async,
     call_sync_service,
@@ -36,32 +36,43 @@ from .sync_bridge import (
 )
 
 # Import tool functions from individual modules
-from .property_tool import (
+from app.agent.tools.property_tool import (
     search_properties_tool,
     get_property_details_tool,
     get_owner_properties_tool,
 )
 
-from .court_tool import (
+from app.agent.tools.court_tool import (
     search_courts_tool,
     get_court_details_tool,
     get_property_courts_tool,
 )
 
-from .availability_tool import (
+from app.agent.tools.availability_tool import (
     check_availability_tool,
     get_available_slots_tool,
 )
 
-from .pricing_tool import (
+from app.agent.tools.pricing_tool import (
     get_pricing_tool,
     calculate_total_price,
 )
 
-from .booking_tool import (
+from app.agent.tools.booking_tool import (
     create_booking_tool,
     get_booking_details_tool,
     cancel_booking_tool,
+)
+
+from app.agent.tools.information_tools import (
+    search_properties_tool as info_search_properties_tool,
+    get_property_details_tool as info_get_property_details_tool,
+    get_court_details_tool as info_get_court_details_tool,
+    get_court_availability_tool as info_get_court_availability_tool,
+    get_court_pricing_tool as info_get_court_pricing_tool,
+    get_property_media_tool as info_get_property_media_tool,
+    get_court_media_tool as info_get_court_media_tool,
+    INFORMATION_TOOLS,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,21 +80,21 @@ logger = logging.getLogger(__name__)
 
 # Tool registry dictionary mapping tool names to tool functions
 TOOL_REGISTRY: Dict[str, Callable] = {
-    # Property tools
+    # Property tools (legacy/direct use)
     "search_properties": search_properties_tool,
     "get_property_details": get_property_details_tool,
     "get_owner_properties": get_owner_properties_tool,
     
-    # Court tools
+    # Court tools (legacy/direct use)
     "search_courts": search_courts_tool,
     "get_court_details": get_court_details_tool,
     "get_property_courts": get_property_courts_tool,
     
-    # Availability tools
+    # Availability tools (legacy/direct use)
     "check_availability": check_availability_tool,
     "get_available_slots": get_available_slots_tool,
     
-    # Pricing tools
+    # Pricing tools (legacy/direct use)
     "get_pricing": get_pricing_tool,
     "calculate_total_price": calculate_total_price,
     
@@ -92,6 +103,11 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "get_booking_details": get_booking_details_tool,
     "cancel_booking": cancel_booking_tool,
 }
+
+# Add information tools to registry
+# These tools are used by the Information Node with LangChain agents
+# They are registered separately to maintain compatibility with create_langchain_tools()
+TOOL_REGISTRY.update(INFORMATION_TOOLS)
 
 
 def initialize_tools(**dependencies) -> Dict[str, Callable]:
@@ -141,12 +157,16 @@ def initialize_tools(**dependencies) -> Dict[str, Callable]:
     availability_tools = [k for k in TOOL_REGISTRY.keys() if "availability" in k or "slots" in k]
     pricing_tools = [k for k in TOOL_REGISTRY.keys() if "pricing" in k or "price" in k]
     booking_tools = [k for k in TOOL_REGISTRY.keys() if "booking" in k]
+    information_tools = [k for k in TOOL_REGISTRY.keys() if k.startswith("information_")]
+    media_tools = [k for k in TOOL_REGISTRY.keys() if "media" in k]
     
     logger.debug(f"Property tools: {property_tools}")
     logger.debug(f"Court tools: {court_tools}")
     logger.debug(f"Availability tools: {availability_tools}")
     logger.debug(f"Pricing tools: {pricing_tools}")
     logger.debug(f"Booking tools: {booking_tools}")
+    logger.debug(f"Information tools: {information_tools}")
+    logger.debug(f"Media tools: {media_tools}")
     
     # Currently, tools don't require dependency injection as they use
     # the sync bridge which manages its own database sessions.
@@ -213,6 +233,7 @@ __all__ = [
     
     # Tool registry
     "TOOL_REGISTRY",
+    "INFORMATION_TOOLS",
     "initialize_tools",
     "get_tool",
     "list_tools",
@@ -231,4 +252,13 @@ __all__ = [
     "create_booking_tool",
     "get_booking_details_tool",
     "cancel_booking_tool",
+    
+    # Information tools (for Information Node)
+    "info_search_properties_tool",
+    "info_get_property_details_tool",
+    "info_get_court_details_tool",
+    "info_get_court_availability_tool",
+    "info_get_court_pricing_tool",
+    "info_get_property_media_tool",
+    "info_get_court_media_tool",
 ]

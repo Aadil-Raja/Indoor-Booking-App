@@ -68,6 +68,7 @@ class Message(Base):
     )
     
     message_metadata = Column(
+        "metadata",  # Database column name
         JSONB,
         nullable=False,
         default=dict,

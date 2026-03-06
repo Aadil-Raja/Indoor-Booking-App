@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, AsyncIterator
 from openai import AsyncOpenAI, OpenAIError, APIError, RateLimitError, APIConnectionError, AuthenticationError, APITimeoutError
 import tiktoken
 
-from .base import (
+from app.services.llm.base import (
     LLMProvider,
     LLMProviderError,
     LLMConnectionError,
@@ -56,7 +56,14 @@ class OpenAIProvider(LLMProvider):
             max_retries: Maximum number of retry attempts
             retry_delay: Initial delay between retries in seconds
         """
-        self.client = AsyncOpenAI(api_key=api_key)
+        # Store api_key as attribute for LangChain wrapper
+        self.api_key = api_key
+        
+        # Initialize AsyncOpenAI client with only supported parameters
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            max_retries=0  # We handle retries ourselves
+        )
         self.model = model
         self.default_max_tokens = max_tokens
         self.default_temperature = temperature

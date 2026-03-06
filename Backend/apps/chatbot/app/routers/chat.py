@@ -15,16 +15,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 import logging
 
-from ..core.database import get_async_db
-from ..repositories.chat_repository import ChatRepository
-from ..repositories.message_repository import MessageRepository
-from ..services.chat_service import ChatService
-from ..services.message_service import MessageService
-from ..services.agent_service import AgentService
-from ..agent.runtime.graph_runtime import GraphRuntime
-from ..schemas.chat import ChatMessageRequest, ChatMessageResponse, ChatHistoryResponse, ChatCreate, ChatResponse, ChatListResponse, ChatSummary
-from ..core.config import settings
-from ..services.llm import get_llm_provider
+from app.deps.db import get_async_db
+from app.repositories.chat_repository import ChatRepository
+from app.repositories.message_repository import MessageRepository
+from app.services.chat_service import ChatService
+from app.services.message_service import MessageService
+from app.services.agent_service import AgentService
+from app.agent.runtime.graph_runtime import GraphRuntime
+from app.schemas.chat import ChatMessageRequest, ChatMessageResponse, ChatHistoryResponse, ChatCreate, ChatResponse, ChatListResponse, ChatSummary
+from app.core.config import settings
+from app.services.llm import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ async def send_message(
     - 18.1-18.3: Authentication and authorization
     
     Args:
-        request: ChatMessageRequest with user_id, owner_id, and message content
+        request: ChatMessageRequest with user_id, owner_profile_id, and message content
         chat_service: Injected ChatService
         message_service: Injected MessageService
         agent_service: Injected AgentService
@@ -111,7 +111,7 @@ async def send_message(
         f"Received message request",
         extra={
             "user_id": str(request.user_id),
-            "owner_id": str(request.owner_id),
+            "owner_profile_id": str(request.owner_profile_id),
             "message_preview": request.content[:100]
         }
     )
@@ -120,7 +120,7 @@ async def send_message(
         # Step 1: Determine session continuity (Requirements 4.1-4.8)
         chat, is_new_session = await chat_service.determine_session(
             user_id=request.user_id,
-            owner_id=request.owner_id,
+            owner_profile_id=request.owner_profile_id,
             user_message=request.content
         )
         
@@ -129,7 +129,7 @@ async def send_message(
             extra={
                 "chat_id": str(chat.id),
                 "user_id": str(request.user_id),
-                "owner_id": str(request.owner_id),
+                "owner_id": str(request.owner_profile_id),
                 "is_new_session": is_new_session
             }
         )
@@ -192,14 +192,14 @@ async def send_message(
                         extra={
                             "old_chat_id": str(chat.id),
                             "user_id": str(request.user_id),
-                            "owner_id": str(request.owner_id)
+                            "owner_id": str(request.owner_profile_id)
                         }
                     )
                     
                     # Create new session (Requirement 4.6)
                     chat = await chat_service.create_chat(
                         user_id=request.user_id,
-                        owner_id=request.owner_id
+                        owner_id=request.owner_profile_id
                     )
                     
                     # Process message with new session
@@ -285,7 +285,7 @@ async def send_message(
             f"Validation error: {e}",
             extra={
                 "user_id": str(request.user_id),
-                "owner_id": str(request.owner_id),
+                "owner_id": str(request.owner_profile_id),
                 "error": str(e)
             }
         )
@@ -301,7 +301,7 @@ async def send_message(
             f"Error processing message: {e}",
             extra={
                 "user_id": str(request.user_id),
-                "owner_id": str(request.owner_id),
+                "owner_id": str(request.owner_profile_id),
                 "error_type": type(e).__name__
             },
             exc_info=True
@@ -370,14 +370,14 @@ async def get_chat_history(
         # Step 2: Verify user has access to chat (Requirements 18.1-18.5)
         # Note: In a production system, this would use get_current_user dependency
         # For now, we'll allow access since authentication will be added later
-        # The check would be: if current_user.id != chat.user_id and current_user.id != chat.owner_id
+        # The check would be: if current_user.id != chat.user_id and current_user.id != chat.owner_profile_id
         
         logger.info(
             f"Access granted to chat {chat_id}",
             extra={
                 "chat_id": str(chat_id),
                 "user_id": str(chat.user_id),
-                "owner_id": str(chat.owner_id)
+                "owner_id": str(chat.owner_profile_id)
             }
         )
         
@@ -451,7 +451,7 @@ async def create_new_chat(
         f"Received new chat request",
         extra={
             "user_id": str(request.user_id),
-            "owner_id": str(request.owner_id)
+            "owner_id": str(request.owner_profile_id)
         }
     )
     
@@ -459,7 +459,7 @@ async def create_new_chat(
         # Create new chat session
         chat = await chat_service.create_chat(
             user_id=request.user_id,
-            owner_id=request.owner_id
+            owner_id=request.owner_profile_id
         )
         
         # Commit transaction
@@ -470,7 +470,7 @@ async def create_new_chat(
             extra={
                 "chat_id": str(chat.id),
                 "user_id": str(request.user_id),
-                "owner_id": str(request.owner_id)
+                "owner_id": str(request.owner_profile_id)
             }
         )
         
@@ -478,7 +478,7 @@ async def create_new_chat(
         return ChatResponse(
             id=chat.id,
             user_id=chat.user_id,
-            owner_id=chat.owner_id,
+            owner_id=chat.owner_profile_id,
             status=chat.status,
             last_message_at=chat.last_message_at,
             flow_state=chat.flow_state,
@@ -492,7 +492,7 @@ async def create_new_chat(
             f"Validation error creating new chat: {e}",
             extra={
                 "user_id": str(request.user_id),
-                "owner_id": str(request.owner_id),
+                "owner_id": str(request.owner_profile_id),
                 "error": str(e)
             }
         )
@@ -508,7 +508,7 @@ async def create_new_chat(
             f"Error creating new chat: {e}",
             extra={
                 "user_id": str(request.user_id),
-                "owner_id": str(request.owner_id),
+                "owner_id": str(request.owner_profile_id),
                 "error_type": type(e).__name__
             },
             exc_info=True
@@ -594,7 +594,7 @@ async def list_user_chats(
             
             chat_summary = ChatSummary(
                 chat_id=chat.id,
-                owner_id=chat.owner_id,
+                owner_id=chat.owner_profile_id,
                 status=chat.status,
                 last_message_at=chat.last_message_at,
                 last_message_preview=last_message_preview,

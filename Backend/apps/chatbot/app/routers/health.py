@@ -14,8 +14,8 @@ import logging
 from typing import Dict, Any
 from datetime import datetime
 
-from ..core.database import get_async_db
-from ..services.llm import get_llm_provider, LLMProviderError
+from app.deps.db import get_async_db
+from app.services.llm import get_llm_provider, LLMProviderError
 
 logger = logging.getLogger(__name__)
 

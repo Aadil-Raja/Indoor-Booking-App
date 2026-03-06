@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 from datetime import date
 
 from app.agent.tools.sync_bridge import call_sync_service
+from shared.services import availability_service
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def _get_management_services():
 
 async def check_availability_tool(
     court_id: int,
-    owner_id: int,
+    owner_profile_id: int,
     from_date: Optional[date] = None
 ) -> List[Dict[str, Any]]:
     """
@@ -81,7 +82,7 @@ async def check_availability_tool(
     
     Args:
         court_id: ID of the court to check
-        owner_id: Owner ID for ownership verification
+        owner_profile_id: Owner profile ID for ownership verification
         from_date: Optional start date to filter blocked slots (defaults to today)
         
     Returns:
@@ -90,13 +91,13 @@ async def check_availability_tool(
     Example:
         blocked_slots = await check_availability_tool(
             court_id=123,
-            owner_id=456,
+            owner_profile_id=456,
             from_date=date(2024, 1, 15)
         )
     """
     try:
         logger.info(
-            f"Checking availability: court_id={court_id}, owner_id={owner_id}, "
+            f"Checking availability: court_id={court_id}, owner_profile_id={owner_profile_id}, "
             f"from_date={from_date}"
         )
         
@@ -108,7 +109,7 @@ async def check_availability_tool(
             availability_service.get_blocked_slots,
             db=None,  # Auto-managed by sync bridge
             court_id=court_id,
-            owner_id=owner_id,
+            owner_id=owner_profile_id,
             from_date=from_date
         )
         

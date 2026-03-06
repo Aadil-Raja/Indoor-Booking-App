@@ -1,5 +1,26 @@
 """
-Indoor search handler node for LangGraph conversation management.
+DEPRECATED: Indoor search handler node - REPLACED by information_handler
+
+This node has been REPLACED by the information_handler (app/agent/nodes/information.py)
+which uses LangChain agents with automatic tool calling to handle all information-related
+queries including search, availability, pricing, and media.
+
+This file is kept for backward compatibility and reference only.
+DO NOT USE THIS NODE IN NEW CODE - Use information_handler instead.
+
+MIGRATION GUIDE:
+- Old: from app.agent.nodes.indoor_search import indoor_search_handler
+- New: from app.agent.nodes.information import information_handler
+
+- Old: graph.add_node("indoor_search", indoor_search_handler)
+- New: graph.add_node("information", information_handler)
+
+- Old routing: "search": "indoor_search"
+- New routing: "information": "information"
+
+---
+
+Legacy Documentation:
 
 This module implements the indoor_search_handler node that processes facility
 search requests. It extracts search parameters from user messages, calls property
@@ -13,8 +34,8 @@ from typing import Optional, Dict, Any, List
 import logging
 import re
 
-from ..state.conversation_state import ConversationState
-from ..tools import TOOL_REGISTRY
+from app.agent.state.conversation_state import ConversationState
+from app.agent.tools import TOOL_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +77,7 @@ async def indoor_search_handler(
         state = {
             "chat_id": "123e4567-e89b-12d3-a456-426614174000",
             "user_id": "user-uuid",
-            "owner_id": "owner-uuid",
+            "owner_profile_id": "owner-uuid",
             "user_message": "I'm looking for tennis courts in downtown",
             "bot_memory": {},
             ...
@@ -69,7 +90,7 @@ async def indoor_search_handler(
     """
     chat_id = state["chat_id"]
     user_message = state["user_message"]
-    owner_id = state["owner_id"]
+    owner_profile_id = state["owner_profile_id"]
     
     # Use provided tools or default to TOOL_REGISTRY
     if tools is None:
@@ -83,6 +104,22 @@ async def indoor_search_handler(
     # Extract search parameters from user message
     search_params = _extract_search_params(user_message)
     
+    # Check if user is asking for details about a specific property
+    property_name = _extract_property_name(user_message)
+    if property_name and ("detail" in user_message.lower() or "more" in user_message.lower()):
+        logger.info(f"User requesting details for property: {property_name}")
+        # Try to find the property by name and show details
+        result = await _show_property_details(
+            tools=tools,
+            owner_profile_id=owner_profile_id,
+            property_name=property_name,
+            chat_id=chat_id
+        )
+        if result:
+            state.update(result)
+            return state
+        # If property not found, fall through to regular search
+    
     logger.debug(
         f"Extracted search parameters for chat {chat_id}: {search_params}"
     )
@@ -90,7 +127,7 @@ async def indoor_search_handler(
     # Search for properties and courts
     properties = await _search_facilities(
         tools=tools,
-        owner_id=owner_id,
+        owner_profile_id=owner_profile_id,
         search_params=search_params,
         chat_id=chat_id
     )
@@ -217,7 +254,7 @@ def _extract_search_params(message: str) -> Dict[str, Any]:
 
 async def _search_facilities(
     tools: Dict[str, Any],
-    owner_id: str,
+    owner_profile_id: str,
     search_params: Dict[str, Any],
     chat_id: str
 ) -> List[Dict[str, Any]]:
@@ -236,7 +273,7 @@ async def _search_facilities(
     
     Args:
         tools: Tool registry containing search functions
-        owner_id: Owner ID to filter properties
+        owner_profile_id: Owner profile ID to filter properties
         search_params: Extracted search parameters
         chat_id: Chat ID for logging
         
@@ -255,11 +292,11 @@ async def _search_facilities(
         
         logger.debug(
             f"Calling search_properties for chat {chat_id}: "
-            f"owner_id={owner_id}, city={location}, sport_type={sport_type}"
+            f"owner_profile_id={owner_profile_id}, city={location}, sport_type={sport_type}"
         )
         
         properties = await search_properties(
-            owner_id=owner_id,
+            owner_profile_id=owner_profile_id,
             city=location,
             sport_type=sport_type,
             limit=10
@@ -538,3 +575,177 @@ def _update_bot_memory_with_results(
         bot_memory["user_preferences"]["preferred_sport"] = search_params["sport_type"]
     
     return bot_memory
+
+
+
+def _extract_property_name(message: str) -> Optional[str]:
+    """
+    Extract property name from user message.
+    
+    This function looks for property names mentioned in the message,
+    particularly after keywords like "details of", "about", "for".
+    
+    Args:
+        message: User's message
+        
+    Returns:
+        Property name if found, None otherwise
+    """
+    message_lower = message.lower()
+    
+    # Patterns to extract property name
+    patterns = [
+        r'details?\s+(?:of|about|for)\s+([a-zA-Z0-9\s]+?)(?:\s|$)',
+        r'(?:show|tell)\s+me\s+(?:about|more\s+about)\s+([a-zA-Z0-9\s]+?)(?:\s|$)',
+        r'information\s+(?:on|about)\s+([a-zA-Z0-9\s]+?)(?:\s|$)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, message_lower)
+        if match:
+            property_name = match.group(1).strip()
+            logger.debug(f"Extracted property name: {property_name}")
+            return property_name
+    
+    return None
+
+
+async def _show_property_details(
+    tools: Dict[str, Any],
+    owner_profile_id: str,
+    property_name: str,
+    chat_id: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Show detailed information about a specific property.
+    
+    This function searches for the property by name, then retrieves
+    and formats detailed information including courts, amenities, etc.
+    
+    Args:
+        tools: Tool registry
+        owner_profile_id: Owner profile ID
+        property_name: Name of the property to show details for
+        chat_id: Chat ID for logging
+        
+    Returns:
+        State update dict with response, or None if property not found
+    """
+    try:
+        # First, get all properties to find the one matching the name
+        get_owner_properties = tools.get("get_owner_properties")
+        if not get_owner_properties:
+            logger.error("get_owner_properties tool not found")
+            return None
+        
+        properties = await get_owner_properties(owner_profile_id=int(owner_profile_id))
+        
+        # Find property by name (case-insensitive partial match)
+        matching_property = None
+        property_name_lower = property_name.lower()
+        
+        for prop in properties:
+            if property_name_lower in prop.get("name", "").lower():
+                matching_property = prop
+                break
+        
+        if not matching_property:
+            logger.info(f"No property found matching name: {property_name}")
+            return None
+        
+        property_id = matching_property.get("id")
+        
+        # Get detailed information about the property
+        get_property_details = tools.get("get_property_details")
+        if not get_property_details:
+            logger.error("get_property_details tool not found")
+            return None
+        
+        details = await get_property_details(
+            property_id=property_id,
+            owner_profile_id=int(owner_profile_id)
+        )
+        
+        if not details:
+            logger.warning(f"Failed to get details for property_id={property_id}")
+            return None
+        
+        # Format the detailed response
+        response = _format_property_details(details)
+        
+        logger.info(f"Showing details for property: {details.get('name')}")
+        
+        return {
+            "response_content": response,
+            "response_type": "text",
+            "response_metadata": {
+                "property_id": property_id,
+                "property_name": details.get("name")
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error showing property details: {e}", exc_info=True)
+        return None
+
+
+def _format_property_details(details: Dict[str, Any]) -> str:
+    """
+    Format property details into a readable response.
+    
+    Args:
+        details: Property details dictionary
+        
+    Returns:
+        Formatted response string
+    """
+    name = details.get("name", "Unknown")
+    description = details.get("description", "")
+    address = details.get("address", "")
+    city = details.get("city", "")
+    state = details.get("state", "")
+    phone = details.get("phone", "")
+    email = details.get("email", "")
+    amenities = details.get("amenities", [])
+    courts = details.get("courts", [])
+    
+    # Build response
+    lines = [f"📍 {name}"]
+    
+    if description:
+        lines.append(f"\n{description}")
+    
+    # Location
+    location_parts = []
+    if address:
+        location_parts.append(address)
+    if city:
+        location_parts.append(city)
+    if state:
+        location_parts.append(state)
+    
+    if location_parts:
+        lines.append(f"\n📌 Location: {', '.join(location_parts)}")
+    
+    # Contact
+    if phone:
+        lines.append(f"📞 Phone: {phone}")
+    if email:
+        lines.append(f"📧 Email: {email}")
+    
+    # Courts
+    if courts:
+        lines.append(f"\n🎾 Available Courts ({len(courts)}):")
+        for court in courts:
+            court_name = court.get("name", "Unnamed")
+            sport_type = court.get("sport_type", "").title()
+            status = "✅ Active" if court.get("is_active") else "❌ Inactive"
+            lines.append(f"  • {court_name} - {sport_type} ({status})")
+    
+    # Amenities
+    if amenities:
+        lines.append(f"\n✨ Amenities:")
+        for amenity in amenities:
+            lines.append(f"  • {amenity}")
+    
+    return "\n".join(lines)

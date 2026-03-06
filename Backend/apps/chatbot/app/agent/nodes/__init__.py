@@ -20,13 +20,13 @@ Future nodes will include:
 - Booking subgraph nodes
 """
 
-from .basic_nodes import (
+from app.agent.nodes.basic_nodes import (
     receive_message,
     load_chat,
     append_user_message
 )
-from .intent_detection import intent_detection
-from .greeting import greeting_handler
+from app.agent.nodes.intent_detection import intent_detection
+from app.agent.nodes.greeting import greeting_handler
 
 __all__ = [
     "receive_message",

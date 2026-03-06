@@ -20,10 +20,10 @@ import logging
 import time
 from datetime import datetime
 
-from ..graphs.main_graph import create_main_graph
-from ..state.conversation_state import ConversationState
-from ..tools import initialize_tools
-from ...services.llm.base import LLMProvider, LLMProviderError
+from app.agent.graphs.main_graph import create_main_graph
+from app.agent.state.conversation_state import ConversationState
+from app.agent.tools import initialize_tools
+from app.services.llm.base import LLMProvider, LLMProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class GraphRuntime:
         state = {
             "chat_id": "123",
             "user_id": "456",
-            "owner_id": "789",
+            "owner_profile_id": "789",
             "user_message": "Hello",
             "flow_state": {},
             "bot_memory": {},
@@ -136,7 +136,7 @@ class GraphRuntime:
             state: Initial conversation state containing:
                 - chat_id: UUID of the chat session
                 - user_id: UUID of the user
-                - owner_id: UUID of the property owner
+                - owner_profile_id: UUID of the property owner
                 - user_message: The user's message
                 - flow_state: Current booking/conversation state
                 - bot_memory: Conversation context and history
@@ -158,7 +158,7 @@ class GraphRuntime:
             state = {
                 "chat_id": "123",
                 "user_id": "456",
-                "owner_id": "789",
+                "owner_profile_id": "789",
                 "user_message": "I want to book a tennis court",
                 "flow_state": {},
                 "bot_memory": {},
@@ -317,7 +317,7 @@ class GraphRuntime:
         Raises:
             ValueError: If required fields are missing
         """
-        required_fields = ["chat_id", "user_id", "owner_id", "user_message"]
+        required_fields = ["chat_id", "user_id", "owner_profile_id", "user_message"]
         missing_fields = [
             field for field in required_fields
             if field not in state or state[field] is None
@@ -405,7 +405,7 @@ class GraphRuntime:
             # Preserve identifiers
             "chat_id": state.get("chat_id"),
             "user_id": state.get("user_id"),
-            "owner_id": state.get("owner_id"),
+            "owner_profile_id": state.get("owner_profile_id"),
             "user_message": state.get("user_message"),
             
             # Preserve conversation state (Requirement 14.5)

@@ -1,6 +1,22 @@
-# Indoor Search Handler Node Usage Guide
+# DEPRECATED: Indoor Search Handler Node Usage Guide
 
-## Overview
+## ⚠️ DEPRECATION NOTICE
+
+**This node has been replaced by `information_handler`.**
+
+Please use the new `information_handler` node which provides:
+- LangChain agent with automatic tool calling
+- Better natural language understanding
+- Multi-step query support
+- Context-aware responses
+
+**See:** `INFORMATION_HANDLER_USAGE.md` for the new documentation.
+
+---
+
+## Legacy Documentation (For Reference Only)
+
+### Overview
 
 The `indoor_search_handler` node processes facility search requests in the chatbot conversation flow. It extracts search parameters from user messages, calls property and court search tools, formats results as list messages, and stores results in bot_memory for later reference.
 

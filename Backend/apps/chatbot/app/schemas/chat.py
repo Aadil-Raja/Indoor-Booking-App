@@ -22,8 +22,8 @@ from uuid import UUID
 
 class ChatBase(BaseModel):
     """Base schema for chat with common fields."""
-    user_id: UUID = Field(..., description="User ID participating in the chat")
-    owner_id: UUID = Field(..., description="Owner ID whose properties are being discussed")
+    user_id: int = Field(..., description="User ID participating in the chat")
+    owner_profile_id: int = Field(..., description="Owner Profile ID whose properties are being discussed")
 
 
 class ChatCreate(ChatBase):
@@ -84,8 +84,8 @@ class MessageResponse(MessageBase):
 
 class ChatMessageRequest(BaseModel):
     """Schema for incoming chat message API request."""
-    user_id: UUID = Field(..., description="User ID sending the message")
-    owner_id: UUID = Field(..., description="Owner ID whose properties are being discussed")
+    user_id: int = Field(..., description="User ID sending the message")
+    owner_profile_id: int = Field(..., description="Owner Profile ID whose properties are being discussed")
     content: str = Field(..., description="Message content from user", min_length=1)
 
 
@@ -107,7 +107,7 @@ class ChatHistoryResponse(BaseModel):
 class ChatSummary(BaseModel):
     """Schema for chat summary in list view."""
     chat_id: UUID = Field(..., description="Chat session ID")
-    owner_id: UUID = Field(..., description="Owner ID whose properties are being discussed")
+    owner_profile_id: int = Field(..., description="Owner Profile ID whose properties are being discussed")
     status: str = Field(..., description="Chat status: active, closed")
     last_message_at: datetime = Field(..., description="Timestamp of last message")
     last_message_preview: Optional[str] = Field(None, description="Preview of last message content")
