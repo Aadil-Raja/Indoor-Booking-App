@@ -204,14 +204,14 @@ def get_court_pricing_for_date(db: Session, *, court_id: int, date_val: date):
         return make_response(False, "Court not found", status_code=404)
 
     # Get day of week (0=Monday, 6=Sunday)
-    day_of_week = booking_date.weekday()
+    day_of_week = date_val.weekday()
 
     # Get pricing rules for this day
     pricing_rules = (
         db.query(CourtPricing)
         .filter(
             CourtPricing.court_id == court_id,
-            CourtPricing.days.any(day_of_week)
+            CourtPricing.days.contains([day_of_week])
         )
         .order_by(CourtPricing.start_time)
         .all()
@@ -252,7 +252,7 @@ def get_available_slots(db: Session, *, court_id: int, date_val: date):
         db.query(CourtPricing)
         .filter(
             CourtPricing.court_id == court_id,
-            CourtPricing.days.any(day_of_week)
+            CourtPricing.days.contains([day_of_week])
         )
         .order_by(CourtPricing.start_time)
         .all()
@@ -317,122 +317,3 @@ def get_available_slots(db: Session, *, court_id: int, date_val: date):
     }
 
     return make_response(True, "Available slots retrieved successfully", data=data)
-
-
-
-def search_courts(
-    db: Session,
-    *,
-    search: Optional[str] = None,
-    date: Optional[str] = None,
-    start_time: Optional[str] = None,
-    sport_type: Optional[str] = None,
-    min_price: Optional[float] = None,
-    max_price: Optional[float] = None,
-    page: int = 1,
-    limit: int = 20
-):
-    """
-    Search courts with filters and availability check
-    
-    Args:
-        search: Search text (court name, property name, address, city)
-        date: Date for availability check (YYYY-MM-DD)
-        start_time: Start time for availability check (HH:MM)
-        sport_type: Filter by sport type
-        min_price: Minimum price per hour
-        max_price: Maximum price per hour
-        page: Page number
-        limit: Items per page
-    
-    Returns:
-        Response with courts list and pagination info
-    """
-    from shared.repositories import court_repo
-    
-    # Search courts with filters
-    courts, total = court_repo.search_courts_with_filters(
-        db,
-        search=search,
-        sport_type=sport_type,
-        min_price=min_price,
-        max_price=max_price,
-        date_val=date,
-        start_time=start_time,
-        page=page,
-        limit=limit
-    )
-    
-    # Format response
-    items = []
-    for court in courts:
-        # Get base price
-        base_price = court_repo.get_base_price(db, court.id)
-        
-        # Check availability if date and time provided
-        is_available = None
-        if date and start_time:
-            is_available = court_repo.check_court_availability(
-                db,
-                court.id,
-                date,
-                start_time
-            )
-            
-            # Skip courts that are not available when filtering by time
-            if not is_available:
-                continue
-        
-        # Format court data
-        court_data = {
-            "id": court.id,
-            "name": court.name,
-            "sport_type": court.sport_type,
-            "description": court.description,
-            "specifications": court.specifications,
-            "amenities": court.amenities,
-            "base_price": base_price,
-            "is_indoor": court.specifications.get("is_indoor") if court.specifications else None,
-            "surface_type": court.specifications.get("surface_type") if court.specifications else None,
-            "property": {
-                "id": court.property.id,
-                "name": court.property.name,
-                "address": court.property.address,
-                "city": court.property.city,
-                "state": court.property.state,
-                "phone": court.property.phone,
-                "email": court.property.email,
-                "maps_link": court.property.maps_link,
-                "amenities": court.property.amenities
-            },
-            "media": [
-                {
-                    "id": m.id,
-                    "media_type": m.media_type.value,
-                    "url": m.url,
-                    "thumbnail_url": m.thumbnail_url,
-                    "caption": m.caption
-                }
-                for m in court.media
-            ]
-        }
-        
-        # Add availability status if checked
-        if is_available is not None:
-            court_data["is_available"] = is_available
-        
-        items.append(court_data)
-    
-    # Recalculate total based on filtered results
-    actual_total = len(items) if (date and start_time) else total
-    
-    # Pagination info
-    data = {
-        "items": items,
-        "total": actual_total,
-        "page": page,
-        "limit": limit,
-        "pages": (actual_total + limit - 1) // limit if actual_total > 0 else 0
-    }
-    
-    return make_response(True, "Courts retrieved successfully", data=data)

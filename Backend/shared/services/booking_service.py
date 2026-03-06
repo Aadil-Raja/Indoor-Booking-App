@@ -8,7 +8,6 @@ from shared.utils import OwnerContext
 from shared.schemas.booking import BookingCreate
 from shared.models import BookingStatus, PaymentStatus, CourtPricing
 from datetime import datetime, timedelta
-from typing import Optional
 
 
 def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
@@ -31,12 +30,11 @@ def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
         return make_response(False, "This time slot is already booked", status_code=409)
 
     day_of_week = data.booking_date.weekday()
-    
     pricing = (
         db.query(CourtPricing)
         .filter(
             CourtPricing.court_id == data.court_id,
-            CourtPricing.days.any(day_of_week),
+            CourtPricing.days.contains([day_of_week]),
             CourtPricing.start_time <= data.start_time,
             CourtPricing.end_time >= data.end_time
         )
@@ -83,13 +81,9 @@ def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
         return make_response(False, "Failed to create booking", status_code=500, error=str(e))
 
 
-def get_user_bookings(db: Session, *, user_id: int, status_filter: Optional[str] = None):
+def get_user_bookings(db: Session, *, user_id: int):
     """Get all bookings for a user"""
     bookings = booking_repo.get_by_customer(db, user_id)
-    
-    # Filter by status if provided
-    if status_filter:
-        bookings = [b for b in bookings if b.status.value == status_filter]
 
     data = [
         {

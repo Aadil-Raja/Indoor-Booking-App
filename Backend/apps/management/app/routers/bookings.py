@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from app.deps.db import get_db
 from app.deps.auth import get_current_user, get_current_customer, get_current_owner
@@ -6,7 +6,6 @@ from app.services import booking_service
 from shared.utils import OwnerContext
 from shared.schemas.booking import BookingCreate
 from shared.models import User, UserRole
-from typing import Optional
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -23,12 +22,11 @@ def create_booking(
 
 @router.get("")
 def list_my_bookings(
-    status_filter: Optional[str] = Query(None, alias="status"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """List bookings for current user (Customer view)"""
-    return booking_service.get_user_bookings(db, user_id=current_user.id, status_filter=status_filter)
+    return booking_service.get_user_bookings(db, user_id=current_user.id)
 
 
 @router.get("/owner")
