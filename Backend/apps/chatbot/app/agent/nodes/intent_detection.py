@@ -1,14 +1,10 @@
 """
-Intent detection node for LangGraph conversation management.
+Intent detection node - uses LLM to decide routing.
 
-This module implements the intent_detection node that uses LLM to make explicit
-routing decisions. The LLM analyzes the user message and returns a next_node
-decision, eliminating rule-based transitions.
-
-The next_node decision is used to route the conversation to the appropriate handler
-node in the LangGraph flow.
-
-Requirements: 2.1, 2.2, 2.3, 2.4
+LLM analyzes user message and returns next_node decision:
+- "greeting" for greetings
+- "information" for questions
+- "booking" for reservations
 """
 
 from typing import Optional
@@ -22,7 +18,7 @@ from app.agent.state.conversation_state import ConversationState
 from app.services.llm.base import LLMProvider, LLMProviderError
 from app.services.llm.langchain_wrapper import create_langchain_llm
 from app.agent.prompts.intent_prompts import get_routing_prompt
-from app.agent.state.llm_response_parser import parse_llm_response
+from app.agent.state.llm_response_parser import parse_llm_response, apply_state_updates
 
 logger = logging.getLogger(__name__)
 
@@ -32,39 +28,16 @@ async def intent_detection(
     llm_provider: Optional[LLMProvider] = None
 ) -> ConversationState:
     """
-    Determine next_node using LLM-based routing decision.
+    Use LLM to decide routing (greeting/information/booking).
     
-    This node analyzes the user's message using the LLM to determine which
-    handler node should process the message next. It uses the LLM to make
-    an explicit routing decision, eliminating rule-based transitions.
+    LLM analyzes message and returns:
+    - next_node: which handler to route to
+    - state_updates: any state changes to apply
     
-    Implements Requirements:
-    - 2.1: LLM SHALL return next_node field in response
-    - 2.2: Remove rule-based logic for intent determination
-    - 2.3: LLM makes routing decisions
-    - 2.4: Route to node specified by LLM's next_node decision
-    - 13.5: Apply state_updates before routing to next_node
-    
-    Args:
-        state: ConversationState containing the user message
-        llm_provider: Optional LLMProvider for routing decision
-        
-    Returns:
-        ConversationState: State with next_node decision and updated flow_state
-        
-    Example:
-        state = {
-            "user_message": "I want to book a tennis court",
-            "flow_state": {},
-            ...
-        }
-        
-        result = await intent_detection(state, llm_provider=provider)
-        # result["next_node"] = "booking"
-        # result["flow_state"]["current_intent"] = "booking"
+    Falls back to "greeting" if LLM fails.
     """
     user_message = state["user_message"]
-    flow_state = state.get("flow_state", {})
+
     
     logger.info(
         f"Determining routing for chat {state['chat_id']} - "
@@ -88,15 +61,13 @@ async def intent_detection(
         message = "Hello! How can I help you today?"
         state_updates = {}
     
-    # CRITICAL: Apply state updates BEFORE setting next_node (Requirement 13.5)
-    # This ensures that any state changes from the LLM are applied before routing
-    from app.agent.state.llm_response_parser import apply_state_updates
+    # Apply state updates before routing
     state = apply_state_updates(state, state_updates)
     
-    # Store next_node in state for routing (this is what the graph will use)
+    # Store next_node for graph routing
     state["next_node"] = next_node
     
-    # Store the LLM's message (optional, for debugging or transition messages)
+    # Store LLM message if provided
     if message:
         state["response_content"] = message
     
@@ -114,28 +85,10 @@ async def _llm_routing_decision(
     chat_id: str
 ) -> tuple[str, str, dict]:
     """
-    Use LLM to make routing decision.
+    Call LLM to get routing decision.
     
-    This function uses the INTENT_ROUTING_PROMPT template to get the LLM's
-    routing decision. The LLM returns a structured JSON response containing
-    next_node, message, and state_updates.
-    
-    Implements Requirements:
-    - 2.1: LLM SHALL return next_node field
-    - 2.2: Remove rule-based logic for intent determination
-    - 2.3: LLM makes routing decisions
-    - 2.4: Route to node specified by LLM's next_node decision
-    
-    Args:
-        message: Original user message
-        llm_provider: LLMProvider instance for creating ChatOpenAI
-        chat_id: Chat ID for logging
-        
-    Returns:
-        Tuple of (next_node, message, state_updates)
-        
-    Note:
-        If LLM routing fails or returns invalid response, defaults to "greeting"
+    Returns: (next_node, message, state_updates)
+    Defaults to "greeting" if LLM fails.
     """
     # Get formatted prompt from template
     prompt = get_routing_prompt(message)

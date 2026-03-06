@@ -1,19 +1,11 @@
 """
-Agent service for orchestrating LangGraph conversation flow.
+Agent service for processing messages through LangGraph.
 
-This service implements the core business logic for processing user messages
-through the LangGraph conversation agent. It:
-- Stores incoming user messages
-- Prepares conversation state from chat data
-- Executes the main graph through GraphRuntime
-- Updates chat state with new flow_state and bot_memory
-- Stores bot responses with token usage
-- Handles errors gracefully with proper logging
-
-The service acts as the orchestration layer between the API endpoints and
-the LangGraph agent, managing the complete message processing lifecycle.
-
-Requirements: 6.1-6.8, 11.1-11.5, 12.1-12.3, 13.1-13.3, 15.1-15.5
+Orchestrates the complete message flow:
+- Save user message
+- Run LangGraph (intent detection → handler → response)
+- Save bot response
+- Update chat state
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,32 +23,9 @@ logger = logging.getLogger(__name__)
 
 class AgentService:
     """
-    Service for orchestrating LangGraph conversation flow.
+    Orchestrates message processing through LangGraph.
     
-    This service manages the complete lifecycle of processing a user message:
-    1. Store user message in database
-    2. Prepare conversation state from chat data
-    3. Execute LangGraph through GraphRuntime
-    4. Update chat state with results
-    5. Store bot response
-    6. Return response to caller
-    
-    All operations are async and use transaction management through the
-    provided database session. The service handles errors gracefully and
-    ensures conversation state is preserved across failures.
-    
-    Implements Requirements:
-    - 6.1-6.8: LangGraph architecture and state management
-    - 11.1-11.5: Async service layer
-    - 12.1-12.3: Structured logging
-    - 13.1-13.3: Token usage tracking
-    - 15.1-15.5: Transaction management
-    
-    Attributes:
-        session: AsyncSession for database operations
-        chat_service: ChatService for chat state management
-        message_service: MessageService for message operations
-        graph_runtime: GraphRuntime for LangGraph execution
+    Main job: Take user message → Run graph → Return bot response
     """
     
     def __init__(
@@ -66,143 +35,56 @@ class AgentService:
         message_service: MessageService,
         graph_runtime: GraphRuntime
     ):
-        """
-        Initialize AgentService with dependencies.
-        
-        Args:
-            session: AsyncSession for database operations
-            chat_service: ChatService instance
-            message_service: MessageService instance
-            graph_runtime: GraphRuntime instance for graph execution
-        """
         self.session = session
         self.chat_service = chat_service
         self.message_service = message_service
         self.graph_runtime = graph_runtime
-        
-        logger.info("AgentService initialized")
     
-    async def process_message(
-        self,
-        chat: Chat,
-        user_message: str
-    ) -> Dict[str, Any]:
+    async def process_message(self, chat: Chat, user_message: str) -> Dict[str, Any]:
         """
-        Process user message through LangGraph and return bot response.
+        Process user message and return bot response.
         
-        This is the main entry point for message processing. It orchestrates
-        the complete flow:
+        What it does:
+        1. Save user message to database
+        2. Prepare state (chat history, flow_state, bot_memory)
+        3. Run LangGraph (intent detection → handler → response)
+        4. Update chat state with results
+        5. Save bot response
+        6. Return response
         
-        1. Store user message in database (Requirement 5.1)
-        2. Prepare conversation state from chat data (Requirement 6.4-6.5)
-        3. Execute main graph via GraphRuntime (Requirement 6.1-6.8)
-        4. Update chat state with new flow_state and bot_memory (Requirement 20.1-20.8)
-        5. Store bot response with token usage (Requirement 13.1-13.3)
-        6. Return response dict to caller
-        
-        The method uses transaction management to ensure data consistency.
-        If any step fails, the transaction is rolled back and an error
-        response is returned while preserving conversation state.
-        
-        Args:
-            chat: Chat instance for the conversation session
-            user_message: User's message content
-            
         Returns:
-            Dict containing:
-                - content: Bot's response text
-                - message_type: Response format (text, button, list, media)
-                - metadata: Additional response data (buttons, lists, etc.)
-                - message_id: UUID of the stored bot message
-                
-        Raises:
-            Exception: If critical errors occur during processing
-            
-        Example:
-            response = await agent_service.process_message(
-                chat=chat,
-                user_message="I want to book a tennis court"
-            )
-            
-            print(response["content"])  # Bot's response
-            print(response["message_type"])  # "text", "button", "list", etc.
-            print(response["message_id"])  # UUID of bot message
+            {
+                "content": "Bot's response text",
+                "message_type": "text",
+                "metadata": {},
+                "message_id": "uuid"
+            }
         """
         chat_id = chat.id
-        user_id = chat.user_id
-        owner_profile_id = chat.owner_profile_id
-        
-        # Log incoming message (Requirement 12.1)
-        logger.info(
-            f"Processing message for chat {chat_id}",
-            extra={
-                "chat_id": str(chat_id),
-                "user_id": str(user_id),
-                "owner_profile_id": str(owner_profile_id),
-                "message_preview": user_message[:100],
-                "current_intent": chat.flow_state.get("intent"),
-                "current_step": chat.flow_state.get("step")
-            }
-        )
+        logger.info(f"Processing message for chat {chat_id}")
         
         try:
-            # Step 1: Store user message (Requirement 5.1)
+            # 1. Save user message
             user_msg = await self.message_service.create_message(
                 chat_id=chat_id,
                 sender_type="user",
                 content=user_message
             )
             
-            logger.debug(
-                f"Stored user message {user_msg.id} for chat {chat_id}"
-            )
+            # 2. Prepare state (chat history + flow_state + bot_memory)
+            state = self._prepare_conversation_state(chat=chat, user_message=user_message)
             
-            # Step 2: Prepare conversation state (Requirement 6.4-6.5)
-            state = self._prepare_conversation_state(
-                chat=chat,
-                user_message=user_message
-            )
-            
-            logger.debug(
-                f"Prepared conversation state for chat {chat_id}",
-                extra={
-                    "chat_id": str(chat_id),
-                    "flow_state": state["flow_state"],
-                    "message_history_length": len(state["messages"])
-                }
-            )
-            
-            # Step 3: Execute graph (Requirement 6.1-6.8)
+            # 3. Run graph (intent detection → handler → response)
             result = await self.graph_runtime.execute(state)
             
-            logger.info(
-                f"Graph execution completed for chat {chat_id}",
-                extra={
-                    "chat_id": str(chat_id),
-                    "response_type": result.get("response_type"),
-                    "token_usage": result.get("token_usage"),
-                    "new_intent": result.get("flow_state", {}).get("intent"),
-                    "new_step": result.get("flow_state", {}).get("step")
-                }
-            )
-            
-            # Step 4: Update chat state (Requirement 20.1-20.8, 15.1-15.5)
+            # 4. Update chat state
             await self.chat_service.update_chat_state(
                 chat=chat,
                 flow_state=result.get("flow_state"),
                 bot_memory=result.get("bot_memory")
             )
             
-            logger.debug(
-                f"Updated chat state for {chat_id}",
-                extra={
-                    "chat_id": str(chat_id),
-                    "flow_state_updated": result.get("flow_state") is not None,
-                    "bot_memory_updated": result.get("bot_memory") is not None
-                }
-            )
-            
-            # Step 5: Store bot response (Requirement 13.1-13.3)
+            # 5. Save bot response
             bot_message = await self.message_service.create_message(
                 chat_id=chat_id,
                 sender_type="bot",
@@ -212,54 +94,20 @@ class AgentService:
                 token_usage=result.get("token_usage")
             )
             
-            logger.info(
-                f"Stored bot response {bot_message.id} for chat {chat_id}",
-                extra={
-                    "chat_id": str(chat_id),
-                    "message_id": str(bot_message.id),
-                    "message_type": bot_message.message_type,
-                    "token_usage": bot_message.token_usage
-                }
-            )
+            # 6. Return response
+            logger.info(f"Message processed successfully for chat {chat_id}")
             
-            # Step 6: Return response dict
-            response = {
+            return {
                 "content": result["response_content"],
                 "message_type": result.get("response_type", "text"),
                 "metadata": result.get("response_metadata", {}),
                 "message_id": bot_message.id
             }
             
-            logger.info(
-                f"Message processing completed successfully for chat {chat_id}",
-                extra={
-                    "chat_id": str(chat_id),
-                    "message_id": str(bot_message.id),
-                    "response_length": len(response["content"])
-                }
-            )
-            
-            return response
-            
         except GraphExecutionError as e:
-            # Graph execution failed - log and return error response
-            logger.error(
-                f"Graph execution error for chat {chat_id}: {e}",
-                extra={
-                    "chat_id": str(chat_id),
-                    "user_id": str(user_id),
-                    "error_type": type(e).__name__,
-                    "flow_state": chat.flow_state
-                },
-                exc_info=True
-            )
+            logger.error(f"Graph error for chat {chat_id}: {e}", exc_info=True)
             
-            # Store error message for user
-            error_message = (
-                "I encountered an error processing your message. "
-                "Please try again or rephrase your request."
-            )
-            
+            error_message = "I encountered an error. Please try again."
             bot_message = await self.message_service.create_message(
                 chat_id=chat_id,
                 sender_type="bot",
@@ -276,24 +124,9 @@ class AgentService:
             }
             
         except Exception as e:
-            # Unexpected error - log and return generic error response
-            logger.error(
-                f"Unexpected error processing message for chat {chat_id}: {e}",
-                extra={
-                    "chat_id": str(chat_id),
-                    "user_id": str(user_id),
-                    "owner_profile_id": str(owner_profile_id),
-                    "error_type": type(e).__name__,
-                    "flow_state": chat.flow_state
-                },
-                exc_info=True
-            )
+            logger.error(f"Error processing message for chat {chat_id}: {e}", exc_info=True)
             
-            # Store error message for user
-            error_message = (
-                "I'm having trouble right now. "
-                "Your conversation has been saved. Please try again."
-            )
+            error_message = "I'm having trouble right now. Please try again."
             
             try:
                 bot_message = await self.message_service.create_message(
@@ -301,7 +134,7 @@ class AgentService:
                     sender_type="bot",
                     content=error_message,
                     message_type="text",
-                    metadata={"error": True, "error_type": type(e).__name__}
+                    metadata={"error": True}
                 )
                 
                 return {
@@ -311,50 +144,41 @@ class AgentService:
                     "message_id": bot_message.id
                 }
             except Exception as store_error:
-                # Even storing error message failed - log and re-raise
-                logger.critical(
-                    f"Failed to store error message for chat {chat_id}: {store_error}",
-                    extra={
-                        "chat_id": str(chat_id),
-                        "original_error": str(e),
-                        "store_error": str(store_error)
-                    },
-                    exc_info=True
-                )
+                logger.critical(f"Failed to store error message: {store_error}", exc_info=True)
                 raise
     
-    def _prepare_conversation_state(
-        self,
-        chat: Chat,
-        user_message: str
-    ) -> Dict[str, Any]:
+    def _prepare_conversation_state(self, chat: Chat, user_message: str) -> Dict[str, Any]:
         """
-        Prepare conversation state from chat data for graph execution.
+        Prepare state for graph execution.
         
-        This method transforms the database chat model into the ConversationState
-        format expected by the LangGraph nodes. It includes:
-        - Chat identifiers (chat_id, user_id, owner_profile_id)
-        - Current user message
-        - Persistent state (flow_state, bot_memory)
-        - Message history for LLM context
-        
-        Implements Requirement 6.4-6.5: When executing a node, the LangGraph_Agent
-        shall read current flow_state and bot_memory.
-        
-        Args:
-            chat: Chat instance with current state
-            user_message: User's message content
-            
-        Returns:
-            Dict containing ConversationState fields ready for graph execution
+        Ensures all required fields are initialized:
+        - Chat IDs (from chat object)
+        - Current message
+        - flow_state (defaults to {})
+        - bot_memory with conversation_history (defaults to {})
+        - All response fields with defaults
         """
-        # Extract message history from bot_memory for LLM context
+        # Initialize bot_memory with proper structure
         bot_memory = chat.bot_memory or {}
-        conversation_history = bot_memory.get("conversation_history", [])
         
-        # Prepare state dict
-        state = {
-            # Identifiers
+        # Ensure conversation_history exists
+        if "conversation_history" not in bot_memory:
+            bot_memory["conversation_history"] = []
+        
+        # Ensure user_preferences exists
+        if "user_preferences" not in bot_memory:
+            bot_memory["user_preferences"] = {}
+        
+        # Ensure inferred_information exists
+        if "inferred_information" not in bot_memory:
+            bot_memory["inferred_information"] = {}
+        
+        # Ensure context exists
+        if "context" not in bot_memory:
+            bot_memory["context"] = {}
+        
+        return {
+            # IDs (always present from chat object)
             "chat_id": str(chat.id),
             "user_id": str(chat.user_id),
             "owner_profile_id": str(chat.owner_profile_id),
@@ -362,43 +186,23 @@ class AgentService:
             # Current message
             "user_message": user_message,
             
-            # Persistent state
+            # State from database (with defaults)
             "flow_state": chat.flow_state or {},
             "bot_memory": bot_memory,
+            "messages": [],  # Will be loaded by load_chat node
             
-            # Message history for LLM context
-            "messages": conversation_history,
-            
-            # Processing state (will be populated by nodes)
+            # Response fields (will be filled by nodes)
             "intent": None,
-            
-            # Response fields (will be populated by nodes)
             "response_content": "",
             "response_type": "text",
             "response_metadata": {},
-            
-            # Metrics
             "token_usage": None,
             
-            # Tool results (will be populated by nodes)
+            # Tool results (will be filled by nodes)
             "search_results": None,
             "availability_data": None,
             "pricing_data": None
         }
-        
-        logger.debug(
-            f"Prepared conversation state",
-            extra={
-                "chat_id": str(chat.id),
-                "has_flow_state": bool(chat.flow_state),
-                "has_bot_memory": bool(bot_memory),
-                "message_history_length": len(conversation_history),
-                "current_intent": chat.flow_state.get("intent") if chat.flow_state else None,
-                "current_step": chat.flow_state.get("step") if chat.flow_state else None
-            }
-        )
-        
-        return state
 
 
 __all__ = ["AgentService"]

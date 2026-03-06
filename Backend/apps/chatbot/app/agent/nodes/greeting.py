@@ -164,8 +164,6 @@ def _is_returning_user(bot_memory: dict) -> bool:
     A user is considered returning if they have:
     - Conversation history with more than just the current user message
       (append_user_message runs before greeting, so 1 message = new user)
-    - User preferences from previous interactions
-    - Context from previous searches
     
     Args:
         bot_memory: The bot_memory dict from ConversationState
@@ -179,23 +177,12 @@ def _is_returning_user(bot_memory: dict) -> bool:
     # - 1 message = new user (just the current "hi")
     # - 2+ messages = returning user (has previous conversation)
     conversation_history = bot_memory.get("conversation_history", [])
-    # print(len(conversation_history),conversation_history,"converstaion_history")
+    
     if len(conversation_history) > 1:
+        logger.debug(f"Returning user detected: {len(conversation_history)} messages in history")
         return True
     
-    # # Check if there are user preferences (indicates previous interaction)
-    # user_preferences = bot_memory.get("user_preferences", {})
-    # print(user_preferences)
-    # if user_preferences:
-    #     return True
-    
-    # # Check if there's any context from previous interactions
-    # context = bot_memory.get("context", {})
-    # print(context)
-    # if context.get("last_search_results") or context.get("mentioned_properties"):
-    #     return True
-    
-    # No indicators of previous interaction - this is a new user
+    logger.debug("New user detected: first message")
     return False
 
 
@@ -234,6 +221,13 @@ async def _fetch_owner_profile(owner_profile_id: str, chat_id: str) -> dict:
         Dictionary with owner profile data including business_name
     """
     try:
+        # Validate owner_profile_id
+        try:
+            profile_id = int(owner_profile_id)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid owner_profile_id format: {owner_profile_id}, error: {e}")
+            return {"business_name": "our facility"}  # Default fallback
+        
         from sqlalchemy.orm import Session
         from shared.models import OwnerProfile
         from app.agent.tools.sync_bridge import call_sync_service
@@ -244,18 +238,18 @@ async def _fetch_owner_profile(owner_profile_id: str, chat_id: str) -> dict:
             if profile:
                 return {
                     "id": profile.id,
-                    "business_name": profile.business_name,
+                    "business_name": profile.business_name or "our facility",  # Fallback
                     "phone": profile.phone,
                     "address": profile.address,
                     "verified": profile.verified
                 }
-            return {}
+            return {"business_name": "our facility"}  # Default if not found
         
         # Call sync service using the bridge
         profile_data = await call_sync_service(
             get_owner_profile_sync,
             db=None,  # Auto-managed by sync bridge
-            profile_id=int(owner_profile_id)
+            profile_id=profile_id
         )
         
         logger.info(f"Fetched owner profile for owner_profile_id={owner_profile_id} in chat {chat_id}")
@@ -263,7 +257,7 @@ async def _fetch_owner_profile(owner_profile_id: str, chat_id: str) -> dict:
         
     except Exception as e:
         logger.error(f"Error fetching owner profile for greeting in chat {chat_id}: {e}", exc_info=True)
-        return {}
+        return {"business_name": "our facility"}  # Fallback on error
 
 
 async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
@@ -285,6 +279,13 @@ async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
     Requirements: 5.1, 5.2, 5.3
     """
     try:
+        # Validate owner_profile_id
+        try:
+            owner_id = int(owner_profile_id)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid owner_profile_id format: {owner_profile_id}, error: {e}")
+            return []
+        
         # Get the property tool from registry
         get_owner_properties = TOOL_REGISTRY.get("get_owner_properties")
         
@@ -292,8 +293,12 @@ async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
             logger.warning(f"get_owner_properties tool not found for chat {chat_id}")
             return []
         
-        # Fetch properties
-        properties = await get_owner_properties(owner_profile_id=int(owner_profile_id))
+        # Fetch properties with error handling
+        properties = await get_owner_properties(owner_profile_id=owner_id)
+        
+        if not isinstance(properties, list):
+            logger.warning(f"Invalid properties response type: {type(properties)}")
+            return []
         
         logger.info(f"Fetched {len(properties)} properties for greeting in chat {chat_id}")
         return properties
