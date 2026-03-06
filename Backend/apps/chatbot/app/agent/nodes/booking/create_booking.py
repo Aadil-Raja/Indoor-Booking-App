@@ -1,305 +1,378 @@
 """
-Create pending booking node for booking subgraph.
+Create booking node for booking subgraph.
 
-This module implements the create_booking node that handles the final step
-of creating a booking with pending status. It calls the booking tool to create
-the booking, stores the booking_id in flow_state on success, handles errors
-gracefully, clears booking fields from flow_state on completion, and generates
-a confirmation message with booking details.
+This module implements the create_booking node that handles the final booking creation
+in the booking flow. It parses the time_slot, calls the booking tool, handles success/failure,
+and clears flow_state upon completion.
 
-Requirements: 6.3, 8.1-8.6, 20.8, 22.1-22.6
+Requirements: 8.5, 15.5
 """
 
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import logging
-from datetime import datetime, time, date
+from datetime import datetime, time
 
 from app.agent.state.conversation_state import ConversationState
-from app.agent.tools import TOOL_REGISTRY
+from app.agent.tools.booking_tool import create_booking_tool
 
 logger = logging.getLogger(__name__)
 
 
-async def create_pending_booking(
+async def create_booking(
     state: ConversationState,
-    tools: Optional[Dict[str, Any]] = None
+    tools: Dict[str, Any]
 ) -> ConversationState:
     """
-    Create a pending booking and generate confirmation message.
+    Handle booking creation in booking flow.
     
-    This node manages the final step of the booking process. It:
-    1. Retrieves all booking details from flow_state (user_id, service_id, date, start_time, end_time)
-    2. Validates that all required fields are present
-    3. Calls the create_booking_tool to create a booking with pending status
-    4. Stores booking_id in flow_state on success
-    5. Handles booking creation errors gracefully with retry information
-    6. Clears booking-related fields from flow_state on completion
-    7. Generates a confirmation message with booking details and booking_id
-    8. Updates flow_state step to "booking_created"
+    This node manages the final booking creation step. It:
+    1. Parses time_slot into start_time and end_time
+    2. Calls create_booking_tool with all booking data
+    3. If success: clears flow_state and returns confirmation message - Req 15.5
+    4. If failure: returns error and routes back to time_selection
+    5. Validates all required data before proceeding - Req 8.5
     
     Implements Requirements:
-    - 6.3: Booking_Subgraph with Create_Pending_Booking node
-    - 8.1: Call booking_service.create_booking() when booking is confirmed
-    - 8.2: Create booking with pending status
-    - 8.3: Store booking_id in flow_state when booking is created successfully
-    - 8.4: Inform user and retain booking details in flow_state for retry when booking creation fails
-    - 8.5: Clear booking-specific fields from flow_state when booking is completed
-    - 8.6: Preserve bot_memory for conversation context after booking completion
-    - 20.8: Clear booking-related fields from Flow_State when booking is completed or cancelled
-    - 22.1: Present booking summary with all details
-    - 22.2: Include property name, court type, date, time, and price in summary
-    - 22.3: Ask for explicit user confirmation
-    - 22.4: Create booking when user confirms
-    - 22.5: Clear flow_state when user cancels
-    - 22.6: Return to appropriate step when user requests changes
+    - 8.5: Validate each step's data before proceeding
+    - 15.5: Clear flow_state when booking is completed or cancelled
     
     Args:
-        state: ConversationState containing user_id, flow_state with booking details
-        tools: Optional tool registry (defaults to TOOL_REGISTRY if not provided)
+        state: ConversationState containing user_id, flow_state, and booking details
+        tools: Tool registry containing booking tools
         
     Returns:
         ConversationState: State with response_content, response_type, response_metadata,
-                          and updated flow_state with booking_id and cleared booking fields
+                          cleared flow_state (on success), and next_node decision
         
     Example:
+        # Case 1: Successful booking creation
         state = {
-            "chat_id": "123e4567-e89b-12d3-a456-426614174000",
-            "user_id": "223e4567-e89b-12d3-a456-426614174000",
-            "user_message": "yes, confirm",
+            "chat_id": "123",
+            "user_id": "456",
             "flow_state": {
-                "intent": "booking",
-                "property_id": "1",
-                "property_name": "Downtown Sports Center",
-                "service_id": "10",
-                "service_name": "Tennis Court A",
-                "sport_type": "tennis",
+                "property_id": 1,
+                "property_name": "Sports Center",
+                "court_id": 10,
+                "court_name": "Tennis Court A",
                 "date": "2024-12-25",
-                "start_time": "14:00:00",
-                "end_time": "15:00:00",
-                "price": 50.0,
-                "total_price": 50.0,
-                "duration_hours": 1.0,
-                "step": "confirmed"
+                "time_slot": "14:00-15:00",
+                "total_price": 75.0,
+                "booking_step": "confirming"
             },
             ...
         }
+        result = await create_booking(state, tools)
+        # result["response_content"] = "Booking confirmed! Your booking ID is..."
+        # result["flow_state"] = {}  # Cleared
+        # result["next_node"] = "end"
         
-        result = await create_pending_booking(state, tools)
-        # result["flow_state"]["booking_id"] = 123
-        # result["flow_state"]["step"] = "booking_created"
-        # result["response_content"] contains confirmation with booking details
-        # Booking fields cleared from flow_state
+        # Case 2: Booking creation failure
+        state = {
+            "user_id": "456",
+            "flow_state": {
+                ...
+                "time_slot": "14:00-15:00",
+                "booking_step": "confirming"
+            },
+            ...
+        }
+        result = await create_booking(state, tools)
+        # result["response_content"] = "Unable to create booking: Time slot already booked"
+        # result["next_node"] = "select_time"
     """
     chat_id = state["chat_id"]
-    user_id = state["user_id"]
+    user_id = state.get("user_id")
     flow_state = state.get("flow_state", {})
     
-    # Use provided tools or default to TOOL_REGISTRY
-    if tools is None:
-        tools = TOOL_REGISTRY
-    
     logger.info(
-        f"Creating pending booking for chat {chat_id} - "
-        f"step={flow_state.get('step')}"
+        f"Creating booking for chat {chat_id}, user {user_id}"
     )
     
-    # Validate required fields
-    required_fields = ["service_id", "date", "start_time", "end_time"]
-    missing_fields = [field for field in required_fields if not flow_state.get(field)]
+    # Validate that all required booking information is present (Requirement 8.5)
+    required_fields = {
+        "court_id": "court",
+        "date": "date",
+        "time_slot": "time slot"
+    }
+    
+    missing_fields = []
+    for field, display_name in required_fields.items():
+        if not flow_state.get(field):
+            missing_fields.append(display_name)
     
     if missing_fields:
         logger.error(
-            f"Missing required booking fields for chat {chat_id}: {missing_fields}"
+            f"Missing required booking information for chat {chat_id}: {missing_fields}"
         )
         
         response = (
-            "I'm sorry, but some booking information is missing. "
-            "Let's start the booking process again."
+            f"Some booking information is missing ({', '.join(missing_fields)}). "
+            f"Let's start over."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "select_property"
         
-        # Reset flow state to start booking process again
-        flow_state["step"] = "select_property"
-        _clear_booking_fields(flow_state)
-        state["flow_state"] = flow_state
-        
-        return state
-    
-    # Extract booking details from flow_state
-    service_id = flow_state.get("service_id")
-    date_str = flow_state.get("date")
-    start_time_str = flow_state.get("start_time")
-    end_time_str = flow_state.get("end_time")
-    
-    # Parse date and time
-    try:
-        booking_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        booking_start_time = datetime.strptime(start_time_str, "%H:%M:%S").time()
-        booking_end_time = datetime.strptime(end_time_str, "%H:%M:%S").time()
-    except ValueError as e:
-        logger.error(
-            f"Invalid date/time format for chat {chat_id}: {e}"
-        )
-        
-        response = (
-            "There was an error with the booking date or time. "
-            "Let's try selecting the date and time again."
-        )
-        
-        state["response_content"] = response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
-        
-        # Reset to date selection
-        flow_state["step"] = "service_selected"
-        flow_state.pop("date", None)
-        flow_state.pop("start_time", None)
-        flow_state.pop("end_time", None)
-        flow_state.pop("price", None)
-        state["flow_state"] = flow_state
+        # Reset flow_state (Requirement 15.5)
+        state["flow_state"] = {}
         
         return state
     
-    # Convert user_id to int (it's stored as string in state)
-    try:
-        customer_id = int(user_id)
-    except (ValueError, TypeError):
-        logger.error(
-            f"Invalid user_id format for chat {chat_id}: {user_id}"
-        )
+    # Validate user_id is present
+    if not user_id:
+        logger.error(f"Missing user_id for booking creation in chat {chat_id}")
         
         response = (
-            "There was an error with your user account. "
+            "I'm having trouble identifying your account. "
             "Please try again or contact support."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "end"
+        
+        # Clear flow_state (Requirement 15.5)
+        state["flow_state"] = {}
         
         return state
     
-    # Convert service_id to int
+    # Extract booking details
+    court_id = flow_state.get("court_id")
+    date_str = flow_state.get("date")
+    time_slot = flow_state.get("time_slot")
+    
+    # Parse date (Requirement 8.5)
     try:
-        court_id = int(service_id)
-    except (ValueError, TypeError):
+        booking_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError as e:
         logger.error(
-            f"Invalid service_id format for chat {chat_id}: {service_id}"
+            f"Invalid date format in flow_state for chat {chat_id}: {date_str}, error: {e}"
         )
         
         response = (
-            "There was an error with the selected court. "
-            "Let's try selecting a court again."
+            "There was an error with the selected date. "
+            "Please select a date again."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "select_date"
         
-        # Reset to service selection
-        flow_state["step"] = "property_selected"
-        flow_state.pop("service_id", None)
-        flow_state.pop("service_name", None)
+        # Clear date and subsequent fields
+        flow_state["date"] = None
+        flow_state["time_slot"] = None
+        flow_state["booking_step"] = "court_selected"
         state["flow_state"] = flow_state
         
         return state
     
-    # Call create_booking tool
-    create_booking = tools.get("create_booking")
-    if not create_booking:
-        logger.error("create_booking tool not found in registry")
+    # Parse time_slot into start_time and end_time (Requirement 8.5)
+    try:
+        start_time_str, end_time_str = time_slot.split("-")
+        
+        # Parse to time objects
+        start_time = datetime.strptime(start_time_str.strip(), "%H:%M").time()
+        end_time = datetime.strptime(end_time_str.strip(), "%H:%M").time()
+        
+        logger.debug(
+            f"Parsed time_slot for chat {chat_id}: "
+            f"start={start_time}, end={end_time}"
+        )
+        
+    except (ValueError, AttributeError) as e:
+        logger.error(
+            f"Invalid time_slot format in flow_state for chat {chat_id}: {time_slot}, error: {e}"
+        )
         
         response = (
-            "I'm sorry, but there was a system error. "
-            "Please try again later or contact support."
+            "There was an error with the selected time. "
+            "Please select a time slot again."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "select_time"
+        
+        # Clear time_slot
+        flow_state["time_slot"] = None
+        flow_state["booking_step"] = "date_selected"
+        state["flow_state"] = flow_state
         
         return state
     
-    logger.info(
-        f"Calling create_booking tool for chat {chat_id}: "
-        f"customer_id={customer_id}, court_id={court_id}, "
-        f"date={booking_date}, time={booking_start_time}-{booking_end_time}"
-    )
-    
-    try:
-        result = await create_booking(
-            customer_id=customer_id,
-            court_id=court_id,
-            booking_date=booking_date,
-            start_time=booking_start_time,
-            end_time=booking_end_time,
-            notes=None  # Could be added to flow_state in future
+    # Validate time range (end_time must be after start_time)
+    if end_time <= start_time:
+        logger.error(
+            f"Invalid time range for chat {chat_id}: "
+            f"start={start_time}, end={end_time}"
         )
         
-        if result and result.get("success"):
+        response = (
+            "The end time must be after the start time. "
+            "Please select a valid time slot."
+        )
+        
+        state["response_content"] = response
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        state["next_node"] = "select_time"
+        
+        # Clear time_slot
+        flow_state["time_slot"] = None
+        flow_state["booking_step"] = "date_selected"
+        state["flow_state"] = flow_state
+        
+        return state
+    
+    # Call create_booking_tool
+    try:
+        logger.info(
+            f"Calling create_booking_tool for chat {chat_id}: "
+            f"customer_id={user_id}, court_id={court_id}, "
+            f"date={booking_date}, time={start_time}-{end_time}"
+        )
+        
+        result = await create_booking_tool(
+            customer_id=int(user_id),
+            court_id=int(court_id),
+            booking_date=booking_date,
+            start_time=start_time,
+            end_time=end_time,
+            notes=None  # Could be added to flow_state if needed
+        )
+        
+        if not result:
+            # Unexpected error - result is None
+            logger.error(
+                f"create_booking_tool returned None for chat {chat_id}"
+            )
+            
+            response = (
+                "An unexpected error occurred while creating your booking. "
+                "Please try again later."
+            )
+            
+            state["response_content"] = response
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            state["next_node"] = "end"
+            
+            # Clear flow_state (Requirement 15.5)
+            state["flow_state"] = {}
+            
+            return state
+        
+        # Check if booking was successful
+        if result.get("success"):
             # Booking created successfully
             booking_data = result.get("data", {})
             booking_id = booking_data.get("id")
-            total_price = booking_data.get("total_price", flow_state.get("total_price", 0.0))
+            total_price = booking_data.get("total_price", 0.0)
             
             logger.info(
                 f"Booking created successfully for chat {chat_id}: "
                 f"booking_id={booking_id}, total_price=${total_price}"
             )
             
-            # Store booking_id in flow_state
-            flow_state["booking_id"] = booking_id
+            # Format confirmation message
+            property_name = flow_state.get("property_name", "the property")
+            court_name = flow_state.get("court_name", "the court")
             
-            # Generate confirmation message
-            response = _generate_confirmation_message(
-                flow_state=flow_state,
-                booking_id=booking_id,
-                total_price=total_price
+            # Format date
+            try:
+                formatted_date = booking_date.strftime("%A, %B %d, %Y")
+            except:
+                formatted_date = date_str
+            
+            # Format times for display
+            display_start = _format_time_for_display(start_time)
+            display_end = _format_time_for_display(end_time)
+            
+            response = (
+                f"🎉 Booking confirmed!\n\n"
+                f"Booking ID: #{booking_id}\n"
+                f"Property: {property_name}\n"
+                f"Court: {court_name}\n"
+                f"Date: {formatted_date}\n"
+                f"Time: {display_start} - {display_end}\n"
+                f"Total: ${total_price:.2f}\n\n"
+                f"Your booking is pending confirmation. "
+                f"You'll receive a notification once it's confirmed."
             )
             
             state["response_content"] = response
             state["response_type"] = "text"
-            state["response_metadata"] = {}
+            state["response_metadata"] = {
+                "booking_id": booking_id,
+                "booking_data": booking_data
+            }
+            state["next_node"] = "end"
             
-            # Update flow state step
-            flow_state["step"] = "booking_created"
+            # Clear flow_state (Requirement 15.5)
+            state["flow_state"] = {}
             
-            # Clear booking-related fields from flow_state
-            _clear_booking_fields(flow_state)
-            
-            state["flow_state"] = flow_state
-            
-            logger.info(
-                f"Booking process completed for chat {chat_id}, "
-                f"booking fields cleared from flow_state"
-            )
-            
+            return state
+        
         else:
             # Booking creation failed
-            error_message = result.get("message", "Unknown error") if result else "No response from booking service"
+            error_message = result.get("message", "Unknown error")
             
             logger.warning(
                 f"Booking creation failed for chat {chat_id}: {error_message}"
             )
             
-            # Generate error message with retry information
-            response = _generate_error_message(
-                flow_state=flow_state,
-                error_message=error_message
+            # Determine if error is related to time slot availability
+            time_related_errors = [
+                "already booked",
+                "not available",
+                "blocked",
+                "conflict"
+            ]
+            
+            is_time_error = any(
+                keyword in error_message.lower()
+                for keyword in time_related_errors
             )
             
-            state["response_content"] = response
-            state["response_type"] = "text"
-            state["response_metadata"] = {}
+            if is_time_error:
+                # Route back to time selection
+                response = (
+                    f"Unable to create booking: {error_message}\n\n"
+                    f"Let's select a different time slot."
+                )
+                
+                state["response_content"] = response
+                state["response_type"] = "text"
+                state["response_metadata"] = {}
+                state["next_node"] = "select_time"
+                
+                # Clear time_slot to force re-selection
+                flow_state["time_slot"] = None
+                flow_state["booking_step"] = "date_selected"
+                state["flow_state"] = flow_state
+                
+            else:
+                # Generic error - end flow
+                response = (
+                    f"Unable to create booking: {error_message}\n\n"
+                    f"Please try again later or contact support if the problem persists."
+                )
+                
+                state["response_content"] = response
+                state["response_type"] = "text"
+                state["response_metadata"] = {}
+                state["next_node"] = "end"
+                
+                # Clear flow_state (Requirement 15.5)
+                state["flow_state"] = {}
             
-            # Keep booking details in flow_state for retry
-            flow_state["step"] = "booking_failed"
-            flow_state["error_message"] = error_message
-            state["flow_state"] = flow_state
-            
+            return state
+        
     except Exception as e:
         logger.error(
             f"Exception during booking creation for chat {chat_id}: {e}",
@@ -307,229 +380,46 @@ async def create_pending_booking(
         )
         
         response = (
-            "I'm sorry, but there was an unexpected error while creating your booking. "
-            "Your booking details have been saved. Would you like to try again?"
+            "An unexpected error occurred while creating your booking. "
+            "Please try again later."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "end"
         
-        # Keep booking details in flow_state for retry
-        flow_state["step"] = "booking_failed"
-        flow_state["error_message"] = str(e)
-        state["flow_state"] = flow_state
-    
-    return state
-
-
-def _clear_booking_fields(flow_state: Dict[str, Any]) -> None:
-    """
-    Clear booking-related fields from flow_state.
-    
-    This function removes all booking-specific fields from flow_state
-    after successful booking creation, while preserving intent and step.
-    
-    Implements Requirement 8.5: Clear booking-specific fields from flow_state
-    when booking is completed
-    
-    Args:
-        flow_state: Flow state dictionary to clear
-    """
-    # Fields to clear after booking completion
-    fields_to_clear = [
-        "property_id",
-        "property_name",
-        "service_id",
-        "service_name",
-        "sport_type",
-        "date",
-        "start_time",
-        "end_time",
-        "price",
-        "price_label",
-        "total_price",
-        "duration_hours",
-        "error_message"
-    ]
-    
-    for field in fields_to_clear:
-        flow_state.pop(field, None)
-    
-    logger.debug(f"Cleared {len(fields_to_clear)} booking fields from flow_state")
-
-
-def _generate_confirmation_message(
-    flow_state: Dict[str, Any],
-    booking_id: int,
-    total_price: float
-) -> str:
-    """
-    Generate confirmation message with booking details.
-    
-    This function creates a user-friendly confirmation message that includes
-    all booking details and the booking_id for reference.
-    
-    Implements Requirements:
-    - 22.1: Present booking summary with all details
-    - 22.2: Include property name, court type, date, time, and price in summary
-    
-    Args:
-        flow_state: Flow state containing booking details
-        booking_id: ID of the created booking
-        total_price: Total price of the booking
+        # Clear flow_state (Requirement 15.5)
+        state["flow_state"] = {}
         
-    Returns:
-        Confirmation message string
-    """
-    property_name = flow_state.get("property_name", "the facility")
-    service_name = flow_state.get("service_name", "the court")
-    sport_type = flow_state.get("sport_type", "")
-    date_str = flow_state.get("date", "")
-    start_time_str = flow_state.get("start_time", "")
-    end_time_str = flow_state.get("end_time", "")
-    duration_hours = flow_state.get("duration_hours", 1.0)
-    
-    # Format date
-    try:
-        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-        formatted_date = date_obj.strftime("%A, %B %d, %Y")
-    except ValueError:
-        formatted_date = date_str
-    
-    # Format times
-    display_start = _format_time_for_display(start_time_str)
-    display_end = _format_time_for_display(end_time_str)
-    
-    # Build confirmation message
-    message_parts = [
-        "🎉 Booking Confirmed!",
-        "",
-        f"Your booking has been successfully created with ID: {booking_id}",
-        "",
-        "Booking Details:",
-        f"📍 Location: {property_name}",
-        f"🏟️ Court: {service_name}"
-    ]
-    
-    if sport_type:
-        message_parts.append(f"⚽ Sport: {sport_type.capitalize()}")
-    
-    message_parts.extend([
-        f"📅 Date: {formatted_date}",
-        f"⏰ Time: {display_start} - {display_end}",
-        f"⏱️ Duration: {duration_hours} hour{'s' if duration_hours != 1 else ''}",
-        f"💰 Total Price: ${total_price:.2f}",
-        "",
-        "Your booking is currently pending. You will receive a confirmation once payment is processed.",
-        "",
-        "Thank you for booking with us! Is there anything else I can help you with?"
-    ])
-    
-    return "\n".join(message_parts)
+        return state
 
 
-def _generate_error_message(
-    flow_state: Dict[str, Any],
-    error_message: str
-) -> str:
+def _format_time_for_display(time_obj: time) -> str:
     """
-    Generate error message with retry information.
+    Format time object for user-friendly display.
     
-    This function creates a user-friendly error message that explains
-    what went wrong and offers options to retry or modify the booking.
-    
-    Implements Requirement 8.4: Inform user and retain booking details
-    in flow_state for retry when booking creation fails
+    Converts 24-hour format to 12-hour format with AM/PM.
     
     Args:
-        flow_state: Flow state containing booking details
-        error_message: Error message from booking service
-        
-    Returns:
-        Error message string
-    """
-    property_name = flow_state.get("property_name", "the facility")
-    service_name = flow_state.get("service_name", "the court")
-    date_str = flow_state.get("date", "")
-    start_time_str = flow_state.get("start_time", "")
-    end_time_str = flow_state.get("end_time", "")
-    
-    # Format date and times
-    try:
-        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
-        formatted_date = date_obj.strftime("%A, %B %d, %Y")
-    except ValueError:
-        formatted_date = date_str
-    
-    display_start = _format_time_for_display(start_time_str)
-    display_end = _format_time_for_display(end_time_str)
-    
-    # Build error message
-    message_parts = [
-        "❌ Booking Failed",
-        "",
-        f"I'm sorry, but I couldn't create your booking: {error_message}",
-        "",
-        "Your booking details:",
-        f"📍 {property_name}",
-        f"🏟️ {service_name}",
-        f"📅 {formatted_date}",
-        f"⏰ {display_start} - {display_end}",
-        "",
-        "Would you like to:",
-        "• Try booking again",
-        "• Select a different time slot",
-        "• Start a new booking",
-        "",
-        "Just let me know what you'd like to do!"
-    ]
-    
-    return "\n".join(message_parts)
-
-
-def _format_time_for_display(time_str: str) -> str:
-    """
-    Format time string for user-friendly display.
-    
-    Converts 24-hour format (HH:MM:SS) to 12-hour format with AM/PM.
-    
-    Args:
-        time_str: Time string in HH:MM:SS format
+        time_obj: Time object
         
     Returns:
         Formatted time string (e.g., "2:00 PM")
-        
-    Example:
-        display = _format_time_for_display("14:00:00")
-        # Returns: "2:00 PM"
-        
-        display = _format_time_for_display("09:30:00")
-        # Returns: "9:30 AM"
     """
-    try:
-        # Parse time string
-        time_obj = datetime.strptime(time_str, "%H:%M:%S").time()
-        
-        # Format as 12-hour with AM/PM
-        hour = time_obj.hour
-        minute = time_obj.minute
-        
-        am_pm = "AM" if hour < 12 else "PM"
-        
-        # Convert to 12-hour format
-        if hour == 0:
-            hour = 12
-        elif hour > 12:
-            hour -= 12
-        
-        # Format with or without minutes
-        if minute == 0:
-            return f"{hour}:00 {am_pm}"
-        else:
-            return f"{hour}:{minute:02d} {am_pm}"
-        
-    except ValueError:
-        # If parsing fails, return original string
-        logger.warning(f"Failed to parse time string: {time_str}")
-        return time_str
+    hour = time_obj.hour
+    minute = time_obj.minute
+    
+    am_pm = "AM" if hour < 12 else "PM"
+    
+    # Convert to 12-hour format
+    if hour == 0:
+        hour = 12
+    elif hour > 12:
+        hour -= 12
+    
+    # Format with or without minutes
+    if minute == 0:
+        return f"{hour}:00 {am_pm}"
+    else:
+        return f"{hour}:{minute:02d} {am_pm}"

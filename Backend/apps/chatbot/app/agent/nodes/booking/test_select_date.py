@@ -4,8 +4,11 @@ Unit tests for select_date node.
 This module tests the select_date node functionality including:
 - Date parsing from various formats
 - Date validation (future dates only)
-- Flow state updates
+- Flow state updates with booking_step
 - Error handling for invalid dates
+- Next node routing decisions
+
+Requirements: 7.3, 8.2, 8.5, 17.1, 17.2, 17.3, 17.4, 17.5
 """
 
 import pytest
@@ -15,47 +18,60 @@ from unittest.mock import AsyncMock, MagicMock
 from .select_date import select_date, _parse_date, _prompt_for_date, _process_date_selection
 
 
+# Mock LLM provider for testing
+class MockLLMProvider:
+    """Mock LLM provider for testing"""
+    async def invoke(self, prompt, context=None):
+        return {"content": "Mock response"}
+
+
 class TestSelectDate:
     """Test suite for select_date node"""
     
     @pytest.mark.asyncio
     async def test_date_already_selected(self):
-        """Test that node skips processing if date already selected"""
+        """Test Requirement 7.3: Skip processing if date already selected"""
         state = {
             "chat_id": "test-chat-123",
             "user_message": "tomorrow",
             "flow_state": {
-                "intent": "booking",
-                "property_id": "1",
-                "service_id": "10",
+                "property_id": 1,
+                "property_name": "Sports Center",
+                "court_id": 10,
+                "court_name": "Court A",
                 "date": "2024-12-25",
-                "step": "date_selected"
+                "booking_step": "date_selected"
             }
         }
         
-        result = await select_date(state)
+        llm_provider = MockLLMProvider()
+        result = await select_date(state, llm_provider)
         
-        # Should return state unchanged
+        # Should return state with date unchanged
         assert result["flow_state"]["date"] == "2024-12-25"
-        assert result["flow_state"]["step"] == "date_selected"
+        assert result["flow_state"]["booking_step"] == "date_selected"
+        # Should route to next step (Requirement 7.3)
+        assert result.get("next_node") == "select_time"
     
     @pytest.mark.asyncio
-    async def test_no_service_selected(self):
-        """Test error handling when service not selected"""
+    async def test_no_court_selected(self):
+        """Test error handling when court not selected"""
         state = {
             "chat_id": "test-chat-123",
             "user_message": "tomorrow",
             "flow_state": {
-                "intent": "booking",
-                "property_id": "1",
-                "step": "property_selected"
+                "property_id": 1,
+                "property_name": "Sports Center",
+                "booking_step": "property_selected"
             }
         }
         
-        result = await select_date(state)
+        llm_provider = MockLLMProvider()
+        result = await select_date(state, llm_provider)
         
         assert "select a court first" in result["response_content"].lower()
         assert result["response_type"] == "text"
+        assert result.get("next_node") == "select_court"
     
     @pytest.mark.asyncio
     async def test_prompt_for_date(self):
@@ -64,49 +80,55 @@ class TestSelectDate:
             "chat_id": "test-chat-123",
             "user_message": "Tennis Court A",
             "flow_state": {
-                "intent": "booking",
-                "property_id": "1",
-                "service_id": "10",
-                "service_name": "Tennis Court A",
-                "step": "service_selected"
+                "property_id": 1,
+                "property_name": "Sports Center",
+                "court_id": 10,
+                "court_name": "Tennis Court A",
+                "booking_step": "court_selected"
             }
         }
         
-        result = await select_date(state)
+        llm_provider = MockLLMProvider()
+        result = await select_date(state, llm_provider)
         
         assert "when would you like to book" in result["response_content"].lower()
         assert "tomorrow" in result["response_content"].lower()
         assert result["response_type"] == "text"
-        assert result["flow_state"]["step"] == "select_date"
+        # Requirement 8.2: Update booking_step
+        assert result["flow_state"]["booking_step"] == "awaiting_date_selection"
+        assert result.get("next_node") == "wait_for_selection"
     
     @pytest.mark.asyncio
     async def test_valid_date_selection_tomorrow(self):
-        """Test valid date selection with 'tomorrow'"""
+        """Test Requirement 17.2: Valid date selection with 'tomorrow'"""
         state = {
             "chat_id": "test-chat-123",
             "user_message": "tomorrow",
             "flow_state": {
-                "intent": "booking",
-                "property_id": "1",
-                "service_id": "10",
-                "service_name": "Tennis Court A",
-                "step": "select_date"
+                "property_id": 1,
+                "property_name": "Sports Center",
+                "court_id": 10,
+                "court_name": "Tennis Court A",
+                "booking_step": "awaiting_date_selection"
             }
         }
         
-        result = await select_date(state)
+        llm_provider = MockLLMProvider()
+        result = await select_date(state, llm_provider)
         
         tomorrow = (datetime.now() + timedelta(days=1)).date()
         expected_date = tomorrow.strftime("%Y-%m-%d")
         
         assert result["flow_state"]["date"] == expected_date
-        assert result["flow_state"]["step"] == "date_selected"
+        # Requirement 8.2: Update booking_step to date_selected
+        assert result["flow_state"]["booking_step"] == "date_selected"
         assert "perfect" in result["response_content"].lower()
         assert "time slot" in result["response_content"].lower()
+        assert result.get("next_node") == "select_time"
     
     @pytest.mark.asyncio
     async def test_valid_date_selection_iso_format(self):
-        """Test valid date selection with ISO format"""
+        """Test Requirement 17.4: Valid date selection with ISO format"""
         future_date = (datetime.now() + timedelta(days=7)).date()
         date_str = future_date.strftime("%Y-%m-%d")
         
@@ -114,18 +136,20 @@ class TestSelectDate:
             "chat_id": "test-chat-123",
             "user_message": date_str,
             "flow_state": {
-                "intent": "booking",
-                "property_id": "1",
-                "service_id": "10",
-                "service_name": "Tennis Court A",
-                "step": "select_date"
+                "property_id": 1,
+                "property_name": "Sports Center",
+                "court_id": 10,
+                "court_name": "Tennis Court A",
+                "booking_step": "awaiting_date_selection"
             }
         }
         
-        result = await select_date(state)
+        llm_provider = MockLLMProvider()
+        result = await select_date(state, llm_provider)
         
         assert result["flow_state"]["date"] == date_str
-        assert result["flow_state"]["step"] == "date_selected"
+        assert result["flow_state"]["booking_step"] == "date_selected"
+        assert result.get("next_node") == "select_time"
     
     @pytest.mark.asyncio
     async def test_invalid_date_format(self):
@@ -134,24 +158,26 @@ class TestSelectDate:
             "chat_id": "test-chat-123",
             "user_message": "some random text",
             "flow_state": {
-                "intent": "booking",
-                "property_id": "1",
-                "service_id": "10",
-                "service_name": "Tennis Court A",
-                "step": "select_date"
+                "property_id": 1,
+                "property_name": "Sports Center",
+                "court_id": 10,
+                "court_name": "Tennis Court A",
+                "booking_step": "awaiting_date_selection"
             }
         }
         
-        result = await select_date(state)
+        llm_provider = MockLLMProvider()
+        result = await select_date(state, llm_provider)
         
         assert "couldn't understand" in result["response_content"].lower()
         assert result["response_type"] == "text"
-        assert result["flow_state"]["step"] == "select_date"
+        assert result["flow_state"]["booking_step"] == "awaiting_date_selection"
         assert "date" not in result["flow_state"]
+        assert result.get("next_node") == "wait_for_selection"
     
     @pytest.mark.asyncio
     async def test_past_date_rejection(self):
-        """Test rejection of past dates"""
+        """Test Requirement 8.5: Rejection of past dates"""
         past_date = (datetime.now() - timedelta(days=7)).date()
         date_str = past_date.strftime("%Y-%m-%d")
         
@@ -159,20 +185,22 @@ class TestSelectDate:
             "chat_id": "test-chat-123",
             "user_message": date_str,
             "flow_state": {
-                "intent": "booking",
-                "property_id": "1",
-                "service_id": "10",
-                "service_name": "Tennis Court A",
-                "step": "select_date"
+                "property_id": 1,
+                "property_name": "Sports Center",
+                "court_id": 10,
+                "court_name": "Tennis Court A",
+                "booking_step": "awaiting_date_selection"
             }
         }
         
-        result = await select_date(state)
+        llm_provider = MockLLMProvider()
+        result = await select_date(state, llm_provider)
         
         assert "in the past" in result["response_content"].lower()
         assert result["response_type"] == "text"
-        assert result["flow_state"]["step"] == "select_date"
+        assert result["flow_state"]["booking_step"] == "awaiting_date_selection"
         assert "date" not in result["flow_state"]
+        assert result.get("next_node") == "wait_for_selection"
 
 
 class TestParseDateFunction:
@@ -329,20 +357,21 @@ class TestPromptForDate:
     """Test suite for _prompt_for_date helper function"""
     
     @pytest.mark.asyncio
-    async def test_prompt_includes_service_name(self):
-        """Test that prompt includes the service name"""
+    async def test_prompt_includes_court_name(self):
+        """Test that prompt includes the court name"""
         state = {
             "chat_id": "test-chat-123",
             "user_message": "",
             "flow_state": {
-                "service_name": "Tennis Court A"
+                "court_name": "Tennis Court A"
             }
         }
         
         result = await _prompt_for_date(state, "test-chat-123", state["flow_state"])
         
         assert "Tennis Court A" in result["response_content"]
-        assert result["flow_state"]["step"] == "select_date"
+        assert result["flow_state"]["booking_step"] == "awaiting_date_selection"
+        assert result.get("next_node") == "wait_for_selection"
     
     @pytest.mark.asyncio
     async def test_prompt_includes_examples(self):
@@ -351,7 +380,7 @@ class TestPromptForDate:
             "chat_id": "test-chat-123",
             "user_message": "",
             "flow_state": {
-                "service_name": "Court A"
+                "court_name": "Court A"
             }
         }
         
@@ -373,17 +402,19 @@ class TestProcessDateSelection:
             "chat_id": "test-chat-123",
             "user_message": "tomorrow",
             "flow_state": {
-                "service_name": "Tennis Court A",
-                "step": "select_date"
+                "court_name": "Tennis Court A",
+                "booking_step": "awaiting_date_selection"
             }
         }
         
+        llm_provider = MockLLMProvider()
         result = await _process_date_selection(
-            state, "test-chat-123", "tomorrow", state["flow_state"]
+            state, llm_provider, "test-chat-123", "tomorrow", state["flow_state"]
         )
         
         assert result["flow_state"]["date"] == tomorrow.strftime("%Y-%m-%d")
-        assert result["flow_state"]["step"] == "date_selected"
+        assert result["flow_state"]["booking_step"] == "date_selected"
+        assert result.get("next_node") == "select_time"
     
     @pytest.mark.asyncio
     async def test_process_past_date(self):
@@ -395,18 +426,20 @@ class TestProcessDateSelection:
             "chat_id": "test-chat-123",
             "user_message": date_str,
             "flow_state": {
-                "service_name": "Tennis Court A",
-                "step": "select_date"
+                "court_name": "Tennis Court A",
+                "booking_step": "awaiting_date_selection"
             }
         }
         
+        llm_provider = MockLLMProvider()
         result = await _process_date_selection(
-            state, "test-chat-123", date_str, state["flow_state"]
+            state, llm_provider, "test-chat-123", date_str, state["flow_state"]
         )
         
         assert "in the past" in result["response_content"].lower()
         assert "date" not in result["flow_state"]
-        assert result["flow_state"]["step"] == "select_date"
+        assert result["flow_state"]["booking_step"] == "awaiting_date_selection"
+        assert result.get("next_node") == "wait_for_selection"
     
     @pytest.mark.asyncio
     async def test_process_invalid_format(self):
@@ -415,15 +448,17 @@ class TestProcessDateSelection:
             "chat_id": "test-chat-123",
             "user_message": "not a date",
             "flow_state": {
-                "service_name": "Tennis Court A",
-                "step": "select_date"
+                "court_name": "Tennis Court A",
+                "booking_step": "awaiting_date_selection"
             }
         }
         
+        llm_provider = MockLLMProvider()
         result = await _process_date_selection(
-            state, "test-chat-123", "not a date", state["flow_state"]
+            state, llm_provider, "test-chat-123", "not a date", state["flow_state"]
         )
         
         assert "couldn't understand" in result["response_content"].lower()
         assert "date" not in result["flow_state"]
-        assert result["flow_state"]["step"] == "select_date"
+        assert result["flow_state"]["booking_step"] == "awaiting_date_selection"
+        assert result.get("next_node") == "wait_for_selection"

@@ -6,7 +6,7 @@ in the booking flow using LangChain agent. It uses an LLM agent to parse dates
 from user messages (supporting various formats), validates that dates are in the future,
 stores the selected date in flow_state, and handles invalid dates gracefully.
 
-Requirements: 6.3, 9.1, 9.2, 9.3, 20.4, 22.1-22.6
+Requirements: 7.3, 8.2, 8.5, 17.1, 17.2, 17.3, 17.4, 17.5
 """
 
 from typing import Optional, Dict, Any
@@ -29,16 +29,17 @@ async def select_date(
     tools: Optional[Dict[str, Any]] = None
 ) -> ConversationState:
     """
-    Handle date selection in booking flow.
+    Handle date selection in booking flow with LLM parsing.
     
     This node manages the date selection step of the booking process. It:
-    1. Checks if date is already selected in flow_state
-    2. Prompts user to provide a date if not yet selected
-    3. Parses date from user message (supports various formats)
-    4. Validates that the date is in the future (not in the past)
-    5. Stores selected date in flow_state
-    6. Updates flow_state step to "select_date"
-    7. Handles invalid dates with helpful error messages
+    1. Checks if date is already selected in flow_state (skip if exists) - Req 7.3
+    2. Passes current date (YYYY-MM-DD format) to LLM in the prompt context - Req 17.1, 17.5
+    3. Uses LLM to parse date from user message (natural language → YYYY-MM-DD) - Req 17.2, 17.3
+    4. Supports natural language like "tomorrow", "next Monday", etc. by providing current date context - Req 17.4
+    5. Validates date format and future date - Req 8.5
+    6. If date parsed: stores in flow_state and updates booking_step to "date_selected" - Req 8.2
+    7. If date not parsed: asks user for date
+    8. Returns next_node decision for routing
     
     Supported date formats:
     - Relative: "today", "tomorrow", "next Monday", "in 3 days"
@@ -47,14 +48,14 @@ async def select_date(
     - Numeric: "12/25", "25/12/2024"
     
     Implements Requirements:
-    - 6.3: Booking_Subgraph with Select_Date node
-    - 20.4: Store selected date when user chooses a date
-    - 22.1: Present date options to user
-    - 22.2: Present booking summary including date
-    - 22.3: Ask for explicit user confirmation
-    - 22.4: Create booking when user confirms
-    - 22.5: Clear flow_state when user cancels
-    - 22.6: Return to appropriate step when user requests changes
+    - 7.3: Skip date selection step when Flow_State contains date
+    - 8.2: Update booking_step field in Flow_State when step is completed
+    - 8.5: Validate each step's data before proceeding to the next step
+    - 17.1: LLM receives current date in ISO format (YYYY-MM-DD) as part of conversation context
+    - 17.2: LLM calculates "tomorrow" as current_date + 1 day
+    - 17.3: LLM calculates "next Monday" based on current date
+    - 17.4: LLM converts all natural language date references to YYYY-MM-DD format
+    - 17.5: Current date included in all LLM prompts that involve date selection or parsing
     
     Args:
         state: ConversationState containing user message, flow_state, and bot_memory
@@ -62,41 +63,50 @@ async def select_date(
         
     Returns:
         ConversationState: State with response_content, response_type, response_metadata,
-                          and updated flow_state containing date and step
+                          updated flow_state containing date and booking_step, and next_node decision
         
     Example:
-        # First call - prompt for date
+        # Case 1: Date already selected (skip)
         state = {
-            "chat_id": "123e4567-e89b-12d3-a456-426614174000",
+            "chat_id": "123",
+            "flow_state": {"date": "2024-12-25"},
+            ...
+        }
+        result = await select_date(state, llm_provider)
+        # result["next_node"] = "select_time"
+        
+        # Case 2: First call - prompt for date
+        state = {
+            "chat_id": "123",
             "user_message": "Tennis Court A",
             "flow_state": {
-                "intent": "booking",
                 "property_id": "1",
-                "service_id": "10",
-                "step": "service_selected"
+                "court_id": "10",
+                "booking_step": "court_selected"
             },
             ...
         }
         
-        result = await select_date(state, tools)
+        result = await select_date(state, llm_provider)
         # result["response_content"] = "When would you like to book?"
-        # result["flow_state"]["step"] = "select_date"
+        # result["flow_state"]["booking_step"] = "awaiting_date_selection"
+        # result["next_node"] = "wait_for_selection"
         
-        # Second call - process date selection
+        # Case 3: Process date selection
         state = {
             "user_message": "tomorrow",
             "flow_state": {
-                "intent": "booking",
                 "property_id": "1",
-                "service_id": "10",
-                "step": "select_date"
+                "court_id": "10",
+                "booking_step": "awaiting_date_selection"
             },
             ...
         }
         
-        result = await select_date(state, tools)
+        result = await select_date(state, llm_provider)
         # result["flow_state"]["date"] = "2024-01-16"
-        # result["flow_state"]["step"] = "date_selected"
+        # result["flow_state"]["booking_step"] = "date_selected"
+        # result["next_node"] = "select_time"
     """
     chat_id = state["chat_id"]
     user_message = state["user_message"]
@@ -108,24 +118,25 @@ async def select_date(
     
     logger.info(
         f"Processing date selection for chat {chat_id} - "
-        f"step={flow_state.get('step')}, "
+        f"booking_step={flow_state.get('booking_step')}, "
         f"message_preview={user_message[:50]}..."
     )
     
-    # Check if date already selected
+    # Step 1: Check if date already selected (Requirement 7.3)
     if flow_state.get("date"):
         logger.debug(
             f"Date already selected for chat {chat_id}: "
             f"date={flow_state.get('date')}"
         )
-        # Date already selected, continue to next step
+        # Date already selected, skip to next step
+        state["next_node"] = "select_time"
         return state
     
-    # Check if service is selected
-    service_id = flow_state.get("service_id")
-    if not service_id:
+    # Step 2: Check if court is selected
+    court_id = flow_state.get("court_id")
+    if not court_id:
         logger.warning(
-            f"No service selected for chat {chat_id}, cannot select date"
+            f"No court selected for chat {chat_id}, cannot select date"
         )
         
         response = (
@@ -135,13 +146,14 @@ async def select_date(
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "select_court"
         
         return state
     
-    # Check if we're processing a selection or presenting options
-    current_step = flow_state.get("step")
+    # Step 3: Check if we're processing a selection or presenting options
+    current_step = flow_state.get("booking_step")
     
-    if current_step == "select_date":
+    if current_step == "awaiting_date_selection":
         # User is responding with a date
         return await _process_date_selection(
             state=state,
@@ -176,13 +188,13 @@ async def _prompt_for_date(
         flow_state: Current flow state
         
     Returns:
-        Updated ConversationState with date prompt
+        Updated ConversationState with date prompt and next_node decision
     """
-    service_name = flow_state.get("service_name", "the court")
+    court_name = flow_state.get("court_name", "the court")
     
     # Generate helpful prompt with examples
     response = (
-        f"When would you like to book {service_name}? "
+        f"When would you like to book {court_name}? "
         f"You can say something like 'tomorrow', 'next Monday', "
         f"or provide a specific date like '2024-12-25'."
     )
@@ -191,9 +203,12 @@ async def _prompt_for_date(
     state["response_type"] = "text"
     state["response_metadata"] = {}
     
-    # Update flow state
-    flow_state["step"] = "select_date"
+    # Update flow state (Requirement 8.2)
+    flow_state["booking_step"] = "awaiting_date_selection"
     state["flow_state"] = flow_state
+    
+    # Wait for user selection
+    state["next_node"] = "wait_for_selection"
     
     logger.info(
         f"Prompted for date selection in chat {chat_id}"
@@ -210,10 +225,20 @@ async def _process_date_selection(
     flow_state: Dict[str, Any]
 ) -> ConversationState:
     """
-    Process user's date selection using LangChain agent.
+    Process user's date selection using LangChain agent with current date context.
     
     This function uses a LangChain agent to intelligently parse the user's
-    date input, validates it's in the future, and stores the selected date in flow_state.
+    date input with current date context for natural language parsing,
+    validates it's in the future, and stores the selected date in flow_state.
+    
+    Implements Requirements:
+    - 17.1: Pass current date in ISO format to LLM
+    - 17.2: Support "tomorrow" calculation
+    - 17.3: Support "next Monday" calculation
+    - 17.4: Convert natural language to YYYY-MM-DD format
+    - 17.5: Include current date in all date-related prompts
+    - 8.2: Update booking_step when date is selected
+    - 8.5: Validate date before proceeding
     
     Args:
         state: ConversationState
@@ -223,7 +248,7 @@ async def _process_date_selection(
         flow_state: Current flow state
         
     Returns:
-        Updated ConversationState with selected date in flow_state
+        Updated ConversationState with selected date in flow_state and next_node decision
     """
     # Create LangChain LLM
     try:
@@ -248,10 +273,11 @@ async def _process_date_selection(
             state["response_content"] = response
             state["response_type"] = "text"
             state["response_metadata"] = {}
+            state["next_node"] = "wait_for_selection"
             
             return state
         
-        # Validate date is in the future
+        # Validate date is in the future (Requirement 8.5)
         today = datetime.now().date()
         if parsed_date < today:
             logger.warning(
@@ -266,6 +292,7 @@ async def _process_date_selection(
             state["response_content"] = response
             state["response_type"] = "text"
             state["response_metadata"] = {}
+            state["next_node"] = "wait_for_selection"
             
             return state
         
@@ -273,22 +300,23 @@ async def _process_date_selection(
         date_str = parsed_date.strftime("%Y-%m-%d")
         
         flow_state["date"] = date_str
-        flow_state["step"] = "date_selected"
+        flow_state["booking_step"] = "date_selected"  # Requirement 8.2
         
         state["flow_state"] = flow_state
         
         # Generate confirmation message
         formatted_date = parsed_date.strftime("%A, %B %d, %Y")
-        service_name = flow_state.get("service_name", "the court")
+        court_name = flow_state.get("court_name", "the court")
         
         response = (
-            f"Perfect! You've selected {formatted_date} for {service_name}. "
+            f"Perfect! You've selected {formatted_date} for {court_name}. "
             f"Now let's choose a time slot."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "select_time"
         
         logger.info(
             f"Date selected for chat {chat_id}: date={date_str}"
@@ -296,12 +324,12 @@ async def _process_date_selection(
         
         return state
     
-    # Create prompt for date selection
+    # Create prompt for date selection with current date context (Requirements 17.1, 17.5)
     property_name = flow_state.get("property_name", "the property")
-    service_name = flow_state.get("service_name", "the court")
-    current_date = datetime.now().date().strftime("%Y-%m-%d")
+    court_name = flow_state.get("court_name", "the court")
+    current_date = datetime.now().date().strftime("%Y-%m-%d")  # ISO format
     
-    prompt = create_select_date_prompt(property_name, service_name, current_date)
+    prompt = create_select_date_prompt(property_name, court_name, current_date)
     
     # Use LLM to parse date
     try:
@@ -318,7 +346,7 @@ async def _process_date_selection(
             try:
                 parsed_date = datetime.strptime(date_match.group(0), "%Y-%m-%d").date()
                 
-                # Validate date is in the future
+                # Validate date is in the future (Requirement 8.5)
                 today = datetime.now().date()
                 if parsed_date < today:
                     response = (
@@ -329,6 +357,7 @@ async def _process_date_selection(
                     state["response_content"] = response
                     state["response_type"] = "text"
                     state["response_metadata"] = {}
+                    state["next_node"] = "wait_for_selection"
                     
                     return state
                 
@@ -336,7 +365,7 @@ async def _process_date_selection(
                 date_str = parsed_date.strftime("%Y-%m-%d")
                 
                 flow_state["date"] = date_str
-                flow_state["step"] = "date_selected"
+                flow_state["booking_step"] = "date_selected"  # Requirement 8.2
                 
                 state["flow_state"] = flow_state
                 
@@ -344,13 +373,14 @@ async def _process_date_selection(
                 formatted_date = parsed_date.strftime("%A, %B %d, %Y")
                 
                 response = (
-                    f"Perfect! You've selected {formatted_date} for {service_name}. "
+                    f"Perfect! You've selected {formatted_date} for {court_name}. "
                     f"Now let's choose a time slot."
                 )
                 
                 state["response_content"] = response
                 state["response_type"] = "text"
                 state["response_metadata"] = {}
+                state["next_node"] = "select_time"
                 
                 logger.info(
                     f"Date selected for chat {chat_id}: date={date_str}"
@@ -365,6 +395,7 @@ async def _process_date_selection(
         state["response_content"] = agent_response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "wait_for_selection"
         
         logger.info(f"Agent asking for clarification in chat {chat_id}")
         
@@ -391,10 +422,11 @@ async def _process_date_selection(
             state["response_content"] = response
             state["response_type"] = "text"
             state["response_metadata"] = {}
+            state["next_node"] = "wait_for_selection"
             
             return state
         
-        # Validate date is in the future
+        # Validate date is in the future (Requirement 8.5)
         today = datetime.now().date()
         if parsed_date < today:
             logger.warning(
@@ -409,6 +441,7 @@ async def _process_date_selection(
             state["response_content"] = response
             state["response_type"] = "text"
             state["response_metadata"] = {}
+            state["next_node"] = "wait_for_selection"
             
             return state
         
@@ -416,22 +449,23 @@ async def _process_date_selection(
         date_str = parsed_date.strftime("%Y-%m-%d")
         
         flow_state["date"] = date_str
-        flow_state["step"] = "date_selected"
+        flow_state["booking_step"] = "date_selected"  # Requirement 8.2
         
         state["flow_state"] = flow_state
         
         # Generate confirmation message
         formatted_date = parsed_date.strftime("%A, %B %d, %Y")
-        service_name = flow_state.get("service_name", "the court")
+        court_name = flow_state.get("court_name", "the court")
         
         response = (
-            f"Perfect! You've selected {formatted_date} for {service_name}. "
+            f"Perfect! You've selected {formatted_date} for {court_name}. "
             f"Now let's choose a time slot."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
+        state["next_node"] = "select_time"
         
         logger.info(
             f"Date selected for chat {chat_id}: date={date_str}"

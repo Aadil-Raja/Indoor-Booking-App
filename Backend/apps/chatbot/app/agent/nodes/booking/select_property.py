@@ -2,767 +2,231 @@
 Select property node for booking subgraph.
 
 This module implements the select_property node that handles property selection
-in the booking flow using LangChain agent. It presents properties from search results,
-uses an LLM agent to parse user selection, stores the selected property_id
-in flow_state, and handles invalid selections gracefully.
+in the booking flow with auto-selection support. It checks if property is already
+selected, fetches owner properties on-demand, auto-selects when only one property
+exists, and presents options when multiple properties are available.
 
-Requirements: 6.3, 9.1, 9.2, 20.2, 22.1-22.6, 23.2
+Requirements: 5.2, 5.3, 6.1, 6.2, 6.4, 7.1, 8.2
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any
 import logging
-import re
 
 from app.agent.state.conversation_state import ConversationState
-from app.agent.tools import TOOL_REGISTRY
-from app.services.llm.langchain_wrapper import create_langchain_llm
-from app.agent.prompts.booking_prompts import create_select_property_prompt
-from app.services.llm.base import LLMProvider
+from app.agent.tools.property_tool import get_owner_properties_tool
 
 logger = logging.getLogger(__name__)
 
 
 async def select_property(
     state: ConversationState,
-    llm_provider: LLMProvider,
-    tools: Optional[Dict[str, Any]] = None
+    tools: Dict[str, Any]
 ) -> ConversationState:
     """
-    Handle property selection in booking flow using LangChain agent.
+    Handle property selection in booking flow with auto-selection support.
     
     This node manages the property selection step of the booking process. It:
-    1. Checks if property is already selected in flow_state
-    2. Retrieves properties from bot_memory search results
-    3. Presents properties as button options if not yet selected
-    4. Uses LangChain agent to parse user selection intelligently
-    5. Validates the selection
-    6. Stores selected property_id in flow_state
-    7. Updates flow_state step to "select_property"
-    8. Handles invalid selections with helpful error messages
+    1. Checks if property_id already exists in flow_state (skip if exists) - Req 7.1
+    2. Fetches owner_properties if not cached in flow_state - Req 5.2, 5.3
+    3. Handles 0 properties: returns error message
+    4. Handles 1 property: auto-selects and stores in flow_state - Req 6.1, 6.2, 6.4
+    5. Handles multiple properties: presents list and waits for selection
+    6. Updates booking_step to "property_selected" when complete - Req 8.2
+    7. Returns next_node decision for routing
     
     Implements Requirements:
-    - 6.3: Booking_Subgraph with Select_Property node
-    - 9.1: Use LangChain agents with ChatOpenAI wrapper
-    - 9.2: Use create_langchain_llm() for LLM instances
-    - 20.2: Store selected property_id when user chooses a property
-    - 22.1: Present properties from search results
-    - 22.2: Present booking summary including property name
-    - 22.3: Ask for explicit user confirmation
-    - 22.4: Create booking when user confirms
-    - 22.5: Clear flow_state when user cancels
-    - 22.6: Return to appropriate step when user requests changes
-    - 23.2: Support button message type for quick reply options
+    - 5.2: Fetch Owner_Properties when booking intent is determined
+    - 5.3: Cache Owner_Properties in Flow_State
+    - 6.1: Auto-select single property and store in Flow_State
+    - 6.2: Skip property selection question when auto-selected
+    - 6.4: Check Flow_State for existing property_id before asking
+    - 7.1: Skip property selection step when Flow_State contains property_id
+    - 8.2: Update booking_step field in Flow_State when step is completed
     
     Args:
-        state: ConversationState containing user message, flow_state, and bot_memory
-        llm_provider: LLMProvider instance for creating LangChain LLM
-        tools: Optional tool registry (defaults to TOOL_REGISTRY if not provided)
+        state: ConversationState containing user message, flow_state, and identifiers
+        tools: Tool registry containing property tools
         
     Returns:
         ConversationState: State with response_content, response_type, response_metadata,
-                          and updated flow_state containing property_id and step
+                          updated flow_state, and next_node decision
         
     Example:
-        # First call - present options
+        # Case 1: Property already selected (skip)
         state = {
-            "chat_id": "123e4567-e89b-12d3-a456-426614174000",
-            "user_message": "I want to book a court",
-            "flow_state": {"intent": "booking"},
-            "bot_memory": {
-                "context": {
-                    "last_search_results": ["1", "2", "3"]
-                }
-            },
+            "chat_id": "123",
+            "flow_state": {"property_id": 1, "property_name": "Sports Center"},
             ...
         }
+        result = await select_property(state, tools)
+        # result["next_node"] = "select_court"
         
-        result = await select_property(state, llm_provider, tools)
+        # Case 2: Single property (auto-select)
+        state = {
+            "chat_id": "123",
+            "owner_profile_id": "456",
+            "flow_state": {},
+            ...
+        }
+        result = await select_property(state, tools)
+        # result["flow_state"]["property_id"] = 1
+        # result["flow_state"]["property_name"] = "Sports Center"
+        # result["flow_state"]["booking_step"] = "property_selected"
+        # result["next_node"] = "select_court"
+        
+        # Case 3: Multiple properties (present options)
+        state = {
+            "chat_id": "123",
+            "owner_profile_id": "456",
+            "flow_state": {},
+            ...
+        }
+        result = await select_property(state, tools)
         # result["response_type"] = "button"
         # result["response_metadata"]["buttons"] = [...]
-        # result["flow_state"]["step"] = "select_property"
-        
-        # Second call - process selection
-        state = {
-            "user_message": "Downtown Sports Center",
-            "flow_state": {"intent": "booking", "step": "select_property"},
-            "bot_memory": {
-                "context": {
-                    "last_search_results": ["1", "2", "3"]
-                }
-            },
-            ...
-        }
-        
-        result = await select_property(state, llm_provider, tools)
-        # result["flow_state"]["property_id"] = "1"
-        # result["flow_state"]["property_name"] = "Downtown Sports Center"
+        # result["next_node"] = "wait_for_selection"
     """
     chat_id = state["chat_id"]
-    user_message = state["user_message"]
+    owner_profile_id = state.get("owner_profile_id")
     flow_state = state.get("flow_state", {})
-    bot_memory = state.get("bot_memory", {})
-    
-    # Use provided tools or default to TOOL_REGISTRY
-    if tools is None:
-        tools = TOOL_REGISTRY
     
     logger.info(
         f"Processing property selection for chat {chat_id} - "
-        f"step={flow_state.get('step')}, "
-        f"message_preview={user_message[:50]}..."
+        f"property_id={flow_state.get('property_id')}"
     )
     
-    # Check if property already selected
+    # Step 1: Check if property already selected (Requirement 7.1)
     if flow_state.get("property_id"):
         logger.debug(
             f"Property already selected for chat {chat_id}: "
-            f"property_id={flow_state.get('property_id')}"
+            f"property_id={flow_state.get('property_id')}, "
+            f"property_name={flow_state.get('property_name')}"
         )
-        # Property already selected, continue to next step
+        # Property already selected, skip to next step
+        state["next_node"] = "select_court"
         return state
     
-    # Check if we're processing a selection or presenting options
-    current_step = flow_state.get("step")
+    # Step 2: Fetch owner_properties if not cached (Requirements 5.2, 5.3)
+    owner_properties = flow_state.get("owner_properties")
     
-    if current_step == "select_property":
-        # User is responding with a selection
-        return await _process_property_selection(
-            state=state,
-            llm_provider=llm_provider,
-            tools=tools,
-            chat_id=chat_id,
-            user_message=user_message,
-            flow_state=flow_state,
-            bot_memory=bot_memory
-        )
-    else:
-        # First time in this node, present options
-        return await _present_property_options(
-            state=state,
-            tools=tools,
-            chat_id=chat_id,
-            flow_state=flow_state,
-            bot_memory=bot_memory
-        )
-
-
-async def _present_property_options(
-    state: ConversationState,
-    tools: Dict[str, Any],
-    chat_id: str,
-    flow_state: Dict[str, Any],
-    bot_memory: Dict[str, Any]
-) -> ConversationState:
-    """
-    Present property options to the user as buttons.
-    
-    This function retrieves properties from flow_state.owner_properties (cached)
-    or fetches them if not available. It presents them as button options for
-    the user to select from.
-    
-    Implements Requirements:
-    - 5.2: Use cached data if owner_properties exists in flow_state
-    - 5.3: Cache in flow_state.owner_properties if fetched
-    - 5.4: Ensure booking flow always has property data without redundant API calls
-    
-    Args:
-        state: ConversationState
-        tools: Tool registry
-        chat_id: Chat ID for logging
-        flow_state: Current flow state
-        bot_memory: Bot memory containing search results
-        
-    Returns:
-        Updated ConversationState with button options
-    """
-    properties = None
-    
-    # Check if owner_properties exists in flow_state (cached from greeting)
-    # Requirements 5.2, 5.3, 5.4
-    if flow_state.get("owner_properties"):
-        properties = flow_state["owner_properties"]
+    if not owner_properties:
         logger.info(
-            f"Using cached properties from flow_state for chat {chat_id}: "
-            f"{len(properties)} properties"
+            f"Fetching owner properties for chat {chat_id}: "
+            f"owner_profile_id={owner_profile_id}"
         )
-    else:
-        # Properties not cached - check if user has previous search results
-        last_search = bot_memory.get("context", {}).get("last_search_results", [])
         
-        if last_search:
-            # Retrieve property details for the search results
-            properties = await _get_properties_by_ids(
-                tools=tools,
-                property_ids=last_search[:5],  # Limit to 5 properties
-                chat_id=chat_id
+        try:
+            # Fetch properties using the tool
+            owner_properties = await get_owner_properties_tool(
+                owner_profile_id=int(owner_profile_id)
             )
             
             # Cache in flow_state for future use (Requirement 5.3)
-            if properties:
-                flow_state["owner_properties"] = properties
-                logger.info(
-                    f"Fetched and cached {len(properties)} properties in flow_state "
-                    f"for chat {chat_id}"
-                )
-        else:
-            # Edge case/error recovery: No cached properties and no search results
-            # Try to fetch owner properties directly
-            logger.warning(
-                f"No cached properties or search results for chat {chat_id}, "
-                f"attempting to fetch owner properties"
+            flow_state["owner_properties"] = owner_properties
+            state["flow_state"] = flow_state
+            
+            logger.info(
+                f"Fetched and cached {len(owner_properties)} properties "
+                f"in flow_state for chat {chat_id}"
             )
             
-            owner_profile_id = state.get("owner_profile_id")
-            if owner_profile_id:
-                get_owner_properties = tools.get("get_owner_properties")
-                if get_owner_properties:
-                    try:
-                        properties = await get_owner_properties(
-                            owner_profile_id=int(owner_profile_id)
-                        )
-                        
-                        # Cache in flow_state for future use (Requirement 5.3)
-                        if properties:
-                            flow_state["owner_properties"] = properties
-                            logger.info(
-                                f"Fetched and cached {len(properties)} owner properties "
-                                f"in flow_state for chat {chat_id}"
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Error fetching owner properties for chat {chat_id}: {e}",
-                            exc_info=True
-                        )
-    
-    # If still no properties, prompt user to search first
-    if not properties:
-        logger.info(
-            f"No properties available for chat {chat_id}, "
-            f"prompting user to search first"
-        )
-        
-        response = (
-            "To make a booking, I first need to know which facility you're interested in. "
-            "Would you like me to search for available facilities? "
-            "You can tell me what sport you're looking for (e.g., 'tennis courts') "
-            "or a location (e.g., 'downtown')."
-        )
-        
-        state["response_content"] = response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
-        
-        # Update flow state to indicate we're waiting for search
-        flow_state["step"] = "awaiting_search"
-        state["flow_state"] = flow_state
-        
-        return state
-    
-    # Format properties as buttons
-    buttons = _format_properties_as_buttons(properties)
-    
-    # Generate response message
-    response = "Which facility would you like to book?"
-    
-    # Update state with response
-    state["response_content"] = response
-    state["response_type"] = "button"
-    state["response_metadata"] = {"buttons": buttons}
-    
-    # Update flow state
-    flow_state["step"] = "select_property"
-    state["flow_state"] = flow_state
-    
-    # Store property details in bot_memory for later reference
-    bot_memory = _store_property_details_in_memory(
-        bot_memory=bot_memory,
-        properties=properties
-    )
-    state["bot_memory"] = bot_memory
-    
-    logger.info(
-        f"Presented {len(buttons)} property options for chat {chat_id}"
-    )
-    
-    return state
-
-
-async def _process_property_selection(
-    state: ConversationState,
-    llm_provider: LLMProvider,
-    tools: Dict[str, Any],
-    chat_id: str,
-    user_message: str,
-    flow_state: Dict[str, Any],
-    bot_memory: Dict[str, Any]
-) -> ConversationState:
-    """
-    Process user's property selection using LangChain agent.
-    
-    This function uses a LangChain agent to intelligently parse the user's
-    selection, validates it, and stores the selected property_id in flow_state.
-    
-    It first checks flow_state.owner_properties for cached property data,
-    then falls back to bot_memory property_details, and finally attempts
-    to fetch from last_search_results if needed.
-    
-    Implements Requirements:
-    - 5.2: Use cached data if owner_properties exists in flow_state
-    - 5.3: Cache in flow_state.owner_properties if fetched
-    - 5.4: Ensure booking flow always has property data without redundant API calls
-    
-    Args:
-        state: ConversationState
-        llm_provider: LLMProvider for creating LangChain LLM
-        tools: Tool registry
-        chat_id: Chat ID for logging
-        user_message: User's selection message
-        flow_state: Current flow state
-        bot_memory: Bot memory containing property details
-        
-    Returns:
-        Updated ConversationState with selected property_id in flow_state
-    """
-    available_properties = None
-    
-    # Check flow_state.owner_properties first (cached from greeting or previous fetch)
-    # Requirements 5.2, 5.3, 5.4
-    if flow_state.get("owner_properties"):
-        available_properties = flow_state["owner_properties"]
-        logger.debug(
-            f"Using cached properties from flow_state for selection in chat {chat_id}: "
-            f"{len(available_properties)} properties"
-        )
-    else:
-        # Fallback: Get available properties from bot_memory
-        available_properties = bot_memory.get("context", {}).get("property_details", [])
-        
-        if not available_properties:
-            # Second fallback: retrieve from last_search_results
-            last_search = bot_memory.get("context", {}).get("last_search_results", [])
-            if last_search:
-                available_properties = await _get_properties_by_ids(
-                    tools=tools,
-                    property_ids=last_search[:5],
-                    chat_id=chat_id
-                )
-                
-                # Cache in flow_state for future use (Requirement 5.3)
-                if available_properties:
-                    flow_state["owner_properties"] = available_properties
-                    logger.info(
-                        f"Fetched and cached {len(available_properties)} properties "
-                        f"in flow_state for chat {chat_id}"
-                    )
-            else:
-                logger.error(
-                    f"No available properties found in flow_state or bot_memory for chat {chat_id}"
-                )
-                
-                response = (
-                    "I couldn't find the available facilities. "
-                    "Let's start over. What type of facility are you looking for?"
-                )
-                
-                state["response_content"] = response
-                state["response_type"] = "text"
-                state["response_metadata"] = {}
-                
-                # Reset flow state
-                flow_state["step"] = "awaiting_search"
-                state["flow_state"] = flow_state
-                
-                return state
-    
-    # Create LangChain LLM
-    try:
-        llm = create_langchain_llm(llm_provider)
-    except Exception as e:
-        logger.error(f"Failed to create LangChain LLM for chat {chat_id}: {e}", exc_info=True)
-        # Fallback to manual parsing
-        selected_property = _parse_property_selection(
-            user_message=user_message,
-            available_properties=available_properties
-        )
-        
-        if not selected_property:
-            # Invalid selection
-            logger.warning(
-                f"Invalid property selection for chat {chat_id}: {user_message}"
-            )
-            
-            # Generate helpful error message with available options
-            property_names = [p.get("name", "Unknown") for p in available_properties]
-            options_text = ", ".join(property_names)
-            
-            response = (
-                f"I couldn't find that facility. "
-                f"Please select from the available options: {options_text}"
-            )
-            
-            state["response_content"] = response
-            state["response_type"] = "text"
-            state["response_metadata"] = {}
-            
-            return state
-        
-        # Valid selection - store in flow_state
-        property_id = str(selected_property.get("id"))
-        property_name = selected_property.get("name", "Unknown Property")
-        
-        flow_state["property_id"] = property_id
-        flow_state["property_name"] = property_name
-        flow_state["step"] = "property_selected"
-        
-        state["flow_state"] = flow_state
-        
-        # Generate confirmation message
-        response = (
-            f"Great! You've selected {property_name}. "
-            f"Now let's choose a court."
-        )
-        
-        state["response_content"] = response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
-        
-        logger.info(
-            f"Property selected for chat {chat_id}: "
-            f"property_id={property_id}, property_name={property_name}"
-        )
-        
-        return state
-    
-    # Create prompt for property selection
-    prompt = create_select_property_prompt(available_properties)
-    
-    # Use LLM to parse selection
-    try:
-        messages = prompt.format_messages(input=user_message)
-        response_obj = await llm.ainvoke(messages)
-        agent_response = response_obj.content.strip()
-        
-        logger.debug(f"Agent response for property selection: {agent_response}")
-        
-        # Try to extract property ID from response
-        # Agent should respond with just the property ID number
-        property_id_match = re.search(r'\b(\d+)\b', agent_response)
-        
-        if property_id_match:
-            property_id_str = property_id_match.group(1)
-            
-            # Find property with this ID
-            selected_property = None
-            for prop in available_properties:
-                if str(prop.get("id")) == property_id_str:
-                    selected_property = prop
-                    break
-            
-            if selected_property:
-                # Valid selection - store in flow_state
-                property_id = str(selected_property.get("id"))
-                property_name = selected_property.get("name", "Unknown Property")
-                
-                flow_state["property_id"] = property_id
-                flow_state["property_name"] = property_name
-                flow_state["step"] = "property_selected"
-                
-                state["flow_state"] = flow_state
-                
-                # Generate confirmation message
-                response = (
-                    f"Great! You've selected {property_name}. "
-                    f"Now let's choose a court."
-                )
-                
-                state["response_content"] = response
-                state["response_type"] = "text"
-                state["response_metadata"] = {}
-                
-                logger.info(
-                    f"Property selected for chat {chat_id}: "
-                    f"property_id={property_id}, property_name={property_name}"
-                )
-                
-                return state
-        
-        # Agent is asking for clarification or couldn't parse
-        # Use agent's response directly
-        state["response_content"] = agent_response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
-        
-        logger.info(f"Agent asking for clarification in chat {chat_id}")
-        
-        return state
-        
-    except Exception as e:
-        logger.error(f"Error using LangChain agent for property selection in chat {chat_id}: {e}", exc_info=True)
-        
-        # Fallback to manual parsing
-        selected_property = _parse_property_selection(
-            user_message=user_message,
-            available_properties=available_properties
-        )
-        
-        if not selected_property:
-            # Invalid selection
-            logger.warning(
-                f"Invalid property selection for chat {chat_id}: {user_message}"
-            )
-            
-            # Generate helpful error message with available options
-            property_names = [p.get("name", "Unknown") for p in available_properties]
-            options_text = ", ".join(property_names)
-            
-            response = (
-                f"I couldn't find that facility. "
-                f"Please select from the available options: {options_text}"
-            )
-            
-            state["response_content"] = response
-            state["response_type"] = "text"
-            state["response_metadata"] = {}
-            
-            return state
-        
-        # Valid selection - store in flow_state
-        property_id = str(selected_property.get("id"))
-        property_name = selected_property.get("name", "Unknown Property")
-        
-        flow_state["property_id"] = property_id
-        flow_state["property_name"] = property_name
-        flow_state["step"] = "property_selected"
-        
-        state["flow_state"] = flow_state
-        
-        # Generate confirmation message
-        response = (
-            f"Great! You've selected {property_name}. "
-            f"Now let's choose a court."
-        )
-        
-        state["response_content"] = response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
-        
-        logger.info(
-            f"Property selected for chat {chat_id}: "
-            f"property_id={property_id}, property_name={property_name}"
-        )
-        
-        return state
-
-
-async def _get_properties_by_ids(
-    tools: Dict[str, Any],
-    property_ids: List[str],
-    chat_id: str
-) -> List[Dict[str, Any]]:
-    """
-    Retrieve property details for a list of property IDs.
-    
-    This function calls the get_property_details tool for each property ID
-    and returns a list of property dictionaries.
-    
-    Args:
-        tools: Tool registry
-        property_ids: List of property IDs to retrieve
-        chat_id: Chat ID for logging
-        
-    Returns:
-        List of property dictionaries
-    """
-    get_property_details = tools.get("get_property_details")
-    if not get_property_details:
-        logger.error("get_property_details tool not found in registry")
-        return []
-    
-    properties = []
-    
-    for property_id in property_ids:
-        try:
-            # Convert property_id to int if it's a string
-            property_id_int = int(property_id) if isinstance(property_id, str) else property_id
-            
-            logger.debug(
-                f"Retrieving property details for chat {chat_id}: "
-                f"property_id={property_id_int}"
-            )
-            
-            property_data = await get_property_details(
-                property_id=property_id_int,
-                owner_id=None  # Public access
-            )
-            
-            if property_data:
-                properties.append(property_data)
-            else:
-                logger.warning(
-                    f"Property not found for chat {chat_id}: "
-                    f"property_id={property_id_int}"
-                )
-                
         except Exception as e:
             logger.error(
-                f"Error retrieving property {property_id} for chat {chat_id}: {e}",
+                f"Error fetching owner properties for chat {chat_id}: {e}",
                 exc_info=True
             )
-    
-    logger.info(
-        f"Retrieved {len(properties)} properties for chat {chat_id}"
-    )
-    
-    return properties
-
-
-def _format_properties_as_buttons(
-    properties: List[Dict[str, Any]]
-) -> List[Dict[str, str]]:
-    """
-    Format properties as button options.
-    
-    This function converts property dictionaries into button format
-    with id and text fields suitable for display to the user.
-    
-    Implements Requirement 23.2: Support button message type for quick reply options
-    
-    Args:
-        properties: List of property dictionaries
-        
-    Returns:
-        List of button dictionaries with id and text fields
-        
-    Example:
-        buttons = _format_properties_as_buttons([
-            {"id": 1, "name": "Sports Center", "city": "NYC"}
-        ])
-        # Returns: [{"id": "1", "text": "Sports Center"}]
-    """
-    buttons = []
-    
-    for prop in properties:
-        property_id = prop.get("id")
-        name = prop.get("name", "Unknown Property")
-        
-        buttons.append({
-            "id": str(property_id),
-            "text": name
-        })
-    
-    return buttons
-
-
-def _parse_property_selection(
-    user_message: str,
-    available_properties: List[Dict[str, Any]]
-) -> Optional[Dict[str, Any]]:
-    """
-    Parse user's property selection from message.
-    
-    This function attempts to match the user's message to a property by:
-    1. Exact property ID match
-    2. Exact property name match (case-insensitive)
-    3. Partial property name match (case-insensitive)
-    
-    Args:
-        user_message: User's selection message
-        available_properties: List of available property dictionaries
-        
-    Returns:
-        Selected property dictionary or None if no match found
-        
-    Example:
-        property = _parse_property_selection(
-            "Downtown Sports Center",
-            [{"id": 1, "name": "Downtown Sports Center"}]
-        )
-        # Returns: {"id": 1, "name": "Downtown Sports Center"}
-    """
-    message_lower = user_message.lower().strip()
-    
-    # Return None for empty messages
-    if not message_lower:
-        logger.debug("Empty message provided for property selection")
-        return None
-    
-    # Try to match by property ID
-    # Check if message is a number or contains a number
-    id_match = re.search(r'\b(\d+)\b', message_lower)
-    if id_match:
-        property_id = id_match.group(1)
-        for prop in available_properties:
-            if str(prop.get("id")) == property_id:
-                logger.debug(f"Matched property by ID: {property_id}")
-                return prop
-    
-    # Try exact name match (case-insensitive)
-    for prop in available_properties:
-        property_name = prop.get("name", "").lower()
-        if property_name == message_lower:
-            logger.debug(f"Matched property by exact name: {property_name}")
-            return prop
-    
-    # Try partial name match (case-insensitive)
-    for prop in available_properties:
-        property_name = prop.get("name", "").lower()
-        # Check if user message is contained in property name or vice versa
-        if message_lower in property_name or property_name in message_lower:
-            logger.debug(f"Matched property by partial name: {property_name}")
-            return prop
-    
-    # Try matching individual words
-    message_words = set(message_lower.split())
-    best_match = None
-    best_match_score = 0
-    
-    for prop in available_properties:
-        property_name = prop.get("name", "").lower()
-        property_words = set(property_name.split())
-        
-        # Calculate word overlap
-        common_words = message_words.intersection(property_words)
-        if common_words:
-            score = len(common_words)
-            if score > best_match_score:
-                best_match = prop
-                best_match_score = score
-    
-    if best_match and best_match_score >= 1:
+            
+            # Return error response
+            state["response_content"] = (
+                "I'm having trouble accessing your properties. "
+                "Please try again later."
+            )
+            state["response_type"] = "text"
+            state["response_metadata"] = {}
+            state["next_node"] = "end"
+            
+            return state
+    else:
         logger.debug(
-            f"Matched property by word overlap: {best_match.get('name')} "
-            f"(score={best_match_score})"
+            f"Using cached properties from flow_state for chat {chat_id}: "
+            f"{len(owner_properties)} properties"
         )
-        return best_match
     
-    # No match found
-    logger.debug(f"No property match found for: {user_message}")
-    return None
-
-
-def _store_property_details_in_memory(
-    bot_memory: Dict[str, Any],
-    properties: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Store property details in bot_memory for later reference.
+    # Step 3: Handle different property counts
+    property_count = len(owner_properties)
     
-    This function stores the retrieved property details in bot_memory
-    so they can be accessed during property selection without additional
-    API calls.
-    
-    Args:
-        bot_memory: Current bot_memory dictionary
-        properties: List of property dictionaries to store
+    # Case 1: No properties (error)
+    if property_count == 0:
+        logger.warning(f"No properties found for chat {chat_id}")
         
-    Returns:
-        Updated bot_memory dictionary
-    """
-    # Ensure context exists
-    if "context" not in bot_memory:
-        bot_memory["context"] = {}
+        state["response_content"] = (
+            "You don't have any properties set up yet. "
+            "Please add a property before making a booking."
+        )
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        state["next_node"] = "end"
+        
+        return state
     
-    # Store property details
-    bot_memory["context"]["property_details"] = properties
+    # Case 2: Single property (auto-select) - Requirements 6.1, 6.2, 6.4
+    elif property_count == 1:
+        property = owner_properties[0]
+        property_id = property.get("id")
+        property_name = property.get("name", "Unknown Property")
+        
+        # Auto-select and store in flow_state (Requirement 6.1)
+        flow_state["property_id"] = property_id
+        flow_state["property_name"] = property_name
+        flow_state["booking_step"] = "property_selected"  # Requirement 8.2
+        state["flow_state"] = flow_state
+        
+        logger.info(
+            f"Auto-selected single property for chat {chat_id}: "
+            f"property_id={property_id}, property_name={property_name}"
+        )
+        
+        # Skip property selection question (Requirement 6.2)
+        # Proceed directly to court selection
+        state["next_node"] = "select_court"
+        
+        # Optional: Set a message to inform user (can be empty for silent skip)
+        state["response_content"] = f"Booking for {property_name}."
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        
+        return state
     
-    return bot_memory
+    # Case 3: Multiple properties (present options)
+    else:
+        logger.info(
+            f"Presenting {property_count} property options for chat {chat_id}"
+        )
+        
+        # Format properties as buttons
+        buttons = []
+        for prop in owner_properties:
+            property_id = prop.get("id")
+            property_name = prop.get("name", "Unknown Property")
+            
+            buttons.append({
+                "id": str(property_id),
+                "text": property_name
+            })
+        
+        # Generate response message
+        response = "Which facility would you like to book?"
+        
+        # Update state with response
+        state["response_content"] = response
+        state["response_type"] = "button"
+        state["response_metadata"] = {"buttons": buttons}
+        
+        # Update flow state to indicate we're waiting for selection
+        flow_state["booking_step"] = "awaiting_property_selection"
+        state["flow_state"] = flow_state
+        
+        # Wait for user selection
+        state["next_node"] = "wait_for_selection"
+        
+        return state

@@ -13,17 +13,19 @@ Requirements: 6.3, 20.1-20.8, 22.1-22.6
 """
 
 from app.agent.nodes.booking.select_property import select_property
+from app.agent.nodes.booking.select_court import select_court
 from app.agent.nodes.booking.select_service import select_service
 from app.agent.nodes.booking.select_date import select_date
 from app.agent.nodes.booking.select_time import select_time
 from app.agent.nodes.booking.confirm import confirm_booking
-from app.agent.nodes.booking.create_booking import create_pending_booking
+from app.agent.nodes.booking.create_booking import create_booking
 
 __all__ = [
     "select_property",
+    "select_court",
     "select_service",
     "select_date",
     "select_time",
     "confirm_booking",
-    "create_pending_booking",
+    "create_booking",
 ]

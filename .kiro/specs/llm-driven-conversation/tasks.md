@@ -159,8 +159,28 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
 - [ ] 8. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 9. Implement property selection with auto-selection
-  - [ ] 9.1 Create select_property_node in booking subgraph
+- [x] 9. Implement property selection with auto-selection
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  - [x] 9.1 Create select_property_node in booking subgraph
+
+
+
+
+
+
     - Check if property_id exists in flow_state (skip if exists)
     - Fetch owner_properties if not cached
     - Handle 0 properties: return error message
@@ -179,8 +199,13 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Test multiple properties show selection list
     - Test zero properties show error
 
-- [ ] 10. Implement court selection with auto-selection
-  - [ ] 10.1 Create select_court_node in booking subgraph
+- [-] 10. Implement court selection with auto-selection
+
+
+  - [x] 10.1 Create select_court_node in booking subgraph
+
+
+
     - Check if court_id exists in flow_state (skip if exists)
     - Fetch courts for selected property using get_property_courts_tool
     - Handle 0 courts: return error message
@@ -199,8 +224,13 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Test multiple courts show selection list
     - Test zero courts show error
 
-- [ ] 11. Implement date selection with LLM parsing
-  - [ ] 11.1 Create select_date_node in booking subgraph
+- [x] 11. Implement date selection with LLM parsing
+
+
+
+
+  - [x] 11.1 Create select_date_node in booking subgraph
+
     - Check if date exists in flow_state (skip if exists)
     - Pass current date (YYYY-MM-DD format) to LLM in the prompt context
     - Use LLM to parse date from user message (natural language → YYYY-MM-DD)
@@ -218,8 +248,13 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Test date validation (format, future date)
     - Test date skipping when exists in flow_state
 
-- [ ] 12. Implement time selection with availability checking
-  - [ ] 12.1 Create select_time_node in booking subgraph
+- [-] 12. Implement time selection with availability checking
+
+
+  - [x] 12.1 Create select_time_node in booking subgraph
+
+
+
     - Check if time_slot exists in flow_state (skip if exists)
     - Fetch available slots using get_availability_tool (court_id, date)
     - Use LLM to parse time from user message or present available slots
@@ -241,8 +276,12 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
 - [ ] 13. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 14. Implement booking confirmation and creation
-  - [ ] 14.1 Create confirm_booking_node in booking subgraph
+- [-] 14. Implement booking confirmation and creation
+
+
+  - [x] 14.1 Create confirm_booking_node in booking subgraph
+
+
     - Build booking summary (property, court, date, time)
     - Fetch pricing using get_pricing_tool
     - Use LLM to check for user confirmation
@@ -252,7 +291,18 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Return next_node decision
     - _Requirements: 8.1, 8.3, 8.4_
   
-  - [ ] 14.2 Create create_booking_node in booking subgraph
+  - [x] 14.2 Create create_booking_node in booking subgraph
+
+
+
+
+
+
+
+
+
+
+
     - Parse time_slot into start_time and end_time
     - Call create_booking_tool with all booking data
     - If success: clear flow_state and return confirmation message
