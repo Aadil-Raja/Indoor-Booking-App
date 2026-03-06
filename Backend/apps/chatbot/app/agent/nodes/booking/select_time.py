@@ -942,8 +942,9 @@ async def _parse_time_with_llm(
     property_name = flow_state.get("property_name", "the property")
     court_name = flow_state.get("court_name", "the court")
     date_str = flow_state.get("date", "")
+    current_date = datetime.now().date().strftime("%Y-%m-%d")  # ISO format
     
-    prompt = create_select_time_prompt(property_name, court_name, date_str, available_slots)
+    prompt = create_select_time_prompt(property_name, court_name, date_str, available_slots, current_date)
     
     # Use LLM to parse selection
     try:

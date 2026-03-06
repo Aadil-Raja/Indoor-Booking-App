@@ -162,8 +162,8 @@ def _is_returning_user(bot_memory: dict) -> bool:
     Determine if the user is returning based on bot_memory.
     
     A user is considered returning if they have:
-    - Conversation history with more than just the current greeting
-    - Session metadata indicating previous messages
+    - Conversation history with more than just the current user message
+      (append_user_message runs before greeting, so 1 message = new user)
     - User preferences from previous interactions
     - Context from previous searches
     
@@ -174,29 +174,26 @@ def _is_returning_user(bot_memory: dict) -> bool:
         bool: True if returning user, False if new user
     """
     # Check conversation history
+    # Note: append_user_message runs before greeting_handler, so the current
+    # user message has already been added to conversation_history.
+    # - 1 message = new user (just the current "hi")
+    # - 2+ messages = returning user (has previous conversation)
     conversation_history = bot_memory.get("conversation_history", [])
-    
-    # If there's more than 1 message in history (current greeting was just added),
-    # this is a returning user
+    # print(len(conversation_history),conversation_history,"converstaion_history")
     if len(conversation_history) > 1:
         return True
     
-    # Check session metadata for total messages
-    session_metadata = bot_memory.get("session_metadata", {})
-    total_messages = session_metadata.get("total_messages", 0)
+    # # Check if there are user preferences (indicates previous interaction)
+    # user_preferences = bot_memory.get("user_preferences", {})
+    # print(user_preferences)
+    # if user_preferences:
+    #     return True
     
-    if total_messages > 0:
-        return True
-    
-    # Check if there are user preferences (indicates previous interaction)
-    user_preferences = bot_memory.get("user_preferences", {})
-    if user_preferences:
-        return True
-    
-    # Check if there's any context from previous interactions
-    context = bot_memory.get("context", {})
-    if context.get("last_search_results") or context.get("mentioned_properties"):
-        return True
+    # # Check if there's any context from previous interactions
+    # context = bot_memory.get("context", {})
+    # print(context)
+    # if context.get("last_search_results") or context.get("mentioned_properties"):
+    #     return True
     
     # No indicators of previous interaction - this is a new user
     return False

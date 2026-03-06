@@ -115,6 +115,8 @@ async def search_properties_tool(
     sport type, and price range. It uses public_service.search_properties()
     which returns properties accessible to all users.
     
+    Includes comprehensive error handling for service failures.
+    
     Args:
         city: City name to filter by (optional)
         sport_type: Sport type to filter courts by (optional)
@@ -124,6 +126,7 @@ async def search_properties_tool(
         
     Returns:
         List of property dictionaries with basic information (id, name, city, address, amenities)
+        Returns empty list on error
         
     Example:
         properties = await search_properties_tool(
@@ -131,6 +134,8 @@ async def search_properties_tool(
             city="New York",
             limit=5
         )
+        
+    Requirements: 20.3
     """
     try:
         logger.info(
@@ -165,7 +170,17 @@ async def search_properties_tool(
             return []
             
     except Exception as e:
-        logger.error(f"Error searching properties: {e}", exc_info=True)
+        logger.error(
+            f"Error searching properties: {e}",
+            extra={
+                "city": city,
+                "sport_type": sport_type,
+                "min_price": min_price,
+                "max_price": max_price
+            },
+            exc_info=True
+        )
+        # Return empty list to allow conversation to continue
         return []
 
 
@@ -179,6 +194,8 @@ async def get_property_details_tool(
     location, contact information, amenities, courts, and media. It uses
     public_service.get_property_details().
     
+    Includes comprehensive error handling for service failures.
+    
     Args:
         property_id: ID of the property to retrieve
         
@@ -191,10 +208,12 @@ async def get_property_details_tool(
         - courts (list with court details)
         - media (list with photos/videos)
         
-        Returns None if property not found
+        Returns None if property not found or on error
         
     Example:
         details = await get_property_details_tool(property_id=123)
+        
+    Requirements: 20.3
     """
     try:
         logger.info(f"Getting property details: property_id={property_id}")
@@ -223,7 +242,12 @@ async def get_property_details_tool(
             return None
             
     except Exception as e:
-        logger.error(f"Error getting property details: {e}", exc_info=True)
+        logger.error(
+            f"Error getting property details: {e}",
+            extra={"property_id": property_id},
+            exc_info=True
+        )
+        # Return None to allow conversation to continue
         return None
 
 
@@ -237,6 +261,8 @@ async def get_court_details_tool(
     amenities, property information, pricing rules, and media. It uses
     public_service.get_court_details().
     
+    Includes comprehensive error handling for service failures.
+    
     Args:
         court_id: ID of the court to retrieve
         
@@ -248,10 +274,12 @@ async def get_court_details_tool(
         - pricing_rules (list with time-based pricing)
         - media (list with photos/videos)
         
-        Returns None if court not found
+        Returns None if court not found or on error
         
     Example:
         details = await get_court_details_tool(court_id=23)
+        
+    Requirements: 20.3
     """
     try:
         logger.info(f"Getting court details: court_id={court_id}")
@@ -280,7 +308,12 @@ async def get_court_details_tool(
             return None
             
     except Exception as e:
-        logger.error(f"Error getting court details: {e}", exc_info=True)
+        logger.error(
+            f"Error getting court details: {e}",
+            extra={"court_id": court_id},
+            exc_info=True
+        )
+        # Return None to allow conversation to continue
         return None
 
 
@@ -295,6 +328,8 @@ async def get_court_availability_tool(
     date, excluding blocked slots and existing bookings. It uses
     public_service.get_available_slots() which returns slots with pricing.
     
+    Includes comprehensive error handling for service failures.
+    
     Args:
         court_id: ID of the court
         date_val: Date to check availability for (ISO format YYYY-MM-DD)
@@ -307,13 +342,15 @@ async def get_court_availability_tool(
         - available_slots: List of available time slots with pricing
           Each slot contains: start_time, end_time, price_per_hour, label
         
-        Returns None if court not found or no slots available
+        Returns None if court not found, no slots available, or on error
         
     Example:
         availability = await get_court_availability_tool(
             court_id=23,
             date_val="2026-03-10"
         )
+        
+    Requirements: 20.3
     """
     try:
         logger.info(f"Getting available slots: court_id={court_id}, date={date_val}")
@@ -354,7 +391,12 @@ async def get_court_availability_tool(
             return None
             
     except Exception as e:
-        logger.error(f"Error getting available slots: {e}", exc_info=True)
+        logger.error(
+            f"Error getting available slots: {e}",
+            extra={"court_id": court_id, "date": date_val},
+            exc_info=True
+        )
+        # Return None to allow conversation to continue
         return None
 
 

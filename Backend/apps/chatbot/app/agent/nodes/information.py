@@ -16,18 +16,19 @@ Requirements: 1.1-1.5, 2.1-2.5, 3.1-3.5, 4.1-4.5, 5.1-5.5, 6.1-6.5, 7.1-7.6,
              8.1-8.5, 9.1-9.6, 10.1-10.5, 11.1-11.5, 16.1-16.6
 """
 
-from typing import Optional
+from typing import Optional, Any
 import logging
 
-from langchain.agents import create_react_agent, AgentExecutor
-from langchain import hub
+from langchain.agents import AgentExecutor
+from langchain.agents.format_scratchpad.openai_tools import format_to_openai_tool_messages
+from langchain.agents.output_parsers.openai_tools import OpenAIToolsAgentOutputParser
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from app.agent.state.conversation_state import ConversationState
 from app.services.llm.base import LLMProvider
 from app.services.llm.langchain_wrapper import create_langchain_llm
 from app.agent.tools.information_tools import INFORMATION_TOOLS
 from app.agent.tools.langchain_converter import create_langchain_tools
-from app.agent.prompts.information_prompts import create_information_prompt
 from app.agent.state.memory_manager import update_bot_memory
 from app.agent.state.llm_response_parser import parse_llm_response
 from app.agent.state.flow_state_manager import clear_booking_field, update_flow_state
@@ -216,19 +217,42 @@ async def information_handler(
         )
         
         # 7. Build context-aware prompt with business_name and fuzzy search guidance
-        logger.debug("Building context-aware ReAct prompt with bot_memory and business_name")
-        prompt = create_information_prompt(
+        logger.debug("Building context-aware prompt with bot_memory and business_name")
+        system_message = _build_system_message(
             owner_profile_id=int(owner_profile_id),
             bot_memory=bot_memory,
             business_name=business_name,
             fuzzy_context=fuzzy_context
         )
         
-        # 8. Create agent using create_react_agent (ReAct pattern)
-        logger.debug("Creating ReAct agent")
-        agent = create_react_agent(llm, langchain_tools, prompt)
+        # Create prompt for OpenAI tools agent
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_message),
+            MessagesPlaceholder(variable_name="chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
         
-        # 9. Create AgentExecutor with agent and tools
+        # 8. Bind tools to LLM
+        logger.debug("Binding tools to LLM")
+        llm_with_tools = llm.bind_tools(langchain_tools)
+        
+        # 9. Create agent manually (OpenAI tools pattern)
+        logger.debug("Creating OpenAI tools agent")
+        agent = (
+            {
+                "input": lambda x: x["input"],
+                "agent_scratchpad": lambda x: format_to_openai_tool_messages(
+                    x["intermediate_steps"]
+                ),
+                "chat_history": lambda x: x.get("chat_history", []),
+            }
+            | prompt
+            | llm_with_tools
+            | OpenAIToolsAgentOutputParser()
+        )
+        
+        # 10. Create AgentExecutor with agent and tools
         logger.debug("Creating AgentExecutor")
         agent_executor = AgentExecutor(
             agent=agent,
@@ -239,14 +263,14 @@ async def information_handler(
             return_intermediate_steps=True  # Return tool calls for debugging
         )
         
-        # 10. Execute agent with ainvoke() passing fuzzy-corrected message
-        logger.info(f"Executing ReAct agent for chat {chat_id}")
+        # 11. Execute agent with ainvoke() passing fuzzy-corrected message
+        logger.info(f"Executing OpenAI tools agent for chat {chat_id}")
         result = await agent_executor.ainvoke({
             "input": fuzzy_message,
             "chat_history": [],  # Could be populated from bot_memory if needed
         })
         
-        # 11. Update state with response_content from agent result
+        # 12. Update state with response_content from agent result
         response_content = result.get("output", "")
         
         # 12. Add fuzzy search confirmation if applicable
@@ -566,3 +590,56 @@ async def _fetch_owner_profile(owner_profile_id: str, chat_id: str) -> dict:
             exc_info=True
         )
         return {}
+
+
+def _build_system_message(
+    owner_profile_id: int,
+    bot_memory: dict,
+    business_name: Optional[str] = None,
+    fuzzy_context: Optional[dict] = None
+) -> str:
+    """Build system message for information agent."""
+    business_name_str = business_name or "our facility"
+    
+    # Extract context
+    context_parts = []
+    if bot_memory.get("context", {}).get("last_search_results"):
+        results = bot_memory["context"]["last_search_results"]
+        context_parts.append(f"Last search returned property IDs: {', '.join(results)}")
+    
+    if bot_memory.get("user_preferences", {}).get("preferred_sport"):
+        sport = bot_memory["user_preferences"]["preferred_sport"]
+        context_parts.append(f"User prefers: {sport}")
+    
+    context = "\n".join(context_parts) if context_parts else "No previous context"
+    
+    # Fuzzy context
+    fuzzy_context = fuzzy_context or {}
+    if fuzzy_context.get("fuzzy_match"):
+        fuzzy_str = (
+            f"Sport name correction applied: '{fuzzy_context.get('original_term')}' "
+            f"→ '{fuzzy_context.get('corrected_term')}'"
+        )
+    else:
+        fuzzy_str = "No fuzzy corrections applied"
+    
+    return f"""You are a helpful sports facility information assistant for {business_name_str}.
+
+Owner Profile ID: {owner_profile_id}
+
+Context from previous conversation:
+{context}
+
+Fuzzy Search Context:
+{fuzzy_str}
+
+Your role is to help users find and learn about sports facilities, courts, availability, and pricing.
+
+Guidelines:
+- Use the available tools to get accurate, up-to-date information
+- Be conversational and helpful
+- Present information in a clear, organized way
+- When showing multiple results, present them in a numbered list
+- If you don't have enough information, ask clarifying questions
+- Always pass owner_profile_id parameter when calling search_properties tool
+"""

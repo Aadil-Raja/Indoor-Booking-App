@@ -206,7 +206,14 @@ def _get_default_response(current_node: Optional[str]) -> Tuple[str, str, Dict[s
     Get default response when LLM response is completely invalid.
     
     Returns safe defaults that allow conversation to continue.
+    
+    Requirement: 2.5, 20.1
     """
+    logger.warning(
+        f"Using default response due to invalid LLM response, "
+        f"defaulting to node: {current_node or 'greeting'}"
+    )
+    
     return (
         current_node or "greeting",
         "I'm having trouble processing your request. Please try again.",

@@ -8,6 +8,8 @@ on the user's message, eliminating rule-based transitions.
 Requirements: 2.1, 2.2, 2.3, 2.4
 """
 
+from typing import Dict, Any
+
 INTENT_ROUTING_PROMPT = """You are a routing assistant for a sports facility booking chatbot. Your task is to analyze the user's message and determine which conversation handler should process it next.
 
 **Available Handlers (next_node options):**
@@ -27,6 +29,9 @@ INTENT_ROUTING_PROMPT = """You are a routing assistant for a sports facility boo
 
 **Routing Rules:**
 
+- FIRST, check bot_memory.user_preferences and bot_memory.inferred_information
+- If user has booking_frequency="regular" and message is vague, assume they want to book again
+- If preferred_sport exists and user mentions that sport, route to booking if intent is unclear
 - If the message contains booking-related words (book, reserve, schedule, appointment, reservation), route to **booking**
 - If the message is about finding, searching, browsing facilities, or asking questions (pricing, hours, policies, availability), route to **information**
 - If the message is a simple greeting or conversation starter, route to **greeting**
@@ -36,11 +41,26 @@ INTENT_ROUTING_PROMPT = """You are a routing assistant for a sports facility boo
 **User Message:**
 "{message}"
 
+**Bot Memory (User Preferences):**
+{bot_memory}
+
+**Preference Extraction:**
+While routing, identify and extract any user preferences expressed in their message:
+- Store preferences in bot_memory.user_preferences:
+  * preferred_sport: Sport type if mentioned (e.g., "tennis", "basketball", "futsal")
+  * preferred_time: Time preference if mentioned (e.g., "morning", "afternoon", "evening")
+  * preferred_property: Property ID if user expresses preference
+  * preferred_court: Court ID if user expresses preference
+- Store inferred information in bot_memory.inferred_information:
+  * booking_frequency: "regular", "occasional", or "first_time" based on user's language
+  * interests: List of sports or activities mentioned
+  * context_notes: Any other relevant context about user's needs
+
 **Instructions:**
 Respond with a JSON object containing:
 - next_node: The handler to route to ("greeting", "information", or "booking")
 - message: A brief acknowledgment or transition message for the user
-- state_updates: Any updates to flow_state (set current_intent to match the routing decision)
+- state_updates: Any updates to flow_state and bot_memory (including extracted preferences)
 
 **Response Format:**
 {{
@@ -49,6 +69,19 @@ Respond with a JSON object containing:
   "state_updates": {{
     "flow_state": {{
       "current_intent": "greeting" | "information" | "booking"
+    }},
+    "bot_memory": {{
+      "user_preferences": {{
+        "preferred_sport": "sport_name" | null,
+        "preferred_time": "morning" | "afternoon" | "evening" | null,
+        "preferred_property": property_id | null,
+        "preferred_court": court_id | null
+      }},
+      "inferred_information": {{
+        "booking_frequency": "regular" | "occasional" | "first_time" | null,
+        "interests": ["sport1", "sport2"] | [],
+        "context_notes": "relevant context" | ""
+      }}
     }}
   }}
 }}
@@ -56,16 +89,18 @@ Respond with a JSON object containing:
 **Your Response:**"""
 
 
-def get_routing_prompt(message: str) -> str:
+def get_routing_prompt(message: str, bot_memory: Dict[str, Any] = None) -> str:
     """
     Get the routing prompt for LLM-driven next_node decision.
     
-    This function formats the routing prompt template with the user's message.
-    The LLM will analyze the message and return a structured JSON response
-    containing the next_node decision, a message for the user, and state updates.
+    This function formats the routing prompt template with the user's message
+    and bot_memory context. The LLM will analyze the message and return a 
+    structured JSON response containing the next_node decision, a message for 
+    the user, and state updates including extracted preferences.
     
     Args:
         message: The user message to analyze for routing
+        bot_memory: Bot memory containing user preferences and context
         
     Returns:
         Formatted prompt string ready for LLM
@@ -75,9 +110,17 @@ def get_routing_prompt(message: str) -> str:
         - 2.2: Remove rule-based logic for intent determination
         - 2.3: LLM makes routing decisions
         - 2.4: Route to node specified by LLM's next_node decision
+        - 4.1: Store user preferences in bot_memory
+        - 4.2: Store inferred information in bot_memory
         
     Example:
-        >>> prompt = get_routing_prompt("I want to book a court")
-        >>> # Returns formatted INTENT_ROUTING_PROMPT with message
+        >>> bot_memory = {"user_preferences": {"preferred_sport": "tennis"}}
+        >>> prompt = get_routing_prompt("I want to book a court", bot_memory)
+        >>> # Returns formatted INTENT_ROUTING_PROMPT with message and bot_memory
     """
-    return INTENT_ROUTING_PROMPT.format(message=message)
+    bot_memory = bot_memory or {}
+    bot_memory_str = f"""
+User Preferences: {bot_memory.get('user_preferences', {})}
+Inferred Information: {bot_memory.get('inferred_information', {})}
+"""
+    return INTENT_ROUTING_PROMPT.format(message=message, bot_memory=bot_memory_str)

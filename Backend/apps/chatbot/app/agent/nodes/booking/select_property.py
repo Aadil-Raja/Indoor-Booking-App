@@ -140,18 +140,21 @@ async def select_property(
             )
             
         except Exception as e:
-            logger.error(
-                f"Error fetching owner properties for chat {chat_id}: {e}",
-                exc_info=True
+            # Handle property fetch failure (Requirement 20.3)
+            from app.agent.state.error_handlers import handle_property_fetch_failure
+            
+            error_message, metadata = handle_property_fetch_failure(
+                e,
+                {
+                    "chat_id": chat_id,
+                    "owner_profile_id": owner_profile_id
+                }
             )
             
             # Return error response
-            state["response_content"] = (
-                "I'm having trouble accessing your properties. "
-                "Please try again later."
-            )
+            state["response_content"] = error_message
             state["response_type"] = "text"
-            state["response_metadata"] = {}
+            state["response_metadata"] = metadata
             state["next_node"] = "end"
             
             return state

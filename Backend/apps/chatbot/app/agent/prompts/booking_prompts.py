@@ -23,7 +23,14 @@ Your task is to help the user choose a property from the available options.
 Available Properties:
 {properties_list}
 
+Bot Memory (User Preferences):
+{bot_memory}
+
 Guidelines:
+- FIRST, check bot_memory.user_preferences for preferred_property
+- If preferred_property exists in bot_memory and matches an available property, suggest it to the user
+- Example: "I see you've booked at [Property Name] before. Would you like to book there again?"
+- If user confirms, use the preferred property without asking them to select again
 - Present the available properties in a clear, organized way
 - Help the user understand their options
 - Extract the user's selection from their message
@@ -35,21 +42,35 @@ Guidelines:
 - If the selection is unclear, ask for clarification
 - Once you identify the selected property, respond with ONLY the property ID as a number
 
+Preference Extraction:
+- Identify and extract any user preferences expressed in their message
+- Store preferences in bot_memory.user_preferences:
+  * preferred_property: Property ID if user expresses preference for a specific property
+  * preferred_sport: Sport type if mentioned (e.g., "tennis", "basketball", "futsal")
+  * preferred_time: Time preference if mentioned (e.g., "morning", "afternoon", "evening")
+- Store inferred information in bot_memory.inferred_information:
+  * booking_frequency: "regular", "occasional", or "first_time" based on user's language
+  * interests: List of sports or activities mentioned
+  * context_notes: Any other relevant context about user's needs
+
 Important:
 - Your final response should be ONLY the property ID number when a valid selection is made
 - If asking for clarification, provide a conversational response
 - Do not make assumptions about which property the user wants
+- Always extract and store preferences even if not directly related to current selection
 """
 
 
 def create_select_property_prompt(
-    properties: List[Dict[str, Any]]
+    properties: List[Dict[str, Any]],
+    bot_memory: Dict[str, Any] = None
 ) -> ChatPromptTemplate:
     """
     Create a prompt for property selection assistant.
     
     Args:
         properties: List of available property dictionaries
+        bot_memory: Bot memory containing user preferences and context
         
     Returns:
         ChatPromptTemplate for property selection
@@ -72,6 +93,13 @@ def create_select_property_prompt(
     
     properties_list = "\n".join(properties_lines) if properties_lines else "No properties available"
     
+    # Format bot_memory for display
+    bot_memory = bot_memory or {}
+    bot_memory_str = f"""
+User Preferences: {bot_memory.get('user_preferences', {})}
+Inferred Information: {bot_memory.get('inferred_information', {})}
+"""
+    
     # Create prompt template
     prompt = ChatPromptTemplate.from_messages([
         ("system", SELECT_PROPERTY_SYSTEM_TEMPLATE),
@@ -79,7 +107,7 @@ def create_select_property_prompt(
         ("human", "{input}"),
     ])
     
-    return prompt.partial(properties_list=properties_list)
+    return prompt.partial(properties_list=properties_list, bot_memory=bot_memory_str)
 
 
 # =============================================================================
@@ -93,7 +121,16 @@ Property: {property_name}
 Available Courts:
 {courts_list}
 
+Bot Memory (User Preferences):
+{bot_memory}
+
 Guidelines:
+- FIRST, check bot_memory.user_preferences for preferred_court or preferred_sport
+- If preferred_court exists and matches an available court, suggest it to the user
+- Example: "I see you usually book [Court Name]. Would you like to book it again?"
+- If preferred_sport exists, highlight courts of that sport type
+- Example: "I see you prefer [sport]. We have [count] [sport] courts available."
+- If user confirms a preference, use it without asking them to select again
 - Present the available courts in a clear, organized way
 - Help the user understand their options including sport type
 - Extract the user's selection from their message
@@ -106,16 +143,29 @@ Guidelines:
 - If the selection is unclear, ask for clarification
 - Once you identify the selected court, respond with ONLY the court ID as a number
 
+Preference Extraction:
+- Identify and extract any user preferences expressed in their message
+- Store preferences in bot_memory.user_preferences:
+  * preferred_court: Court ID if user expresses preference for a specific court
+  * preferred_sport: Sport type if mentioned (e.g., "tennis", "basketball", "futsal")
+  * preferred_time: Time preference if mentioned (e.g., "morning", "afternoon", "evening")
+- Store inferred information in bot_memory.inferred_information:
+  * booking_frequency: "regular", "occasional", or "first_time" based on user's language
+  * interests: List of sports or activities mentioned
+  * context_notes: Any other relevant context about user's needs
+
 Important:
 - Your final response should be ONLY the court ID number when a valid selection is made
 - If asking for clarification, provide a conversational response
 - Do not make assumptions about which court the user wants
+- Always extract and store preferences even if not directly related to current selection
 """
 
 
 def create_select_service_prompt(
     property_name: str,
-    courts: List[Dict[str, Any]]
+    courts: List[Dict[str, Any]],
+    bot_memory: Dict[str, Any] = None
 ) -> ChatPromptTemplate:
     """
     Create a prompt for service/court selection assistant.
@@ -123,6 +173,7 @@ def create_select_service_prompt(
     Args:
         property_name: Name of the selected property
         courts: List of available court dictionaries
+        bot_memory: Bot memory containing user preferences and context
         
     Returns:
         ChatPromptTemplate for service selection
@@ -139,6 +190,13 @@ def create_select_service_prompt(
     
     courts_list = "\n".join(courts_lines) if courts_lines else "No courts available"
     
+    # Format bot_memory for display
+    bot_memory = bot_memory or {}
+    bot_memory_str = f"""
+User Preferences: {bot_memory.get('user_preferences', {})}
+Inferred Information: {bot_memory.get('inferred_information', {})}
+"""
+    
     # Create prompt template
     prompt = ChatPromptTemplate.from_messages([
         ("system", SELECT_SERVICE_SYSTEM_TEMPLATE),
@@ -148,7 +206,8 @@ def create_select_service_prompt(
     
     return prompt.partial(
         property_name=property_name,
-        courts_list=courts_list
+        courts_list=courts_list,
+        bot_memory=bot_memory_str
     )
 
 
@@ -160,7 +219,13 @@ SELECT_DATE_SYSTEM_TEMPLATE = """You are a helpful booking assistant helping a u
 
 Service: {service_name} at {property_name}
 
+Bot Memory (User Preferences):
+{bot_memory}
+
 Guidelines:
+- FIRST, check bot_memory.inferred_information for context_notes about user's schedule
+- If context notes mention specific dates or scheduling preferences, acknowledge them
+- Example: "I remember you mentioned you prefer weekends. Let me help you find a weekend date."
 - Help the user select a valid date for their booking
 - Parse dates from various formats:
   * Relative: "today", "tomorrow", "next Monday"
@@ -173,18 +238,30 @@ Guidelines:
 - If the date is unclear or invalid, ask for clarification
 - Once you identify a valid date, respond with ONLY the date in ISO format (YYYY-MM-DD)
 
+Preference Extraction:
+- Identify and extract any user preferences expressed in their message
+- Store preferences in bot_memory.user_preferences:
+  * preferred_time: Time preference if mentioned (e.g., "morning", "afternoon", "evening")
+  * preferred_sport: Sport type if mentioned (e.g., "tennis", "basketball", "futsal")
+- Store inferred information in bot_memory.inferred_information:
+  * booking_frequency: "regular", "occasional", or "first_time" based on user's language
+  * interests: List of sports or activities mentioned
+  * context_notes: Any other relevant context about user's needs or schedule
+
 Important:
 - Your final response should be ONLY the date in ISO format (YYYY-MM-DD) when a valid date is identified
 - If asking for clarification or the date is invalid, provide a conversational response
 - Do not accept dates in the past
 - If user says "today", use {current_date}
+- Always extract and store preferences even if not directly related to date selection
 """
 
 
 def create_select_date_prompt(
     property_name: str,
     service_name: str,
-    current_date: str
+    current_date: str,
+    bot_memory: Dict[str, Any] = None
 ) -> ChatPromptTemplate:
     """
     Create a prompt for date selection assistant.
@@ -193,10 +270,18 @@ def create_select_date_prompt(
         property_name: Name of the selected property
         service_name: Name of the selected service/court
         current_date: Current date in ISO format (YYYY-MM-DD)
+        bot_memory: Bot memory containing user preferences and context
         
     Returns:
         ChatPromptTemplate for date selection
     """
+    # Format bot_memory for display
+    bot_memory = bot_memory or {}
+    bot_memory_str = f"""
+User Preferences: {bot_memory.get('user_preferences', {})}
+Inferred Information: {bot_memory.get('inferred_information', {})}
+"""
+    
     prompt = ChatPromptTemplate.from_messages([
         ("system", SELECT_DATE_SYSTEM_TEMPLATE),
         MessagesPlaceholder(variable_name="chat_history", optional=True),
@@ -206,7 +291,8 @@ def create_select_date_prompt(
     return prompt.partial(
         property_name=property_name,
         service_name=service_name,
-        current_date=current_date
+        current_date=current_date,
+        bot_memory=bot_memory_str
     )
 
 
@@ -218,11 +304,19 @@ SELECT_TIME_SYSTEM_TEMPLATE = """You are a helpful booking assistant helping a u
 
 Service: {service_name} at {property_name}
 Date: {date}
+Current date: {current_date}
 
 Available Time Slots:
 {slots_list}
 
+Bot Memory (User Preferences):
+{bot_memory}
+
 Guidelines:
+- FIRST, check bot_memory.user_preferences for preferred_time
+- If preferred_time exists (e.g., "morning", "afternoon", "evening"), suggest slots in that time range
+- Example: "I see you prefer morning slots. Here are the morning options: [list morning slots]"
+- If user confirms a preference, prioritize those slots in your suggestions
 - Present the available time slots with pricing in a clear way
 - Help the user understand their options
 - Extract the user's selection from their message
@@ -235,10 +329,21 @@ Guidelines:
 - If the selection is unclear, ask for clarification
 - Once you identify the selected slot, respond with ONLY the slot's start time in HH:MM:SS format
 
+Preference Extraction:
+- Identify and extract any user preferences expressed in their message
+- Store preferences in bot_memory.user_preferences:
+  * preferred_time: Time preference if mentioned (e.g., "morning", "afternoon", "evening")
+  * preferred_sport: Sport type if mentioned (e.g., "tennis", "basketball", "futsal")
+- Store inferred information in bot_memory.inferred_information:
+  * booking_frequency: "regular", "occasional", or "first_time" based on user's language
+  * interests: List of sports or activities mentioned
+  * context_notes: Any other relevant context about user's schedule or preferences
+
 Important:
 - Your final response should be ONLY the start time in HH:MM:SS format when a valid selection is made
 - If asking for clarification, provide a conversational response
 - Do not make assumptions about which time slot the user wants
+- Always extract and store preferences even if not directly related to time selection
 """
 
 
@@ -246,7 +351,9 @@ def create_select_time_prompt(
     property_name: str,
     service_name: str,
     date: str,
-    slots: List[Dict[str, Any]]
+    slots: List[Dict[str, Any]],
+    current_date: str,
+    bot_memory: Dict[str, Any] = None
 ) -> ChatPromptTemplate:
     """
     Create a prompt for time slot selection assistant.
@@ -256,6 +363,8 @@ def create_select_time_prompt(
         service_name: Name of the selected service/court
         date: Selected date string
         slots: List of available time slot dictionaries
+        current_date: Current date in ISO format (YYYY-MM-DD)
+        bot_memory: Bot memory containing user preferences and context
         
     Returns:
         ChatPromptTemplate for time selection
@@ -277,6 +386,13 @@ def create_select_time_prompt(
     
     slots_list = "\n".join(slots_lines) if slots_lines else "No slots available"
     
+    # Format bot_memory for display
+    bot_memory = bot_memory or {}
+    bot_memory_str = f"""
+User Preferences: {bot_memory.get('user_preferences', {})}
+Inferred Information: {bot_memory.get('inferred_information', {})}
+"""
+    
     # Create prompt template
     prompt = ChatPromptTemplate.from_messages([
         ("system", SELECT_TIME_SYSTEM_TEMPLATE),
@@ -288,7 +404,9 @@ def create_select_time_prompt(
         property_name=property_name,
         service_name=service_name,
         date=date,
-        slots_list=slots_list
+        current_date=current_date,
+        slots_list=slots_list,
+        bot_memory=bot_memory_str
     )
 
 
@@ -301,7 +419,15 @@ CONFIRM_BOOKING_SYSTEM_TEMPLATE = """You are a helpful booking assistant helping
 Booking Summary:
 {booking_summary}
 
+Current date: {current_date}
+
+Bot Memory (User Preferences):
+{bot_memory}
+
 Guidelines:
+- FIRST, check bot_memory.inferred_information for booking_frequency
+- If booking_frequency is "regular", acknowledge their loyalty
+- Example: "Great to see you booking with us again! Here's your booking summary:"
 - Present the booking summary clearly
 - Ask for explicit confirmation
 - Parse the user's response to determine their intent:
@@ -324,21 +450,38 @@ Guidelines:
   * "CHANGE_TIME" - user wants to change time
   * "CLARIFY" - need clarification (provide conversational response)
 
+Preference Extraction:
+- Identify and extract any user preferences expressed in their message
+- Store preferences in bot_memory.user_preferences:
+  * preferred_time: Time preference if mentioned (e.g., "morning", "afternoon", "evening")
+  * preferred_sport: Sport type if mentioned (e.g., "tennis", "basketball", "futsal")
+  * preferred_property: Property ID if user expresses preference
+  * preferred_court: Court ID if user expresses preference
+- Store inferred information in bot_memory.inferred_information:
+  * booking_frequency: "regular", "occasional", or "first_time" based on user's language
+  * interests: List of sports or activities mentioned
+  * context_notes: Any other relevant context about user's needs
+
 Important:
 - Your response should be ONE of the exact words above when intent is clear
 - Only use "CLARIFY" if you need to ask the user a question
 - Do not make assumptions about what the user wants to do
+- Always extract and store preferences even during confirmation
 """
 
 
 def create_confirm_booking_prompt(
-    flow_state: Dict[str, Any]
+    flow_state: Dict[str, Any],
+    current_date: str,
+    bot_memory: Dict[str, Any] = None
 ) -> ChatPromptTemplate:
     """
     Create a prompt for booking confirmation assistant.
     
     Args:
         flow_state: Dictionary containing all booking details
+        current_date: Current date in ISO format (YYYY-MM-DD)
+        bot_memory: Bot memory containing user preferences and context
         
     Returns:
         ChatPromptTemplate for booking confirmation
@@ -381,6 +524,13 @@ def create_confirm_booking_prompt(
     
     booking_summary = "\n".join(summary_lines)
     
+    # Format bot_memory for display
+    bot_memory = bot_memory or {}
+    bot_memory_str = f"""
+User Preferences: {bot_memory.get('user_preferences', {})}
+Inferred Information: {bot_memory.get('inferred_information', {})}
+"""
+    
     # Create prompt template
     prompt = ChatPromptTemplate.from_messages([
         ("system", CONFIRM_BOOKING_SYSTEM_TEMPLATE),
@@ -388,4 +538,8 @@ def create_confirm_booking_prompt(
         ("human", "{input}"),
     ])
     
-    return prompt.partial(booking_summary=booking_summary)
+    return prompt.partial(
+        booking_summary=booking_summary,
+        current_date=current_date,
+        bot_memory=bot_memory_str
+    )

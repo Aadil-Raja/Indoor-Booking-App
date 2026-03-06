@@ -129,6 +129,8 @@ def update_flow_state(
     Performs a shallow merge for top-level fields and deep merge for
     the context field to preserve existing context data.
     
+    Includes error handling for corrupted state.
+    
     Args:
         current_flow_state: Current flow state dictionary
         updates: Dictionary of fields to update
@@ -143,33 +145,54 @@ def update_flow_state(
         )
         # Returns: {"property_id": 123, "context": {"step": 1, "property_name": "Court A"}}
     
-    Requirements: 3.9, 15.1
+    Requirements: 3.9, 15.1, 20.2
     """
+    # Handle corrupted flow_state (Requirement 20.2)
     if not isinstance(current_flow_state, dict):
-        logger.warning("Current flow_state is not a dict, initializing new state")
+        logger.error(
+            f"Current flow_state is not a dict: {type(current_flow_state)}, "
+            "initializing new state"
+        )
         current_flow_state = initialize_flow_state()
     
     if not isinstance(updates, dict):
-        logger.warning(f"Updates is not a dict: {type(updates)}, skipping update")
+        logger.error(
+            f"Updates is not a dict: {type(updates)}, skipping update"
+        )
         return current_flow_state
     
+    # Validate flow_state structure before updating
+    if not validate_flow_state(current_flow_state):
+        logger.error(
+            "Flow state structure invalid before update, reinitializing"
+        )
+        current_flow_state = initialize_flow_state()
+    
     # Create a copy to avoid mutating the original
-    updated_state = current_flow_state.copy()
+    try:
+        updated_state = current_flow_state.copy()
+    except Exception as e:
+        logger.error(f"Error copying flow_state: {e}, reinitializing")
+        updated_state = initialize_flow_state()
     
     # Update all fields except context (shallow merge)
     for key, value in updates.items():
-        if key == "context":
-            # Deep merge for context field
-            if "context" not in updated_state or updated_state["context"] is None:
-                updated_state["context"] = {}
-            
-            if isinstance(value, dict):
-                updated_state["context"].update(value)
+        try:
+            if key == "context":
+                # Deep merge for context field
+                if "context" not in updated_state or updated_state["context"] is None:
+                    updated_state["context"] = {}
+                
+                if isinstance(value, dict):
+                    updated_state["context"].update(value)
+                else:
+                    logger.warning(f"Context update value is not a dict: {type(value)}")
             else:
-                logger.warning(f"Context update value is not a dict: {type(value)}")
-        else:
-            # Shallow merge for other fields
-            updated_state[key] = value
+                # Shallow merge for other fields
+                updated_state[key] = value
+        except Exception as e:
+            logger.error(f"Error updating field {key}: {e}, skipping field")
+            continue
     
     logger.debug(f"Updated flow_state with fields: {list(updates.keys())}")
     return updated_state
