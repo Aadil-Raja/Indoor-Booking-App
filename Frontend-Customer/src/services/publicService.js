@@ -1,7 +1,7 @@
 import api from './api';
 
 export const publicService = {
-  // Search courts with filters
+  // Search properties with courts
   async searchCourts(params = {}) {
     try {
       const queryParams = new URLSearchParams();
@@ -13,7 +13,7 @@ export const publicService = {
       if (params.min_price) queryParams.append('min_price', params.min_price);
       if (params.max_price) queryParams.append('max_price', params.max_price);
       
-      const response = await api.get(`/api/public/courts?${queryParams.toString()}`);
+      const response = await api.get(`/api/public/properties?${queryParams.toString()}`);
       return response.data;
     } catch (error) {
       throw error;
@@ -23,7 +23,10 @@ export const publicService = {
   // Get court details by ID
   async getCourtDetails(courtId) {
     try {
-      const response = await api.get(`/api/public/courts/${courtId}`);
+      // Add timestamp to bypass cache
+      const response = await api.get(`/api/public/courts/${courtId}`, {
+        params: { _t: Date.now() }
+      });
       return response.data;
     } catch (error) {
       throw error;
@@ -33,7 +36,7 @@ export const publicService = {
   // Get available slots for a court on a specific date
   async getAvailableSlots(courtId, date) {
     try {
-      const response = await api.get(`/api/public/courts/${courtId}/availability`, {
+      const response = await api.get(`/api/public/courts/${courtId}/available-slots`, {
         params: { date }
       });
       return response.data;

@@ -475,7 +475,7 @@ const UserDashboard = () => {
                     <div className="court-footer">
                       <div className="court-price">
                         <span className="price-value">
-                          Rs {formatPrice(court.base_price)}<span>/hr</span>
+                          Rs {formatPrice(court.min_price)}<span>/hr</span>
                         </span>
                       </div>
                       

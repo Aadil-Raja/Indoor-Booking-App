@@ -20,6 +20,28 @@ const BookCourt = () => {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
+  // Check if a time slot is in the past (for today only)
+  const isSlotInPast = (slot) => {
+    // If selected date is not today, no slots are in the past
+    const today = getTodayDate();
+    if (selectedDate !== today) {
+      return false;
+    }
+
+    // Get current hour
+    const now = new Date();
+    const currentHour = now.getHours();
+
+    // Parse slot start time (format: "HH:MM")
+    const [hours] = slot.start_time.split(':');
+    const slotHour = parseInt(hours);
+
+    // Slot is in the past if its end time has passed (not just started)
+    // This ensures we only show slots that haven't ended yet
+    const slotEndHour = slotHour + 1;
+    return slotEndHour <= currentHour;
+  };
+
   function getTodayDate() {
     const today = new Date();
     return today.toISOString().split('T')[0];
@@ -211,23 +233,73 @@ const BookCourt = () => {
         a.start_time.localeCompare(b.start_time)
       );
 
-      const bookingData = {
-        court_id: parseInt(id),
-        booking_date: selectedDate,
-        start_time: sorted[0].start_time,
-        end_time: sorted[sorted.length - 1].end_time,
-        payment_screenshot: paymentFile
-      };
+      // Group consecutive slots into separate bookings
+      const bookingGroups = [];
+      let currentGroup = [sorted[0]];
 
-      const result = await bookingService.createBooking(bookingData);
+      for (let i = 1; i < sorted.length; i++) {
+        const prevSlot = currentGroup[currentGroup.length - 1];
+        const currentSlot = sorted[i];
+        
+        // Check if current slot is consecutive to previous slot
+        if (prevSlot.end_time === currentSlot.start_time) {
+          // Consecutive - add to current group
+          currentGroup.push(currentSlot);
+        } else {
+          // Gap found - save current group and start new one
+          bookingGroups.push(currentGroup);
+          currentGroup = [currentSlot];
+        }
+      }
+      // Add the last group
+      bookingGroups.push(currentGroup);
 
-      if (result.success) {
-        setSuccess('Booking created successfully! Redirecting...');
-        setTimeout(() => {
-          navigate('/bookings');
-        }, 2000);
+      console.log(`Creating ${bookingGroups.length} booking(s) from ${sorted.length} selected slots`);
+
+      // Create all bookings
+      let successCount = 0;
+      let failCount = 0;
+      const errors = [];
+
+      for (const group of bookingGroups) {
+        try {
+          const bookingData = {
+            court_id: parseInt(id),
+            booking_date: selectedDate,
+            start_time: group[0].start_time,
+            end_time: group[group.length - 1].end_time,
+            payment_screenshot: paymentFile
+          };
+
+          console.log(`Creating booking: ${bookingData.start_time} - ${bookingData.end_time}`);
+          const result = await bookingService.createBooking(bookingData);
+
+          if (result.success) {
+            successCount++;
+          } else {
+            failCount++;
+            errors.push(result.message || 'Unknown error');
+          }
+        } catch (err) {
+          failCount++;
+          errors.push(err.response?.data?.message || err.message);
+        }
+      }
+
+      if (successCount > 0) {
+        if (failCount === 0) {
+          setSuccess(`${successCount} booking(s) created successfully! Redirecting...`);
+          setTimeout(() => {
+            navigate('/bookings');
+          }, 2000);
+        } else {
+          setError(`Created ${successCount} booking(s) but ${failCount} failed: ${errors.join(', ')}`);
+          setTimeout(() => {
+            navigate('/bookings');
+          }, 3000);
+        }
       } else {
-        setError(result.message || 'Failed to create booking');
+        setError(`Failed to create bookings: ${errors.join(', ')}`);
       }
     } catch (err) {
       console.error('Booking error:', err);
@@ -321,11 +393,17 @@ const BookCourt = () => {
               <h2 className="section-title">Select Time Slots</h2>
               <p className="section-hint">Click or drag to select multiple slots</p>
               
-              {availableSlots.length === 0 ? (
-                <p className="no-slots">No slots available for this date</p>
+              {availableSlots.filter(slot => !isSlotInPast(slot)).length === 0 ? (
+                <p className="no-slots">
+                  {availableSlots.length === 0 
+                    ? "No slots available for this date" 
+                    : "No future slots available for today"}
+                </p>
               ) : (
                 <div className="slots-grid-multi" onMouseLeave={handleMouseUp}>
-                  {availableSlots.map((slot, index) => {
+                  {availableSlots
+                    .filter(slot => !isSlotInPast(slot)) // Filter out past slots
+                    .map((slot, index) => {
                     const slotKey = `${slot.start_time}-${slot.end_time}`;
                     const isSelected = selectedSlots.some(
                       s => `${s.start_time}-${s.end_time}` === slotKey

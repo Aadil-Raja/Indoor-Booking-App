@@ -20,59 +20,69 @@ def search_properties(
     page: int = 1,
     limit: int = 20
 ):
-    """Search and filter properties"""
-    # Base query - only active properties
-    query = db.query(Property).filter(Property.is_active == True)
+    """Search and filter properties with their courts"""
+    # Base query - get courts with their properties and pricing
+    query = (
+        db.query(Court)
+        .join(Court.property)
+        .outerjoin(Court.pricing)
+        .filter(Court.is_active == True, Property.is_active == True)
+    )
 
     # Apply filters
     if city:
         query = query.filter(Property.city.ilike(f"%{city}%"))
 
-    # If sport_type or price filters, need to join with courts and pricing
-    if sport_type or min_price is not None or max_price is not None:
-        query = query.join(Property.courts).filter(Court.is_active == True)
+    if sport_type:
+        query = query.filter(Court.sport_type.ilike(f"%{sport_type}%"))
 
-        if sport_type:
-            query = query.filter(Court.sport_type.ilike(f"%{sport_type}%"))
-
-        if min_price is not None or max_price is not None:
-            query = query.join(Court.pricing)
-            if min_price is not None:
-                query = query.filter(CourtPricing.price_per_hour >= min_price)
-            if max_price is not None:
-                query = query.filter(CourtPricing.price_per_hour <= max_price)
-
-        # Distinct to avoid duplicates
-        query = query.distinct()
+    if min_price is not None:
+        query = query.filter(CourtPricing.price_per_hour >= min_price)
+    
+    if max_price is not None:
+        query = query.filter(CourtPricing.price_per_hour <= max_price)
 
     # Count total
     total = query.count()
 
     # Pagination
     offset = (page - 1) * limit
-    properties = query.offset(offset).limit(limit).all()
+    courts = query.offset(offset).limit(limit).all()
 
-    # Format response
+    # Format response - return courts with property and pricing info
+    items = []
+    for court in courts:
+        # Get minimum price for this court
+        min_court_price = 0
+        if court.pricing:
+            min_court_price = min(p.price_per_hour for p in court.pricing)
+
+        items.append({
+            "id": court.id,
+            "name": court.name,
+            "sport_type": court.sport_type,
+            "description": court.description,
+            "min_price": min_court_price,
+            "property": {
+                "id": court.property.id,
+                "name": court.property.name,
+                "address": court.property.address,
+                "city": court.property.city,
+                "state": court.property.state,
+                "maps_link": court.property.maps_link
+            },
+            "pricing_available": len(court.pricing) > 0
+        })
+
     data = {
-        "items": [
-            {
-                "id": p.id,
-                "name": p.name,
-                "city": p.city,
-                "state": p.state,
-                "address": p.address,
-                "amenities": p.amenities,
-                "maps_link": p.maps_link
-            }
-            for p in properties
-        ],
+        "items": items,
         "total": total,
         "page": page,
         "limit": limit,
         "pages": (total + limit - 1) // limit
     }
 
-    return make_response(True, "Properties retrieved successfully", data=data)
+    return make_response(True, "Courts retrieved successfully", data=data)
 
 
 def get_property_details(db: Session, *, property_id: int):
@@ -141,6 +151,8 @@ def get_property_details(db: Session, *, property_id: int):
 
 def get_court_details(db: Session, *, court_id: int):
     """Get court details with pricing and media"""
+    print(f"DEBUG: Getting court details for court_id: {court_id}")
+    
     court = (
         db.query(Court)
         .options(
@@ -153,9 +165,21 @@ def get_court_details(db: Session, *, court_id: int):
     )
 
     if not court:
+        print(f"DEBUG: Court not found")
         return make_response(False, "Court not found", status_code=404)
 
+    print(f"DEBUG: Court found: {court.name}")
+    print(f"DEBUG: Pricing rules count: {len(court.pricing)}")
+    for p in court.pricing:
+        print(f"DEBUG: Pricing - ID: {p.id}, Time: {p.start_time}-{p.end_time}, Price: {p.price_per_hour}")
+
     # Format response
+    # Calculate minimum price from pricing rules
+    min_price = 0
+    if court.pricing:
+        min_price = min(p.price_per_hour for p in court.pricing)
+        print(f"DEBUG: Calculated min_price: {min_price}")
+    
     data = {
         "id": court.id,
         "name": court.name,
@@ -163,6 +187,7 @@ def get_court_details(db: Session, *, court_id: int):
         "description": court.description,
         "specifications": court.specifications,
         "amenities": court.amenities,
+        "base_price": min_price,  # Add minimum price for frontend display
         "property": {
             "id": court.property.id,
             "name": court.property.name,
@@ -193,6 +218,7 @@ def get_court_details(db: Session, *, court_id: int):
         ]
     }
 
+    print(f"DEBUG: Returning data with base_price: {data['base_price']}")
     return make_response(True, "Court details retrieved successfully", data=data)
 
 
@@ -211,7 +237,7 @@ def get_court_pricing_for_date(db: Session, *, court_id: int, date_val: date):
         db.query(CourtPricing)
         .filter(
             CourtPricing.court_id == court_id,
-            CourtPricing.days.contains([day_of_week])
+            CourtPricing.days.any(day_of_week)
         )
         .order_by(CourtPricing.start_time)
         .all()
@@ -239,30 +265,42 @@ def get_court_pricing_for_date(db: Session, *, court_id: int, date_val: date):
 
 def get_available_slots(db: Session, *, court_id: int, date_val: date):
     """Get available time slots for a court on a specific date"""
+    print(f"DEBUG: Getting available slots for court {court_id} on {date_val}")
+    
     court = court_repo.get_by_id(db, court_id)
 
     if not court or not court.is_active:
+        print(f"DEBUG: Court not found or inactive")
         return make_response(False, "Court not found", status_code=404)
+
+    print(f"DEBUG: Court found: {court.name}")
 
     # Get day of week
     day_of_week = date_val.weekday()
+    print(f"DEBUG: Day of week: {day_of_week}")
 
     # Get pricing rules for this day
     pricing_rules = (
         db.query(CourtPricing)
         .filter(
             CourtPricing.court_id == court_id,
-            CourtPricing.days.contains([day_of_week])
+            CourtPricing.days.any(day_of_week)
         )
         .order_by(CourtPricing.start_time)
         .all()
     )
 
+    print(f"DEBUG: Found {len(pricing_rules)} pricing rules for day {day_of_week}")
+    for rule in pricing_rules:
+        print(f"DEBUG: Pricing rule - ID: {rule.id}, Days: {rule.days}, Time: {rule.start_time}-{rule.end_time}, Price: {rule.price_per_hour}")
+
     if not pricing_rules:
+        print(f"DEBUG: No pricing rules found for this day")
         return make_response(False, "Court not available on this date", status_code=404)
 
     # Get blocked slots
     blocked_slots = availability_repo.get_by_date(db, court_id, date_val)
+    print(f"DEBUG: Found {len(blocked_slots)} blocked slots")
 
     # Get existing bookings
     bookings = (
@@ -274,30 +312,70 @@ def get_available_slots(db: Session, *, court_id: int, date_val: date):
         )
         .all()
     )
+    print(f"DEBUG: Found {len(bookings)} existing bookings")
 
     # Build available slots
     available_slots = []
+    
+    # Get current time for filtering past slots (only for today)
+    from datetime import datetime as dt
+    now = dt.now()
+    is_today = date_val == now.date()
+    current_hour = now.hour if is_today else -1  # -1 means no filtering needed
+    
+    print(f"DEBUG: Is today: {is_today}, Current hour: {current_hour}")
 
     for pricing in pricing_rules:
+        print(f"DEBUG: Processing pricing rule {pricing.id}: {pricing.start_time}-{pricing.end_time}")
+        
         # Generate hourly slots within pricing time range
+        # Handle both single-hour rules (XX:00-XX:59) and multi-hour rules (XX:00-YY:59)
         current_time = datetime.combine(date_val, pricing.start_time)
-        end_datetime = datetime.combine(date_val, pricing.end_time)
+        end_time_dt = datetime.combine(date_val, pricing.end_time)
+        
+        # If end time is earlier than start time (e.g., 23:59 on same day), it's still valid
+        # If end time is much earlier (e.g., 00:00 vs 23:00), it means next day
+        if pricing.end_time < pricing.start_time:
+            # Midnight crossing - add one day to end time
+            end_time_dt = datetime.combine(date_val + timedelta(days=1), pricing.end_time)
+        
+        print(f"DEBUG: Start: {current_time}, End: {end_time_dt}")
 
-        while current_time < end_datetime:
+        # Generate hourly slots
+        slot_count = 0
+        max_slots = 24  # Safety limit to prevent infinite loops
+        
+        while current_time < end_time_dt and slot_count < max_slots:
             slot_start = current_time.time()
-            slot_end = (current_time + timedelta(hours=1)).time()
-
+            
+            print(f"DEBUG: Checking slot at {slot_start}")
+            
+            # Skip past time slots for today
+            if is_today and current_time.hour <= current_hour:
+                print(f"DEBUG: Skipping past slot {slot_start}")
+                current_time += timedelta(hours=1)
+                slot_count += 1
+                continue
+            
+            # Calculate slot end - use XX:59 format to match pricing rules
+            # This ensures booking end times match pricing rule end times
+            slot_end = time(current_time.hour, 59)
+            
             # Check if slot is blocked
             is_blocked = any(
                 not (slot_end <= block.start_time or slot_start >= block.end_time)
                 for block in blocked_slots
             )
+            
+            print(f"DEBUG: Slot {slot_start}-{slot_end} blocked: {is_blocked}")
 
             # Check if slot is booked
             is_booked = any(
                 not (slot_end <= booking.start_time or slot_start >= booking.end_time)
                 for booking in bookings
             )
+            
+            print(f"DEBUG: Slot {slot_start}-{slot_end} booked: {is_booked}")
 
             if not is_blocked and not is_booked:
                 available_slots.append({
@@ -306,9 +384,18 @@ def get_available_slots(db: Session, *, court_id: int, date_val: date):
                     "price_per_hour": pricing.price_per_hour,
                     "label": pricing.label
                 })
+                print(f"DEBUG: Added available slot: {slot_start}-{slot_end}")
+            else:
+                print(f"DEBUG: Slot {slot_start}-{slot_end} not available (blocked: {is_blocked}, booked: {is_booked})")
 
             current_time += timedelta(hours=1)
+            slot_count += 1
+        
+        if slot_count >= max_slots:
+            print(f"DEBUG: WARNING - Hit max slots limit for pricing rule {pricing.id}")
 
+    print(f"DEBUG: Total available slots: {len(available_slots)}")
+    
     data = {
         "date": date_val.isoformat(),
         "court_id": court_id,

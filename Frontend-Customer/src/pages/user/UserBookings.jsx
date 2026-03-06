@@ -17,11 +17,17 @@ const UserBookings = () => {
   const fetchBookings = async () => {
     try {
       setLoading(true);
-      const params = filter !== 'all' ? { status: filter } : {};
-      const result = await bookingService.getUserBookings(params);
+      const result = await bookingService.getUserBookings();
       
       if (result.success && result.data) {
-        setBookings(result.data);
+        // Filter bookings by status
+        let filteredBookings = result.data;
+        
+        if (filter !== 'all') {
+          filteredBookings = result.data.filter(booking => booking.status === filter);
+        }
+        
+        setBookings(filteredBookings);
       }
     } catch (err) {
       console.error('Failed to load bookings:', err);
@@ -168,7 +174,6 @@ const UserBookings = () => {
 
                     <div className="booking-details">
                       <div className="detail-item">
-                        <span className="detail-icon"></span>
                         <div>
                           <div className="detail-label">Date</div>
                           <div className="detail-value">{formatDate(booking.booking_date)}</div>
@@ -176,7 +181,6 @@ const UserBookings = () => {
                       </div>
 
                       <div className="detail-item">
-                        <span className="detail-icon"></span>
                         <div>
                           <div className="detail-label">Time</div>
                           <div className="detail-value">
@@ -186,7 +190,6 @@ const UserBookings = () => {
                       </div>
 
                       <div className="detail-item">
-                        <span className="detail-icon"></span>
                         <div>
                           <div className="detail-label">Duration</div>
                           <div className="detail-value">
@@ -196,7 +199,6 @@ const UserBookings = () => {
                       </div>
 
                       <div className="detail-item">
-                        <span className="detail-icon"></span>
                         <div>
                           <div className="detail-label">Total</div>
                           <div className="detail-value">PKR {formatPrice(booking.total_price)}</div>
@@ -212,7 +214,7 @@ const UserBookings = () => {
 
                     <div className="booking-actions">
                       <button
-                        onClick={() => navigate(`/courts/${booking.court_id}`)}
+                        onClick={() => navigate(`/courts/${booking.court?.id || booking.court_id}`)}
                         className="btn-view-court"
                       >
                         View Court

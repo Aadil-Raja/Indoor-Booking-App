@@ -47,10 +47,12 @@ def get_by_id(db: Session, booking_id: int) -> Optional[Booking]:
 
 def get_with_details(db: Session, booking_id: int) -> Optional[Booking]:
     """Get booking with court and property details"""
+    from shared.models import Court
+    
     return (
         db.query(Booking)
         .options(
-            joinedload(Booking.court).joinedload("property"),
+            joinedload(Booking.court).joinedload(Court.property),
             joinedload(Booking.customer)
         )
         .filter(Booking.id == booking_id)
@@ -60,10 +62,12 @@ def get_with_details(db: Session, booking_id: int) -> Optional[Booking]:
 
 def get_by_customer(db: Session, customer_id: int) -> List[Booking]:
     """Get all bookings for a customer"""
+    from shared.models import Court
+    
     return (
         db.query(Booking)
         .options(
-            joinedload(Booking.court).joinedload("property")
+            joinedload(Booking.court).joinedload(Court.property)
         )
         .filter(Booking.customer_id == customer_id)
         .order_by(Booking.booking_date.desc(), Booking.start_time.desc())
@@ -87,15 +91,17 @@ def get_by_court(db: Session, court_id: int, from_date: Optional[date] = None) -
 
 def get_by_property_owner(db: Session, owner_profile_id: int) -> List[Booking]:
     """Get all bookings for properties owned by owner profile"""
+    from shared.models import Court, Property
+    
     return (
         db.query(Booking)
         .join(Booking.court)
-        .join("property")
+        .join(Court.property)
         .options(
-            joinedload(Booking.court).joinedload("property"),
+            joinedload(Booking.court).joinedload(Court.property),
             joinedload(Booking.customer)
         )
-        .filter("property.owner_profile_id" == owner_profile_id)
+        .filter(Property.owner_profile_id == owner_profile_id)
         .order_by(Booking.booking_date.desc(), Booking.start_time.desc())
         .all()
     )
@@ -109,7 +115,9 @@ def check_conflict(
     end_time: time,
     exclude_booking_id: Optional[int] = None
 ) -> bool:
-    """Check if booking conflicts with existing bookings"""
+    """Check if booking conflicts with existing bookings (handles midnight crossing)"""
+    from datetime import datetime, timedelta
+    
     query = db.query(Booking).filter(
         Booking.court_id == court_id,
         Booking.booking_date == booking_date,
@@ -121,9 +129,25 @@ def check_conflict(
 
     existing = query.all()
 
+    # Convert times to datetime for easier comparison
+    base_date = booking_date
+    new_start = datetime.combine(base_date, start_time)
+    new_end = datetime.combine(base_date, end_time)
+    
+    # Handle midnight crossing for new booking
+    if end_time <= start_time:
+        new_end = datetime.combine(base_date + timedelta(days=1), end_time)
+
     for booking in existing:
-        # Check if time ranges overlap
-        if not (end_time <= booking.start_time or start_time >= booking.end_time):
+        existing_start = datetime.combine(base_date, booking.start_time)
+        existing_end = datetime.combine(base_date, booking.end_time)
+        
+        # Handle midnight crossing for existing booking
+        if booking.end_time <= booking.start_time:
+            existing_end = datetime.combine(base_date + timedelta(days=1), booking.end_time)
+        
+        # Check for overlap using datetime comparison
+        if not (new_end <= existing_start or new_start >= existing_end):
             return True
 
     return False

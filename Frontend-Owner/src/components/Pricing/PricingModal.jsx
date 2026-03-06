@@ -12,6 +12,7 @@ const DAYS = [
 ];
 
 // Generate 24 hour slots (0-23)
+// Backend stores as XX:00-XX:59 (59 minutes) but UI shows as XX:00-(XX+1):00 (full hour)
 const TIME_SLOTS = Array.from({ length: 24 }, (_, i) => {
   const hour = i;
   const nextHour = i + 1;
@@ -26,10 +27,10 @@ const TIME_SLOTS = Array.from({ length: 24 }, (_, i) => {
   
   return {
     value: hour,
-    label: `${formatHour(hour)} - ${formatHour(nextHour)}`,
+    label: `${formatHour(hour)} - ${formatHour(nextHour)}`, // UI shows full hour
     start: `${String(hour).padStart(2, '0')}:00`,
-    // For the last slot (23), end time should be 23:59 instead of 24:00
-    end: nextHour === 24 ? '23:59' : `${String(nextHour).padStart(2, '0')}:00`
+    // Backend stores as XX:59 to avoid midnight boundary issues
+    end: `${String(hour).padStart(2, '0')}:59`
   };
 });
 
@@ -47,11 +48,23 @@ const PricingModal = ({ isOpen, onClose, onSubmit, initialData = null }) => {
     if (initialData) {
       // If editing, convert time range to slots
       const startHour = parseInt(initialData.start_time?.split(':')[0] || 0);
-      const endHour = parseInt(initialData.end_time?.split(':')[0] || 0);
+      const endTime = initialData.end_time || '00:00';
+      const endHour = parseInt(endTime.split(':')[0] || 0);
+      const endMinute = parseInt(endTime.split(':')[1] || 0);
+      
       const slots = [];
-      for (let i = startHour; i < endHour; i++) {
-        slots.push(i);
+      
+      // With XX:00-XX:59 format, each slot is self-contained
+      // If start and end hour are the same and end minute is 59, it's a single slot
+      if (startHour === endHour && endMinute === 59) {
+        slots.push(startHour);
+      } else {
+        // Multiple consecutive slots
+        for (let i = startHour; i <= endHour; i++) {
+          slots.push(i);
+        }
       }
+      
       setSelectedSlots(slots);
       setSelectedDays(initialData.days || []);
       setPrice(initialData.price_per_hour || '');
@@ -148,7 +161,7 @@ const PricingModal = ({ isOpen, onClose, onSubmit, initialData = null }) => {
       // Smart grouping algorithm with circular time support
       const sortedSlots = [...selectedSlots].sort((a, b) => a - b);
       
-      // Find consecutive groups (including circular wrap-around)
+      // Smart grouping algorithm to create fewer rules
       const findConsecutiveGroups = (slots) => {
         if (slots.length === 0) return [];
         if (slots.length === 1) return [[slots[0]]];
@@ -219,16 +232,16 @@ const PricingModal = ({ isOpen, onClose, onSubmit, initialData = null }) => {
         const hasWrapAround = group.includes(23) && group.includes(0);
         
         if (hasWrapAround) {
-          // Split into two rules at midnight to satisfy backend validation (end_time > start_time)
+          // Split into two rules at midnight
           const beforeMidnight = group.filter(s => s >= 12);
           const afterMidnight = group.filter(s => s < 12);
           
-          // Rule 1: Before midnight (e.g., 5 PM - 11:59 PM)
+          // Rule 1: Before midnight (e.g., 4 PM - 11:59 PM)
           if (beforeMidnight.length > 0) {
             const rule1 = {
               days: selectedDays,
               start_time: TIME_SLOTS[Math.min(...beforeMidnight)].start,
-              end_time: '23:59', // End at 11:59 PM
+              end_time: TIME_SLOTS[Math.max(...beforeMidnight)].end, // XX:59
               price_per_hour: parseFloat(price)
             };
             if (label && label.trim()) {
@@ -237,13 +250,12 @@ const PricingModal = ({ isOpen, onClose, onSubmit, initialData = null }) => {
             pricingRules.push(rule1);
           }
           
-          // Rule 2: After midnight (e.g., 12 AM - 7 AM)
+          // Rule 2: After midnight (e.g., 12 AM - 7:59 AM)
           if (afterMidnight.length > 0) {
-            const lastSlot = Math.max(...afterMidnight);
             const rule2 = {
               days: selectedDays,
-              start_time: '00:00', // Start at midnight
-              end_time: TIME_SLOTS[lastSlot].end,
+              start_time: TIME_SLOTS[Math.min(...afterMidnight)].start,
+              end_time: TIME_SLOTS[Math.max(...afterMidnight)].end, // XX:59
               price_per_hour: parseFloat(price)
             };
             if (label && label.trim()) {
@@ -256,7 +268,7 @@ const PricingModal = ({ isOpen, onClose, onSubmit, initialData = null }) => {
           const rule = {
             days: selectedDays,
             start_time: TIME_SLOTS[startSlot].start,
-            end_time: TIME_SLOTS[endSlot].end,
+            end_time: TIME_SLOTS[endSlot].end, // XX:59
             price_per_hour: parseFloat(price)
           };
           if (label && label.trim()) {
