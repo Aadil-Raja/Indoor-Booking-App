@@ -2,7 +2,7 @@
 Booking repository for database operations.
 """
 from sqlalchemy.orm import Session, joinedload
-from shared.models import Booking, BookingStatus, PaymentStatus
+from shared.models import Booking, BookingStatus, PaymentStatus, Court, Property
 from typing import Optional, List
 from datetime import date, time
 
@@ -50,7 +50,7 @@ def get_with_details(db: Session, booking_id: int) -> Optional[Booking]:
     return (
         db.query(Booking)
         .options(
-            joinedload(Booking.court).joinedload("property"),
+            joinedload(Booking.court).joinedload(Court.property),
             joinedload(Booking.customer)
         )
         .filter(Booking.id == booking_id)
@@ -63,7 +63,7 @@ def get_by_customer(db: Session, customer_id: int) -> List[Booking]:
     return (
         db.query(Booking)
         .options(
-            joinedload(Booking.court).joinedload("property")
+            joinedload(Booking.court).joinedload(Court.property)
         )
         .filter(Booking.customer_id == customer_id)
         .order_by(Booking.booking_date.desc(), Booking.start_time.desc())
@@ -90,12 +90,12 @@ def get_by_property_owner(db: Session, owner_profile_id: int) -> List[Booking]:
     return (
         db.query(Booking)
         .join(Booking.court)
-        .join("property")
+        .join(Court.property)
         .options(
-            joinedload(Booking.court).joinedload("property"),
+            joinedload(Booking.court).joinedload(Court.property),
             joinedload(Booking.customer)
         )
-        .filter("property.owner_profile_id" == owner_profile_id)
+        .filter(Property.owner_profile_id == owner_profile_id)
         .order_by(Booking.booking_date.desc(), Booking.start_time.desc())
         .all()
     )
