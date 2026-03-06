@@ -317,8 +317,13 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Test failed booking creation
     - Test flow_state cleared after completion
 
-- [ ] 15. Implement context-aware step skipping
-  - [ ] 15.1 Add flow_state checking to all booking nodes
+- [-] 15. Implement context-aware step skipping
+
+
+  - [x] 15.1 Add flow_state checking to all booking nodes
+
+
+
     - Update each node to check flow_state before asking questions
     - Skip to next incomplete step if data exists
     - Ensure sequential ordering (property → court → date → time → confirm)

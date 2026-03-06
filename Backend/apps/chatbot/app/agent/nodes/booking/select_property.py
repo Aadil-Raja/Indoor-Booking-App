@@ -14,6 +14,10 @@ import logging
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.tools.property_tool import get_owner_properties_tool
+from app.agent.nodes.booking.flow_validation import (
+    should_skip_to_next_step,
+    get_booking_progress_summary
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,20 +94,25 @@ async def select_property(
     owner_profile_id = state.get("owner_profile_id")
     flow_state = state.get("flow_state", {})
     
+    # Log booking progress for debugging
+    progress = get_booking_progress_summary(flow_state)
     logger.info(
         f"Processing property selection for chat {chat_id} - "
-        f"property_id={flow_state.get('property_id')}"
+        f"progress={progress['completion_percentage']}%, "
+        f"next_step={progress['next_step']}"
     )
     
-    # Step 1: Check if property already selected (Requirement 7.1)
-    if flow_state.get("property_id"):
+    # Step 1: Check if property already selected (Requirement 7.1, 7.5, 7.6)
+    should_skip, next_node = should_skip_to_next_step("select_property", flow_state)
+    if should_skip:
         logger.debug(
             f"Property already selected for chat {chat_id}: "
             f"property_id={flow_state.get('property_id')}, "
-            f"property_name={flow_state.get('property_name')}"
+            f"property_name={flow_state.get('property_name')}, "
+            f"skipping to {next_node}"
         )
         # Property already selected, skip to next step
-        state["next_node"] = "select_court"
+        state["next_node"] = next_node
         return state
     
     # Step 2: Fetch owner_properties if not cached (Requirements 5.2, 5.3)

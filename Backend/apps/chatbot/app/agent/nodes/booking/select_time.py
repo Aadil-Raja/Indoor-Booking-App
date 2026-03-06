@@ -19,6 +19,11 @@ from app.agent.tools import TOOL_REGISTRY
 from app.services.llm.langchain_wrapper import create_langchain_llm
 from app.agent.prompts.booking_prompts import create_select_time_prompt
 from app.services.llm.base import LLMProvider
+from app.agent.nodes.booking.flow_validation import (
+    should_skip_to_next_step,
+    validate_required_fields_for_step,
+    get_booking_progress_summary
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,57 +113,57 @@ async def select_time(
     if tools is None:
         tools = TOOL_REGISTRY
     
+    # Log booking progress for debugging
+    progress = get_booking_progress_summary(flow_state)
     logger.info(
         f"Processing time selection for chat {chat_id} - "
-        f"booking_step={flow_state.get('booking_step')}, "
+        f"progress={progress['completion_percentage']}%, "
+        f"next_step={progress['next_step']}, "
         f"message_preview={user_message[:50]}..."
     )
     
-    # Step 1: Check if time_slot already selected (Requirement 7.4)
-    if flow_state.get("time_slot"):
+    # Step 1: Check if time_slot already selected (Requirement 7.4, 7.5, 7.6)
+    should_skip, next_node = should_skip_to_next_step("select_time", flow_state)
+    if should_skip:
         logger.debug(
             f"Time slot already selected for chat {chat_id}: "
-            f"time_slot={flow_state.get('time_slot')}"
+            f"time_slot={flow_state.get('time_slot')}, "
+            f"skipping to {next_node}"
         )
         # Time already selected, skip to next step
-        state["next_node"] = "confirm_booking"
+        state["next_node"] = next_node
         return state
     
-    # Step 2: Check if date is selected
+    # Step 2: Validate prerequisites - date must be selected first
+    is_valid, missing_field, redirect_node = validate_required_fields_for_step(
+        "select_time",
+        flow_state
+    )
+    if not is_valid:
+        logger.warning(
+            f"Cannot select time without {missing_field} for chat {chat_id}, "
+            f"redirecting to {redirect_node}"
+        )
+        
+        if missing_field == "property_id":
+            message = "Please select a property first before choosing a time slot."
+        elif missing_field == "court_id":
+            message = "Please select a court first before choosing a time slot."
+        elif missing_field == "date":
+            message = "Please select a date first before choosing a time slot."
+        else:
+            message = f"Please complete the previous steps before selecting a time slot."
+        
+        state["response_content"] = message
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        state["next_node"] = redirect_node
+        
+        return state
+    
+    # Step 3: Get required data from flow_state
     date_str = flow_state.get("date")
-    if not date_str:
-        logger.warning(
-            f"No date selected for chat {chat_id}, cannot select time"
-        )
-        
-        response = (
-            "Please select a date first before choosing a time slot."
-        )
-        
-        state["response_content"] = response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
-        state["next_node"] = "select_date"
-        
-        return state
-    
-    # Step 3: Check if court is selected
     court_id = flow_state.get("court_id")
-    if not court_id:
-        logger.warning(
-            f"No court selected for chat {chat_id}, cannot select time"
-        )
-        
-        response = (
-            "Please select a court first before choosing a time slot."
-        )
-        
-        state["response_content"] = response
-        state["response_type"] = "text"
-        state["response_metadata"] = {}
-        state["next_node"] = "select_court"
-        
-        return state
     
     # Step 4: Check if we're processing a selection or presenting options
     current_step = flow_state.get("booking_step")

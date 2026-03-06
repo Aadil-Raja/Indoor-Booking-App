@@ -14,6 +14,11 @@ import logging
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.tools.court_tool import get_property_courts_tool
+from app.agent.nodes.booking.flow_validation import (
+    should_skip_to_next_step,
+    validate_required_fields_for_step,
+    get_booking_progress_summary
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,27 +93,36 @@ async def select_court(
     owner_profile_id = state.get("owner_profile_id")
     flow_state = state.get("flow_state", {})
     
+    # Log booking progress for debugging
+    progress = get_booking_progress_summary(flow_state)
     logger.info(
         f"Processing court selection for chat {chat_id} - "
-        f"court_id={flow_state.get('court_id')}"
+        f"progress={progress['completion_percentage']}%, "
+        f"next_step={progress['next_step']}"
     )
     
-    # Step 1: Check if court already selected (Requirement 7.2)
-    if flow_state.get("court_id"):
+    # Step 1: Check if court already selected (Requirement 7.2, 7.5, 7.6)
+    should_skip, next_node = should_skip_to_next_step("select_court", flow_state)
+    if should_skip:
         logger.debug(
             f"Court already selected for chat {chat_id}: "
             f"court_id={flow_state.get('court_id')}, "
-            f"court_name={flow_state.get('court_name')}"
+            f"court_name={flow_state.get('court_name')}, "
+            f"skipping to {next_node}"
         )
         # Court already selected, skip to next step
-        state["next_node"] = "select_date"
+        state["next_node"] = next_node
         return state
     
-    # Step 2: Verify property is selected
-    property_id = flow_state.get("property_id")
-    if not property_id:
-        logger.error(
-            f"Cannot select court without property_id for chat {chat_id}"
+    # Step 2: Validate prerequisites - property must be selected first
+    is_valid, missing_field, redirect_node = validate_required_fields_for_step(
+        "select_court",
+        flow_state
+    )
+    if not is_valid:
+        logger.warning(
+            f"Cannot select court without {missing_field} for chat {chat_id}, "
+            f"redirecting to {redirect_node}"
         )
         
         state["response_content"] = (
@@ -116,11 +130,14 @@ async def select_court(
         )
         state["response_type"] = "text"
         state["response_metadata"] = {}
-        state["next_node"] = "select_property"
+        state["next_node"] = redirect_node
         
         return state
     
-    # Step 3: Fetch courts for selected property (Requirement 14.3)
+    # Step 3: Get property_id from flow_state
+    property_id = flow_state.get("property_id")
+    
+    # Step 4: Fetch courts for selected property (Requirement 14.3)
     logger.info(
         f"Fetching courts for property_id={property_id} for chat {chat_id}"
     )
@@ -155,7 +172,7 @@ async def select_court(
         
         return state
     
-    # Step 4: Handle different court counts
+    # Step 5: Handle different court counts
     court_count = len(courts)
     
     # Case 1: No courts (error)

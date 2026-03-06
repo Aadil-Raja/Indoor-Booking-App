@@ -16,6 +16,10 @@ from app.agent.state.conversation_state import ConversationState
 from app.agent.tools.pricing_tool import get_pricing_tool
 from app.services.llm.base import LLMProvider
 from app.agent.prompts.booking_prompts import create_confirm_booking_prompt
+from app.agent.nodes.booking.flow_validation import (
+    validate_required_fields_for_step,
+    get_booking_progress_summary
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,11 +118,34 @@ async def confirm_booking(
     user_message = state["user_message"]
     flow_state = state.get("flow_state", {})
     
+    # Log booking progress for debugging
+    progress = get_booking_progress_summary(flow_state)
     logger.info(
         f"Processing booking confirmation for chat {chat_id} - "
+        f"progress={progress['completion_percentage']}%, "
         f"booking_step={flow_state.get('booking_step')}, "
         f"message_preview={user_message[:50] if user_message else 'N/A'}..."
     )
+    
+    # Validate prerequisites - all booking steps must be complete
+    is_valid, missing_field, redirect_node = validate_required_fields_for_step(
+        "confirm_booking",
+        flow_state
+    )
+    if not is_valid:
+        logger.warning(
+            f"Cannot confirm booking without {missing_field} for chat {chat_id}, "
+            f"redirecting to {redirect_node}"
+        )
+        
+        state["response_content"] = (
+            f"Some booking information is missing. Let's complete the {missing_field} selection."
+        )
+        state["response_type"] = "text"
+        state["response_metadata"] = {}
+        state["next_node"] = redirect_node
+        
+        return state
     
     # Check if we're presenting the summary or processing confirmation
     current_step = flow_state.get("booking_step")
@@ -166,25 +193,25 @@ async def _present_booking_summary(
         Updated ConversationState with booking summary and next_node decision
     """
     # Validate that all required booking information is present
-    required_fields = ["property_id", "property_name", "court_id", "court_name", "date", "time_slot"]
-    missing_fields = [f for f in required_fields if not flow_state.get(f)]
+    is_valid, missing_field, redirect_node = validate_required_fields_for_step(
+        "confirm_booking",
+        flow_state
+    )
     
-    if missing_fields:
+    if not is_valid:
         logger.error(
-            f"Missing required booking information for chat {chat_id}: {missing_fields}"
+            f"Missing required booking information for chat {chat_id}: {missing_field}, "
+            f"redirecting to {redirect_node}"
         )
         
         response = (
-            "Some booking information is missing. Let's start over."
+            f"Some booking information is missing. Let's complete the {missing_field} selection."
         )
         
         state["response_content"] = response
         state["response_type"] = "text"
         state["response_metadata"] = {}
-        state["next_node"] = "select_property"
-        
-        # Reset flow_state
-        state["flow_state"] = {}
+        state["next_node"] = redirect_node
         
         return state
     
