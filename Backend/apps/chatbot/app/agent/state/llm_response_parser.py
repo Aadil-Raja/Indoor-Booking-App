@@ -231,3 +231,77 @@ def validate_llm_response_structure(llm_response: Dict[str, Any]) -> bool:
         return True
     except LLMResponseParseError:
         return False
+
+
+def apply_state_updates(
+    state: Dict[str, Any],
+    state_updates: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Apply state_updates to flow_state and bot_memory in ConversationState.
+    
+    This function applies the state_updates extracted from an LLM response to the
+    ConversationState. It updates both flow_state and bot_memory by merging the
+    updates with existing values.
+    
+    This function should be called BEFORE routing to the next node to ensure
+    state is updated before the next node processes the conversation.
+    
+    Implements Requirement 13.5: System SHALL apply state_updates before routing
+    
+    Args:
+        state: ConversationState dictionary
+        state_updates: Dictionary containing flow_state and/or bot_memory updates
+        
+    Returns:
+        Updated ConversationState dictionary
+        
+    Example:
+        state = {
+            "flow_state": {"property_id": 1},
+            "bot_memory": {"user_preferences": {}},
+            ...
+        }
+        
+        state_updates = {
+            "flow_state": {"court_id": 10, "booking_step": "court_selected"},
+            "bot_memory": {"user_preferences": {"preferred_time": "morning"}}
+        }
+        
+        updated_state = apply_state_updates(state, state_updates)
+        # updated_state["flow_state"] = {"property_id": 1, "court_id": 10, "booking_step": "court_selected"}
+        # updated_state["bot_memory"]["user_preferences"] = {"preferred_time": "morning"}
+    """
+    if not state_updates:
+        return state
+    
+    # Apply flow_state updates
+    if "flow_state" in state_updates:
+        flow_state = state.get("flow_state", {})
+        flow_state.update(state_updates["flow_state"])
+        state["flow_state"] = flow_state
+        
+        logger.debug(
+            f"Applied flow_state updates: {list(state_updates['flow_state'].keys())}"
+        )
+    
+    # Apply bot_memory updates
+    if "bot_memory" in state_updates:
+        bot_memory = state.get("bot_memory", {})
+        
+        # Deep merge for bot_memory to preserve nested structures
+        for key, value in state_updates["bot_memory"].items():
+            if key in bot_memory and isinstance(bot_memory[key], dict) and isinstance(value, dict):
+                # Merge nested dictionaries
+                bot_memory[key].update(value)
+            else:
+                # Replace value
+                bot_memory[key] = value
+        
+        state["bot_memory"] = bot_memory
+        
+        logger.debug(
+            f"Applied bot_memory updates: {list(state_updates['bot_memory'].keys())}"
+        )
+    
+    return state

@@ -43,6 +43,7 @@ async def intent_detection(
     - 2.2: Remove rule-based logic for intent determination
     - 2.3: LLM makes routing decisions
     - 2.4: Route to node specified by LLM's next_node decision
+    - 13.5: Apply state_updates before routing to next_node
     
     Args:
         state: ConversationState containing the user message
@@ -87,26 +88,21 @@ async def intent_detection(
         message = "Hello! How can I help you today?"
         state_updates = {}
     
+    # CRITICAL: Apply state updates BEFORE setting next_node (Requirement 13.5)
+    # This ensures that any state changes from the LLM are applied before routing
+    from app.agent.state.llm_response_parser import apply_state_updates
+    state = apply_state_updates(state, state_updates)
+    
     # Store next_node in state for routing (this is what the graph will use)
     state["next_node"] = next_node
-    
-    # Apply state updates to flow_state
-    if "flow_state" in state_updates:
-        flow_state.update(state_updates["flow_state"])
-        state["flow_state"] = flow_state
-    
-    # Apply state updates to bot_memory
-    if "bot_memory" in state_updates:
-        bot_memory = state.get("bot_memory", {})
-        bot_memory.update(state_updates["bot_memory"])
-        state["bot_memory"] = bot_memory
     
     # Store the LLM's message (optional, for debugging or transition messages)
     if message:
         state["response_content"] = message
     
     logger.info(
-        f"Routing decision for chat {state['chat_id']}: next_node={next_node}"
+        f"Routing decision for chat {state['chat_id']}: next_node={next_node}, "
+        f"state_updates_applied={bool(state_updates)}"
     )
     
     return state

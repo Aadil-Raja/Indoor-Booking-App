@@ -198,8 +198,8 @@ def mock_langchain_components(mock_agent_result):
         mock_chat_openai = MagicMock()
         mock_chat_openai_class.return_value = mock_chat_openai
         
-        # Mock create_openai_functions_agent to return a simple mock
-        with patch('app.agent.nodes.information.create_openai_functions_agent') as mock_create_agent:
+        # Mock create_react_agent to return a simple mock
+        with patch('app.agent.nodes.information.create_react_agent') as mock_create_agent:
             mock_agent = MagicMock()
             mock_create_agent.return_value = mock_agent
             
@@ -599,3 +599,295 @@ async def test_missing_llm_provider(base_state):
     # Verify error message is returned
     assert "error" in result_state["response_content"].lower()
     assert result_state["response_type"] == "text"
+
+
+# Test 8: Reversibility - Property change
+
+@pytest.mark.asyncio
+async def test_reversibility_property_change(
+    base_state,
+    mock_llm_provider
+):
+    """
+    Test reversibility when user wants to change property.
+    
+    User has property, court, and date selected, then says: "I want to change to a different property"
+    Expected: Only property_id and property_name are cleared, along with downstream fields
+    
+    Requirements: 7.5, 7.6, 16.1, 16.2, 16.5, 16.6
+    """
+    # Setup state with existing booking progress
+    state = base_state.copy()
+    state["user_message"] = "I want to change to a different property"
+    state["flow_state"] = {
+        "current_intent": "booking",
+        "property_id": 1,
+        "property_name": "Old Property",
+        "court_id": 2,
+        "court_name": "Court A",
+        "date": "2026-03-15",
+        "time_slot": None,
+        "booking_step": "date_selected",
+        "owner_properties": None,
+        "context": {}
+    }
+    
+    # Execute node
+    result_state = await information_handler(state, mock_llm_provider)
+    
+    # Verify property fields are cleared
+    assert result_state["flow_state"]["property_id"] is None
+    assert result_state["flow_state"]["property_name"] is None
+    
+    # Verify downstream fields are cleared
+    assert result_state["flow_state"]["court_id"] is None
+    assert result_state["flow_state"]["court_name"] is None
+    assert result_state["flow_state"]["date"] is None
+    
+    # Verify response acknowledges the change
+    assert "property" in result_state["response_content"].lower()
+    assert "cleared" in result_state["response_content"].lower()
+    
+    # Verify routing back to booking
+    assert result_state["next_node"] == "booking"
+    
+    # Verify metadata indicates attribute change
+    assert result_state["response_metadata"]["attribute_changed"] is True
+    assert result_state["response_metadata"]["field_cleared"] == "property"
+
+
+# Test 9: Reversibility - Court change
+
+@pytest.mark.asyncio
+async def test_reversibility_court_change(
+    base_state,
+    mock_llm_provider
+):
+    """
+    Test reversibility when user wants to change court.
+    
+    User has property, court, and date selected, then says: "Actually, I want a different court"
+    Expected: Only court_id and court_name are cleared, along with downstream fields
+    Property is preserved.
+    
+    Requirements: 7.5, 7.6, 16.2, 16.5, 16.6
+    """
+    # Setup state with existing booking progress
+    state = base_state.copy()
+    state["user_message"] = "Actually, I want a different court"
+    state["flow_state"] = {
+        "current_intent": "booking",
+        "property_id": 1,
+        "property_name": "Test Property",
+        "court_id": 2,
+        "court_name": "Court A",
+        "date": "2026-03-15",
+        "time_slot": "10:00-11:00",
+        "booking_step": "time_selected",
+        "owner_properties": None,
+        "context": {}
+    }
+    
+    # Execute node
+    result_state = await information_handler(state, mock_llm_provider)
+    
+    # Verify property fields are preserved
+    assert result_state["flow_state"]["property_id"] == 1
+    assert result_state["flow_state"]["property_name"] == "Test Property"
+    
+    # Verify court fields are cleared
+    assert result_state["flow_state"]["court_id"] is None
+    assert result_state["flow_state"]["court_name"] is None
+    
+    # Verify downstream fields are cleared
+    assert result_state["flow_state"]["date"] is None
+    assert result_state["flow_state"]["time_slot"] is None
+    
+    # Verify response acknowledges the change
+    assert "court" in result_state["response_content"].lower()
+    
+    # Verify routing back to booking
+    assert result_state["next_node"] == "booking"
+    
+    # Verify metadata indicates attribute change
+    assert result_state["response_metadata"]["attribute_changed"] is True
+    assert result_state["response_metadata"]["field_cleared"] == "court"
+
+
+# Test 10: Reversibility - Date change
+
+@pytest.mark.asyncio
+async def test_reversibility_date_change(
+    base_state,
+    mock_llm_provider
+):
+    """
+    Test reversibility when user wants to change date.
+    
+    User has property, court, date, and time selected, then says: "Let's book for tomorrow instead"
+    Expected: Only date field is cleared, along with downstream time_slot
+    Property and court are preserved.
+    
+    Requirements: 7.5, 7.6, 16.3, 16.5, 16.6
+    """
+    # Setup state with existing booking progress
+    state = base_state.copy()
+    state["user_message"] = "Let's book for tomorrow instead"
+    state["flow_state"] = {
+        "current_intent": "booking",
+        "property_id": 1,
+        "property_name": "Test Property",
+        "court_id": 2,
+        "court_name": "Court A",
+        "date": "2026-03-15",
+        "time_slot": "10:00-11:00",
+        "booking_step": "time_selected",
+        "owner_properties": None,
+        "context": {}
+    }
+    
+    # Execute node
+    result_state = await information_handler(state, mock_llm_provider)
+    
+    # Verify property and court fields are preserved
+    assert result_state["flow_state"]["property_id"] == 1
+    assert result_state["flow_state"]["property_name"] == "Test Property"
+    assert result_state["flow_state"]["court_id"] == 2
+    assert result_state["flow_state"]["court_name"] == "Court A"
+    
+    # Verify date field is cleared
+    assert result_state["flow_state"]["date"] is None
+    
+    # Verify downstream time_slot is cleared
+    assert result_state["flow_state"]["time_slot"] is None
+    
+    # Verify response acknowledges the change
+    assert "date" in result_state["response_content"].lower()
+    
+    # Verify routing back to booking
+    assert result_state["next_node"] == "booking"
+    
+    # Verify metadata indicates attribute change
+    assert result_state["response_metadata"]["attribute_changed"] is True
+    assert result_state["response_metadata"]["field_cleared"] == "date"
+
+
+# Test 11: Reversibility - Time slot change
+
+@pytest.mark.asyncio
+async def test_reversibility_time_slot_change(
+    base_state,
+    mock_llm_provider
+):
+    """
+    Test reversibility when user wants to change time slot.
+    
+    User has all booking details selected, then says: "Can I change the time to later?"
+    Expected: Only time_slot field is cleared
+    Property, court, and date are preserved.
+    
+    Requirements: 7.5, 7.6, 16.4, 16.5, 16.6
+    """
+    # Setup state with existing booking progress
+    state = base_state.copy()
+    state["user_message"] = "Can I change the time to later?"
+    state["flow_state"] = {
+        "current_intent": "booking",
+        "property_id": 1,
+        "property_name": "Test Property",
+        "court_id": 2,
+        "court_name": "Court A",
+        "date": "2026-03-15",
+        "time_slot": "10:00-11:00",
+        "booking_step": "time_selected",
+        "owner_properties": None,
+        "context": {}
+    }
+    
+    # Execute node
+    result_state = await information_handler(state, mock_llm_provider)
+    
+    # Verify property, court, and date fields are preserved
+    assert result_state["flow_state"]["property_id"] == 1
+    assert result_state["flow_state"]["property_name"] == "Test Property"
+    assert result_state["flow_state"]["court_id"] == 2
+    assert result_state["flow_state"]["court_name"] == "Court A"
+    assert result_state["flow_state"]["date"] == "2026-03-15"
+    
+    # Verify time_slot field is cleared
+    assert result_state["flow_state"]["time_slot"] is None
+    
+    # Verify response acknowledges the change
+    assert "time" in result_state["response_content"].lower()
+    
+    # Verify routing back to booking
+    assert result_state["next_node"] == "booking"
+    
+    # Verify metadata indicates attribute change
+    assert result_state["response_metadata"]["attribute_changed"] is True
+    assert result_state["response_metadata"]["field_cleared"] == "time_slot"
+
+
+# Test 12: No attribute change detected
+
+@pytest.mark.asyncio
+async def test_no_attribute_change_detected(
+    base_state,
+    mock_llm_provider,
+    mock_properties
+):
+    """
+    Test that normal information queries don't trigger attribute change logic.
+    
+    User has booking in progress but asks a normal information query.
+    Expected: Normal information flow, no fields cleared
+    
+    Requirements: 7.5, 7.6, 16.5
+    """
+    # Setup state with existing booking progress
+    state = base_state.copy()
+    state["user_message"] = "Show me tennis courts"
+    state["flow_state"] = {
+        "current_intent": "booking",
+        "property_id": 1,
+        "property_name": "Test Property",
+        "court_id": 2,
+        "court_name": "Court A",
+        "date": "2026-03-15",
+        "time_slot": None,
+        "booking_step": "date_selected",
+        "owner_properties": None,
+        "context": {}
+    }
+    
+    # Mock the agent executor result
+    mock_agent_result = {
+        "input": "Show me tennis courts",
+        "output": "I found 2 tennis facilities for you.",
+        "intermediate_steps": [
+            (
+                create_mock_action("search_properties", {
+                    "sport_type": "tennis",
+                    "limit": 10
+                }),
+                mock_properties
+            )
+        ]
+    }
+    
+    # Execute with mocked components
+    with mock_langchain_components(mock_agent_result):
+        result_state = await information_handler(state, mock_llm_provider)
+    
+    # Verify all booking fields are preserved
+    assert result_state["flow_state"]["property_id"] == 1
+    assert result_state["flow_state"]["property_name"] == "Test Property"
+    assert result_state["flow_state"]["court_id"] == 2
+    assert result_state["flow_state"]["court_name"] == "Court A"
+    assert result_state["flow_state"]["date"] == "2026-03-15"
+    
+    # Verify normal information response
+    assert "tennis facilities" in result_state["response_content"].lower()
+    
+    # Verify no attribute change metadata
+    assert result_state["response_metadata"].get("attribute_changed") is not True

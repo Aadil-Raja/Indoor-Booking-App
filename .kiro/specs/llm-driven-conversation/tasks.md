@@ -341,8 +341,14 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - **Property 15: Booking Step State Updates**
     - **Validates: Requirements 8.2**
 
-- [ ] 16. Implement reversibility in information subgraph
-  - [ ] 16.1 Update information handler to support attribute changes
+- [x] 16. Implement reversibility in information subgraph
+
+
+
+
+  - [x] 16.1 Update information handler to support attribute changes
+
+
     - Add logic to detect when user wants to change property/court/date/slot
     - When user changes property: clear only property_id and property_name in flow_state, save new value
     - When user changes court: clear only court_id and court_name in flow_state, save new value
@@ -360,14 +366,24 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Test new values are saved correctly in flow_state
 
 - [ ] 17. Update main graph routing to use LLM decisions
-  - [ ] 17.1 Remove rule-based routing from main_graph.py
+  - [x] 17.1 Remove rule-based routing from main_graph.py
+
+
+
+
+
     - Remove route_by_intent function
     - Remove conditional_edges based on intent
     - Update intent_detection to return next_node from LLM
     - Add routing based on LLM's next_node decision
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
   
-  - [ ] 17.2 Update all nodes to apply state_updates before routing
+  - [x] 17.2 Update all nodes to apply state_updates before routing
+
+
+
+
+
     - Extract state_updates from LLM response
     - Apply updates to flow_state and bot_memory
     - Route to next_node after updates applied
