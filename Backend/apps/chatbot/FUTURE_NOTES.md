@@ -347,3 +347,205 @@ Both flow_state and bot_memory are now initialized in one place:
 - No duplicate initialization logic
 - Consistent across all flows
 
+
+
+---
+
+# Greeting Handler - Smart Property Display (Current Session)
+
+## Overview
+
+Implemented intelligent greeting system that adapts based on:
+- User type (new vs returning)
+- Property count (single vs multiple)
+- Selection state (property/court selected)
+
+## Phase 0: Refactored Owner Profile Fetching
+
+**Moved to shared:**
+- `owner_service.py` → `Backend/shared/services/`
+- `owner_repo.py` → `Backend/shared/repositories/`
+
+**Created tool:**
+- `get_owner_profile_tool` in chatbot tools
+- Uses shared service via sync_bridge
+- Consistent with other tools
+
+## Phase 1: Added Initialization Flag
+
+**Added to flow_state:**
+- `owner_properties_initialized: False`
+- Tracks if greeting has fetched properties
+- Used by intent detection for routing
+
+**Created helper:**
+- `ensure_flow_state_fields()` - Adds missing fields without losing data
+- Prevents data loss when structure updates
+
+## Phase 2: Force New Users to Greeting
+
+**Intent detection:**
+- Checks `owner_properties_initialized` flag
+- If `False` → forces route to "greeting"
+- Sets `is_first_message = True`
+
+**Greeting handler:**
+- Sets `owner_properties_initialized = True` after fetching
+- Respects `is_first_message` flag from intent
+
+## Phase 3: Smart Property Display for New Users
+
+**Three cases handled:**
+
+**Case A: Multiple properties**
+```
+Here are our available facilities:
+1. Downtown Arena (New York)
+2. Uptown Courts (Brooklyn)
+```
+
+**Case B: Single property**
+```
+📍 Downtown Arena
+Location: 123 Main St, New York
+
+🏟️ Available Courts (3):
+• Tennis, Basketball, Futsal
+```
+- Auto-sets `property_id`
+- Fetches and displays court types
+
+**Case C: Single property + single court**
+```
+📍 Downtown Arena
+🏟️ Court: Tennis Court 1 (Tennis)
+```
+- Auto-sets both `property_id` and `court_id`
+- Skips obvious selections
+
+## Phase 4: Context-Aware Returning User Greetings
+
+**Three cases handled:**
+
+**Case A: No property selected**
+```
+Welcome back! Which facility would you like to book?
+1. Downtown Arena (New York)
+2. Uptown Courts (Brooklyn)
+```
+
+**Case B: Property selected**
+```
+Welcome back! Continuing with Downtown Arena (123 Main St, New York).
+How can I help you today?
+```
+
+**Case C: Property + Court selected**
+```
+Welcome back! I see you were looking at Downtown Arena - Tennis Court 1.
+Ready to continue with your booking?
+```
+
+## Phase 5: Edge Cases
+
+**Handled:**
+1. **No properties found** - Helpful error message
+2. **Property not in cache** - Uses property_name fallback
+3. **Data inconsistency** - Clears court_id if property_id missing
+
+## Benefits
+
+✅ New users always see greeting with properties
+✅ Single property/court auto-selected (saves clicks)
+✅ Returning users see relevant context
+✅ Smart routing based on state, not message count
+✅ Graceful error handling
+✅ No data loss on structure updates
+
+## Technical Details
+
+**Functions created:**
+- `ensure_flow_state_fields()` - Safe field addition
+- `_fetch_property_courts()` - Fetch courts for property
+- `_generate_multi_property_greeting()` - Multiple properties
+- `_generate_single_property_greeting()` - Single property
+- `_generate_single_property_single_court_greeting()` - Single court
+- `_find_property_by_id()` - Find in cached list
+- `_generate_selected_property_greeting()` - Show selected
+- `_generate_property_selection_greeting()` - Show list
+
+**State management:**
+- Auto-sets `property_id`, `property_name` for single property
+- Auto-sets `court_id`, `court_name` for single court
+- Clears inconsistent data automatically
+- Preserves existing booking data
+
+
+
+---
+
+# Frontend - Line Break Handling
+
+## Issue
+
+Backend sends properly formatted messages with `\n` line breaks, but frontend displays them as one continuous line.
+
+**Example backend response:**
+```
+Hello, I am SportX's assistant!
+
+📍 SportX Location: Maidan at KMC Sports Complex
+Location: Karachi, Sindh
+View on map: https://maps.app.goo.gl/...
+
+🏟️ Court: Futsal Court (Football)
+
+How can I help you today? I can:
+• Show you available time slots
+• Help you make a booking
+• Answer questions about pricing
+```
+
+**Frontend displays:**
+```
+Hello, I am SportX's assistant! 📍 SportX Location: Maidan at KMC Sports Complex, Karachi, Sindh View on map: https://maps.app.goo.gl/... 🏟️ Court: Futsal Court (Football) How can I help you today? I can: • Show you available time slots • Help you make a booking • Answer questions about pricing
+```
+
+## Solution
+
+Frontend needs to render `\n` as line breaks. Options:
+
+### Option 1: CSS white-space (Recommended)
+```css
+.message-content {
+  white-space: pre-wrap;
+  /* or */
+  white-space: pre-line;
+}
+```
+
+### Option 2: Replace \n with <br> in JavaScript
+```javascript
+const formattedMessage = message.content.replace(/\n/g, '<br>');
+```
+
+### Option 3: Use <pre> tag
+```html
+<pre class="message-content">{message.content}</pre>
+```
+
+## Recommendation
+
+Use `white-space: pre-line` in CSS:
+- Preserves line breaks
+- Collapses multiple spaces
+- Wraps text naturally
+- No JavaScript processing needed
+
+```css
+.chat-message-content {
+  white-space: pre-line;
+  word-wrap: break-word;
+}
+```
+
