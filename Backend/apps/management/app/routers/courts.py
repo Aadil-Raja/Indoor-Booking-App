@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from app.deps.db import get_db
 from app.deps.auth import get_current_owner
-from app.services import court_service
-from app.utils.shared_utils import OwnerContext
+from shared.services import court_service
+from shared.utils import OwnerContext
 from shared.schemas.court import CourtCreate, CourtUpdate
 
 router = APIRouter(tags=["Courts"])

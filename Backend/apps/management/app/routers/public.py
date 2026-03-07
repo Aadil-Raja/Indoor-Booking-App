@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.deps.db import get_db
-from app.services import public_service
+from shared.services import public_service
 from typing import Optional
 from datetime import date
 

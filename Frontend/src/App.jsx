@@ -10,6 +10,7 @@ import PropertyDetails from './pages/owner/PropertyDetails';
 import CourtList from './pages/owner/CourtList';
 import CourtForm from './pages/owner/CourtForm';
 import CourtDetails from './pages/owner/CourtDetails';
+import ChatbotTest from './pages/customer/ChatbotTest';
 import './styles/theme.css';
 import './styles/common.css';
 import './App.css';
@@ -122,6 +123,9 @@ function App() {
           {/* Phase 5: Booking Management */}
           {/* <Route path="/owner/bookings" element={<ProtectedRoute><BookingList /></ProtectedRoute>} /> */}
           {/* <Route path="/owner/bookings/:id" element={<ProtectedRoute><BookingDetails /></ProtectedRoute>} /> */}
+          
+          {/* Chatbot Test Interface - No auth required for testing */}
+          <Route path="/chatbot-test" element={<ChatbotTest />} />
           
           {/* Fallback - redirect unknown routes to dashboard */}
           <Route path="*" element={<Navigate to="/owner/dashboard" replace />} />

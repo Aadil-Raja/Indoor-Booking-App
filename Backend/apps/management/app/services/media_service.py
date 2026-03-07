@@ -1,9 +1,10 @@
 from sqlalchemy.orm import Session
 from fastapi import UploadFile
-from app.repositories import media_repo, property_repo, court_repo
+from app.repositories import media_repo
+from shared.repositories import property_repo, court_repo
 from app.services.storage.storage_cloudinary import upload_file, delete_file
-from app.utils.response_utils import make_response
-from app.utils.shared_utils import OwnerContext
+from shared.utils.response_utils import make_response
+from shared.utils import OwnerContext
 from shared.schemas.media import CourtMediaCreate, CourtMediaUpdate
 from typing import Optional
 

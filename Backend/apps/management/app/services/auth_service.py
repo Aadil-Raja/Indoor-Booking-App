@@ -1,22 +1,109 @@
+from __future__ import annotations
+import os, hmac, hashlib, time, jwt
+from typing import Optional
+from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from fastapi import BackgroundTasks
 from app.repositories import auth_repo, users_repo
 from app.core.config import get_settings
 from app.services.email_service import send_otp_email, send_password_reset_email
-from app.utils.response_utils import make_response
-from app.utils.shared_utils import (
-    normalize_email,
-    hash_password,
-    verify_password,
-    gen_code_6,
-    sha256_str,
-    safe_equals,
-    issue_access_token,
-    issue_reset_token,
-    decode_token,
-)
+from shared.utils.response_utils import make_response
 
 settings = get_settings()
+
+# Password context for the auth service
+_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+# ---------- Helper Functions ----------
+def now_ts() -> int:
+    return int(time.time())
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def hash_password(p: str) -> str:
+    return _pwd_ctx.hash(p)
+
+
+def verify_password(p: str, p_hash: Optional[str]) -> bool:
+    if not p_hash:
+        return False
+    return _pwd_ctx.verify(p, p_hash)
+
+
+def gen_code_6() -> str:
+    # 6-digit numeric code
+    return f"{int.from_bytes(os.urandom(3), 'big') % 1_000_000:06d}"
+
+
+def sha256_str(s: str) -> str:
+    return hashlib.sha256(s.encode()).hexdigest()
+
+
+def safe_equals(a: str, b: str) -> bool:
+    return hmac.compare_digest(a, b)
+
+
+def issue_access_token(
+    *,
+    user_id: int | str,
+    role: Optional[str] = None,
+    owner_profile_id: Optional[int] = None,
+    token_version: int = 0,
+    ttl_seconds: int,
+    jwt_secret: str,
+    jwt_algorithm: str,
+    aud: Optional[str] = None,
+) -> str:
+    now = now_ts()
+    payload = {
+        "sub": str(user_id),
+        "iat": now,
+        "exp": now + ttl_seconds,
+        "tv": token_version,
+        "typ": "access",
+    }
+    if role:
+        payload["role"] = role
+    if owner_profile_id:
+        payload["owner_profile_id"] = owner_profile_id
+    if aud:
+        payload["aud"] = aud
+    return jwt.encode(payload, jwt_secret, algorithm=jwt_algorithm)
+
+
+def issue_reset_token(
+    *,
+    user_id: int | str,
+    token_version: int = 0,
+    ttl_seconds: int,
+    jwt_secret: str,
+    jwt_algorithm: str,
+) -> str:
+    now = now_ts()
+    payload = {
+        "sub": str(user_id),
+        "iat": now,
+        "exp": now + ttl_seconds,
+        "tv": token_version,
+        "typ": "reset",
+    }
+    return jwt.encode(payload, jwt_secret, algorithm=jwt_algorithm)
+
+
+def decode_token(
+    token: str,
+    *,
+    jwt_secret: str,
+    jwt_algorithm: str,
+) -> dict:
+    return jwt.decode(token, jwt_secret, algorithms=[jwt_algorithm])
+
+
+# ---------- Service Functions ----------
 
 
 async def signup(
@@ -40,7 +127,7 @@ async def signup(
     # Auto-create owner profile for owners
     from shared.models import UserRole
     if role == UserRole.owner.value:
-        from app.repositories import owner_repo
+        from shared.repositories import owner_repo
         owner_repo.create(db, user_id=user.id)
 
     # Send OTP
@@ -121,7 +208,7 @@ async def login_password(
     # Get owner_profile_id for owners (always exists after signup)
     owner_profile_id = None
     if user.role.value == "owner":
-        from app.repositories import owner_repo
+        from shared.repositories import owner_repo
         owner_profile = owner_repo.get_by_user_id(db, user.id)
         owner_profile_id = owner_profile.id if owner_profile else None
 
@@ -190,7 +277,7 @@ async def login_verify_code(
     # Get owner_profile_id for owners (always exists after signup)
     owner_profile_id = None
     if user.role.value == "owner":
-        from app.repositories import owner_repo
+        from shared.repositories import owner_repo
         owner_profile = owner_repo.get_by_user_id(db, user.id)
         owner_profile_id = owner_profile.id if owner_profile else None
 
