@@ -22,6 +22,11 @@ def get_by_user_id(db: Session, user_id: int) -> Optional[OwnerProfile]:
     return db.query(OwnerProfile).filter(OwnerProfile.user_id == user_id).first()
 
 
+def get_by_id(db: Session, profile_id: int) -> Optional[OwnerProfile]:
+    """Get owner profile by ID"""
+    return db.query(OwnerProfile).filter(OwnerProfile.id == profile_id).first()
+
+
 def update(db: Session, profile: OwnerProfile, **kwargs) -> OwnerProfile:
     """Update owner profile"""
     for key, value in kwargs.items():

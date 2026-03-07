@@ -2,13 +2,11 @@ from . import (
     auth_repo,
     users_repo,
     media_repo,
-    owner_repo,
 )
 
 __all__ = [
     "auth_repo",
     "users_repo",
     "media_repo",
-    "owner_repo",
 ]
 

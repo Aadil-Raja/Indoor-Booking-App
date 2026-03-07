@@ -127,7 +127,7 @@ async def signup(
     # Auto-create owner profile for owners
     from shared.models import UserRole
     if role == UserRole.owner.value:
-        from app.repositories import owner_repo
+        from shared.repositories import owner_repo
         owner_repo.create(db, user_id=user.id)
 
     # Send OTP
@@ -208,7 +208,7 @@ async def login_password(
     # Get owner_profile_id for owners (always exists after signup)
     owner_profile_id = None
     if user.role.value == "owner":
-        from app.repositories import owner_repo
+        from shared.repositories import owner_repo
         owner_profile = owner_repo.get_by_user_id(db, user.id)
         owner_profile_id = owner_profile.id if owner_profile else None
 
@@ -277,7 +277,7 @@ async def login_verify_code(
     # Get owner_profile_id for owners (always exists after signup)
     owner_profile_id = None
     if user.role.value == "owner":
-        from app.repositories import owner_repo
+        from shared.repositories import owner_repo
         owner_profile = owner_repo.get_by_user_id(db, user.id)
         owner_profile_id = owner_profile.id if owner_profile else None
 
