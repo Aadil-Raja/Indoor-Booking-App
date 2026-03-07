@@ -341,8 +341,14 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - **Property 15: Booking Step State Updates**
     - **Validates: Requirements 8.2**
 
-- [ ] 16. Implement reversibility in information subgraph
-  - [ ] 16.1 Update information handler to support attribute changes
+- [x] 16. Implement reversibility in information subgraph
+
+
+
+
+  - [x] 16.1 Update information handler to support attribute changes
+
+
     - Add logic to detect when user wants to change property/court/date/slot
     - When user changes property: clear only property_id and property_name in flow_state, save new value
     - When user changes court: clear only court_id and court_name in flow_state, save new value
@@ -360,14 +366,24 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Test new values are saved correctly in flow_state
 
 - [ ] 17. Update main graph routing to use LLM decisions
-  - [ ] 17.1 Remove rule-based routing from main_graph.py
+  - [x] 17.1 Remove rule-based routing from main_graph.py
+
+
+
+
+
     - Remove route_by_intent function
     - Remove conditional_edges based on intent
     - Update intent_detection to return next_node from LLM
     - Add routing based on LLM's next_node decision
     - _Requirements: 2.1, 2.2, 2.3, 2.4_
   
-  - [ ] 17.2 Update all nodes to apply state_updates before routing
+  - [x] 17.2 Update all nodes to apply state_updates before routing
+
+
+
+
+
     - Extract state_updates from LLM response
     - Apply updates to flow_state and bot_memory
     - Route to next_node after updates applied
@@ -385,19 +401,33 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 19. Implement bot_memory preference management
-  - [ ] 19.1 Add preference extraction to LLM prompts
+  - [x] 19.1 Add preference extraction to LLM prompts
+
+
+
+
+
     - Update all node prompts to identify and extract user preferences
     - Store preferences in bot_memory.user_preferences (preferred_time, preferred_sport, preferred_property, preferred_court)
     - Store inferred information in bot_memory.inferred_information
     - _Requirements: 4.1, 4.2, 4.3, 4.4_
   
-  - [ ] 19.2 Add bot_memory checking to prevent redundant questions
+  - [x] 19.2 Add bot_memory checking to prevent redundant questions
+
+
+
+
     - Update all node prompts to check bot_memory before asking questions
     - Skip questions if bot_memory contains answers
     - Use preferences to pre-fill or suggest options
     - _Requirements: 4.5_
   
-  - [ ] 19.3 Add current date context to all date-related prompts
+  - [x] 19.3 Add current date context to all date-related prompts
+
+
+
+
+
     - Update all LLM prompts that involve date selection to include current_date in ISO format
     - Update date selection node prompt to include current_date
     - Update time selection node prompt to include current_date
@@ -425,8 +455,15 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Test current_date is passed to LLM in date selection prompts
     - Test LLM receives current_date in correct ISO format
 
-- [ ] 20. Add comprehensive error handling
-  - [ ] 20.1 Add LLM response error handling
+- [x] 20. Add comprehensive error handling
+
+
+
+
+
+  - [x] 20.1 Add LLM response error handling
+
+
     - Handle missing next_node (default to current node)
     - Handle invalid next_node (default to greeting)
     - Handle LLM API failures (return error message)
@@ -434,20 +471,25 @@ This implementation refactors the chatbot from rule-based routing to LLM-driven 
     - Add logging for all error cases
     - _Requirements: 2.5_
   
-  - [ ] 20.2 Add state management error handling
+  - [x] 20.2 Add state management error handling
+
     - Handle flow_state corruption (reinitialize)
     - Handle bot_memory persistence failures (log and continue)
     - Handle state deserialization errors
     - Add validation and recovery logic
   
-  - [ ] 20.3 Add tool invocation error handling
+  - [x] 20.3 Add tool invocation error handling
+
+
     - Handle property fetch failures
     - Handle court fetch failures
     - Handle availability check failures
     - Handle booking creation failures
     - Return user-friendly error messages
   
-  - [ ] 20.4 Add validation error handling
+  - [x] 20.4 Add validation error handling
+
+
     - Handle invalid date format
     - Handle invalid time slot format
     - Handle missing required booking data

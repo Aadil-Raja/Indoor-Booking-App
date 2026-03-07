@@ -11,6 +11,7 @@ Requirements: 8.4, 10.1
 
 from typing import Dict, Any, Optional
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import PromptTemplate
 
 
 # =============================================================================
@@ -31,14 +32,13 @@ Context from previous conversation:
 Fuzzy Search Context:
 {fuzzy_context}
 
+Bot Memory (User Preferences):
+{bot_memory}
+
 Available tools:
-- search_properties: Search for facilities by location and sport type
-- get_property_details: Get detailed information about a specific property
-- get_court_details: Get details about a specific court
-- get_court_availability: Check available time slots for a court
-- get_court_pricing: Get pricing information for a court
-- get_property_media: Get photos/videos of a property
-- get_court_media: Get photos/videos of a court
+{tools}
+
+Tool names: {tool_names}
 
 ReAct Pattern Guidelines:
 You should use the following format:
@@ -52,6 +52,12 @@ Thought: I now know the final answer
 Final Answer: The final answer to the original input question
 
 Guidelines:
+- FIRST, check bot_memory.user_preferences before asking questions or searching
+- If preferred_sport exists, use it to filter search results automatically
+- Example: "I see you're interested in tennis. Let me show you our tennis facilities."
+- If preferred_property exists, prioritize showing information about that property
+- If preferred_time exists, mention it when showing availability
+- Example: "Based on your preference for morning slots, here are the morning options..."
 - Use tools to get accurate, up-to-date information
 - You can call multiple tools if needed to answer the user's question
 - Reference previous search results from context when user says "that property", "the last one", or "the first one"
@@ -70,12 +76,25 @@ Fuzzy Search Support:
 - Be friendly and natural when confirming fuzzy matches - make it conversational
 - If the user seems confused by the correction, explain that we offer [corrected_term] facilities
 
+Preference Extraction:
+- Identify and extract any user preferences expressed in their message
+- Store preferences in bot_memory.user_preferences:
+  * preferred_sport: Sport type if mentioned (e.g., "tennis", "basketball", "futsal")
+  * preferred_time: Time preference if mentioned (e.g., "morning", "afternoon", "evening")
+  * preferred_property: Property ID if user expresses preference for a specific property
+  * preferred_court: Court ID if user expresses preference for a specific court
+- Store inferred information in bot_memory.inferred_information:
+  * booking_frequency: "regular", "occasional", or "first_time" based on user's language
+  * interests: List of sports or activities mentioned
+  * context_notes: Any other relevant context about user's needs or interests
+
 Important:
 - Always pass owner_profile_id parameter when calling search_properties tool
 - Property IDs and court IDs are integers
 - Dates should be in ISO format (YYYY-MM-DD)
 - Be specific about which property or court you're referring to
 - If user asks about availability or pricing, make sure to get the court_id first if not provided
+- Always extract and store preferences even when just providing information
 """
 
 
@@ -98,8 +117,9 @@ def create_information_prompt(
     - Context that bot only shows owner's properties
     - Context extracted from bot_memory (previous searches, preferences)
     - Fuzzy search context for sport name corrections with confirmation prompts
+    - Preference extraction instructions for user_preferences and inferred_information
     - Message placeholders for chat history and agent scratchpad
-    - Partial variables for owner_profile_id, business_name, context, and fuzzy_context
+    - Partial variables for owner_profile_id, business_name, context, fuzzy_context, and bot_memory
     
     The prompt is designed to work with LangChain's create_react_agent
     and includes all necessary placeholders for ReAct agent execution.
@@ -117,7 +137,15 @@ def create_information_prompt(
                     "last_availability_check": {"court_id": 23, "date": "2026-03-10"}
                 },
                 "user_preferences": {
-                    "preferred_sport": "tennis"
+                    "preferred_sport": "tennis",
+                    "preferred_time": "morning",
+                    "preferred_property": 6,
+                    "preferred_court": 23
+                },
+                "inferred_information": {
+                    "booking_frequency": "regular",
+                    "interests": ["tennis", "basketball"],
+                    "context_notes": "Prefers morning slots"
                 }
             }
         business_name: Optional business name for personalization (e.g., "ABC Sports Center")
@@ -136,7 +164,7 @@ def create_information_prompt(
     Example:
         >>> bot_memory = {
         ...     "context": {"last_search_results": ["6", "12"]},
-        ...     "user_preferences": {"preferred_sport": "tennis"}
+        ...     "user_preferences": {"preferred_sport": "tennis", "preferred_time": "morning"}
         ... }
         >>> fuzzy_context = {"fuzzy_match": True, "original_term": "football"}
         >>> prompt = create_information_prompt(
@@ -202,10 +230,17 @@ def create_information_prompt(
     else:
         fuzzy_str = "No fuzzy corrections applied"
     
+    # Format bot_memory for display in prompt
+    bot_memory_str = f"""
+User Preferences: {bot_memory.get('user_preferences', {})}
+Inferred Information: {bot_memory.get('inferred_information', {})}
+"""
+    
     # Use business_name or default to "our facility"
     business_name_str = business_name or "our facility"
     
     # Create prompt template with message placeholders for ReAct pattern
+    # Note: agent_scratchpad must be a MessagesPlaceholder for create_react_agent
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_TEMPLATE),
         MessagesPlaceholder(variable_name="chat_history", optional=True),
@@ -213,12 +248,13 @@ def create_information_prompt(
         MessagesPlaceholder(variable_name="agent_scratchpad")
     ])
     
-    # Inject owner_profile_id, business_name, context, and fuzzy_context as partial variables
+    # Inject owner_profile_id, business_name, context, fuzzy_context, and bot_memory as partial variables
     return prompt.partial(
         owner_profile_id=str(owner_profile_id),
         business_name=business_name_str,
         context=context,
-        fuzzy_context=fuzzy_str
+        fuzzy_context=fuzzy_str,
+        bot_memory=bot_memory_str
     )
 
 

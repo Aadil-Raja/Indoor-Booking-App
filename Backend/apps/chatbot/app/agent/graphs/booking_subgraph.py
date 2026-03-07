@@ -24,7 +24,7 @@ from app.agent.nodes.booking import (
     select_date,
     select_time,
     confirm_booking,
-    create_pending_booking,
+    create_booking,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,15 +100,15 @@ def create_booking_subgraph(tools: Dict[str, Any]) -> StateGraph:
     async def confirm_booking_node(state):
         return await confirm_booking(state, tools)
     
-    async def create_pending_booking_node(state):
-        return await create_pending_booking(state, tools)
+    async def create_booking_node(state):
+        return await create_booking(state, tools)
     
     graph.add_node("select_property", select_property_node)
     graph.add_node("select_service", select_service_node)
     graph.add_node("select_date", select_date_node)
     graph.add_node("select_time", select_time_node)
     graph.add_node("confirm", confirm_booking_node)
-    graph.add_node("create_booking", create_pending_booking_node)
+    graph.add_node("create_booking", create_booking_node)
     
     # Set entry point
     graph.set_entry_point("select_property")

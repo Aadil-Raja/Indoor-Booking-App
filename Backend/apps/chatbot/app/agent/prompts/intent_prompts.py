@@ -1,83 +1,78 @@
 """
-Intent classification prompts for LLM-based routing decisions.
+Intent routing prompts - simple routing only.
 
-This module defines prompt templates used by the intent_detection node to make
-explicit routing decisions. The LLM determines the next_node to route to based
-on the user's message, eliminating rule-based transitions.
-
-Requirements: 2.1, 2.2, 2.3, 2.4
+LLM decides which handler to route to:
+- greeting
+- information  
+- booking
 """
 
-INTENT_ROUTING_PROMPT = """You are a routing assistant for a sports facility booking chatbot. Your task is to analyze the user's message and determine which conversation handler should process it next.
+from typing import Dict, Any
 
-**Available Handlers (next_node options):**
+INTENT_ROUTING_PROMPT = """You are a routing assistant for a sports facility booking chatbot.
 
-1. **greeting** - For greetings and conversation starters
-   - Examples: "hi", "hello", "good morning", "hey there", "what's up"
-   - Use when: User is starting or restarting a conversation
-   
-2. **information** - For all informational queries about facilities, courts, availability, pricing, and general questions
-   - Examples: "show me tennis courts", "what courts are available", "how much does it cost", "tell me about your facilities", "what are your hours"
-   - Use when: User wants to search, browse, or learn about facilities, courts, pricing, or policies
-   - Note: This handler uses a LangChain agent with access to all information tools
-   
-3. **booking** - For booking, reserving, or scheduling facilities
-   - Examples: "I want to book a court", "reserve a tennis court for tomorrow", "can I schedule a booking", "make a reservation", "book it"
-   - Use when: User explicitly wants to create a booking or reservation
+Analyze the user's message and decide which handler should process it.
 
-**Routing Rules:**
+**Available Handlers:**
 
-- If the message contains booking-related words (book, reserve, schedule, appointment, reservation), route to **booking**
-- If the message is about finding, searching, browsing facilities, or asking questions (pricing, hours, policies, availability), route to **information**
-- If the message is a simple greeting or conversation starter, route to **greeting**
-- When in doubt between information and booking, prefer **booking** if there's clear intent to make a reservation
-- Handle typos, informal language, and abbreviations gracefully
+1. **greeting** - Greetings and conversation starters
+   Examples: "hi", "hello", "good morning", "hey"
+
+2. **information** - Questions about facilities, courts, availability, pricing
+   Examples: "show me tennis courts", "what's available", "how much does it cost"
+
+3. **booking** - Booking or reserving facilities
+   Examples: "I want to book a court", "reserve a tennis court", "make a reservation"
+
+**Recent Conversation:**
+{conversation_context}
+
+**Current Context:**
+- Last action: {last_node}
+- Current intent: {current_intent}
 
 **User Message:**
 "{message}"
 
 **Instructions:**
-Respond with a JSON object containing:
-- next_node: The handler to route to ("greeting", "information", or "booking")
-- message: A brief acknowledgment or transition message for the user
-- state_updates: Any updates to flow_state (set current_intent to match the routing decision)
-
-**Response Format:**
+Use the conversation history to understand context for ambiguous messages like "book it", "yes", "that one".
+Respond with ONLY a JSON object:
 {{
-  "next_node": "greeting" | "information" | "booking",
-  "message": "Brief acknowledgment message",
-  "state_updates": {{
-    "flow_state": {{
-      "current_intent": "greeting" | "information" | "booking"
-    }}
-  }}
+  "next_node": "greeting" | "information" | "booking"
 }}
 
 **Your Response:**"""
 
 
-def get_routing_prompt(message: str) -> str:
+def get_routing_prompt(
+    message: str,
+    recent_messages: list = None,
+    last_node: str = None,
+    current_intent: str = None
+) -> str:
     """
-    Get the routing prompt for LLM-driven next_node decision.
+    Get the routing prompt for LLM decision.
     
-    This function formats the routing prompt template with the user's message.
-    The LLM will analyze the message and return a structured JSON response
-    containing the next_node decision, a message for the user, and state updates.
-    
-    Args:
-        message: The user message to analyze for routing
-        
-    Returns:
-        Formatted prompt string ready for LLM
-        
-    Requirements:
-        - 2.1: LLM SHALL return next_node field
-        - 2.2: Remove rule-based logic for intent determination
-        - 2.3: LLM makes routing decisions
-        - 2.4: Route to node specified by LLM's next_node decision
-        
-    Example:
-        >>> prompt = get_routing_prompt("I want to book a court")
-        >>> # Returns formatted INTENT_ROUTING_PROMPT with message
+    Includes conversation context for better routing of ambiguous messages.
     """
-    return INTENT_ROUTING_PROMPT.format(message=message)
+    # Format recent messages
+    if recent_messages and len(recent_messages) > 0:
+        formatted_messages = []
+        for msg in recent_messages[-5:]:  # Last 5 messages
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            formatted_messages.append(f"- {role.title()}: {content[:100]}")
+        conversation_context = "\n".join(formatted_messages)
+    else:
+        conversation_context = "No previous messages (new conversation)"
+    
+    # Format context
+    last_node_str = last_node if last_node else "None (new conversation)"
+    current_intent_str = current_intent if current_intent else "None"
+    
+    return INTENT_ROUTING_PROMPT.format(
+        message=message,
+        conversation_context=conversation_context,
+        last_node=last_node_str,
+        current_intent=current_intent_str
+    )

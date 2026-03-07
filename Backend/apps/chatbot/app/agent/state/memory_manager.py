@@ -214,11 +214,11 @@ async def load_bot_memory(
     db_session
 ) -> Dict[str, Any]:
     """
-    Retrieve bot_memory from database.
+    Retrieve bot_memory from database with error handling.
     
     Loads the persistent bot_memory for a chat session from the database.
     If the chat doesn't exist or bot_memory is empty, returns an initialized
-    empty bot_memory structure.
+    empty bot_memory structure. Includes error handling for deserialization errors.
     
     Args:
         chat_id: UUID string of the chat session
@@ -235,14 +235,18 @@ async def load_bot_memory(
             db_session=db
         )
         
-    Requirements: 4.1, 4.2, 4.6, 15.2, 15.4
+    Requirements: 4.1, 4.2, 4.6, 15.2, 15.4, 20.2
     """
     from uuid import UUID
     from app.repositories.chat_repository import ChatRepository
     
     try:
         # Convert string to UUID
-        chat_uuid = UUID(chat_id)
+        try:
+            chat_uuid = UUID(chat_id)
+        except ValueError as e:
+            logger.error(f"Invalid chat_id format: {chat_id}, error: {e}")
+            return _initialize_bot_memory()
         
         # Load chat from database
         chat_repo = ChatRepository(db_session)
@@ -265,11 +269,15 @@ async def load_bot_memory(
         logger.debug(f"Loaded bot_memory for chat {chat_id}")
         return bot_memory
         
-    except ValueError as e:
-        logger.error(f"Invalid chat_id format: {chat_id}, error: {e}")
-        return _initialize_bot_memory()
     except Exception as e:
-        logger.error(f"Error loading bot_memory for chat {chat_id}: {e}", exc_info=True)
+        # Handle deserialization errors (Requirement 20.2)
+        logger.error(
+            f"Error loading bot_memory for chat {chat_id}: {e}",
+            exc_info=True
+        )
+        logger.warning(
+            f"Returning empty bot_memory for chat {chat_id} due to load error"
+        )
         return _initialize_bot_memory()
 
 
@@ -279,10 +287,11 @@ async def save_bot_memory(
     db_session
 ) -> bool:
     """
-    Persist bot_memory to database.
+    Persist bot_memory to database with error handling.
     
     Saves the bot_memory dictionary to the database for the specified chat.
     Updates the chat's bot_memory field and commits the transaction.
+    Includes comprehensive error handling for persistence failures.
     
     Args:
         chat_id: UUID string of the chat session
@@ -299,14 +308,25 @@ async def save_bot_memory(
             db_session=db
         )
         
-    Requirements: 4.1, 4.2, 4.6, 15.2, 15.4
+    Requirements: 4.1, 4.2, 4.6, 15.2, 15.4, 20.2
     """
     from uuid import UUID
     from app.repositories.chat_repository import ChatRepository
     
     try:
         # Convert string to UUID
-        chat_uuid = UUID(chat_id)
+        try:
+            chat_uuid = UUID(chat_id)
+        except ValueError as e:
+            logger.error(f"Invalid chat_id format: {chat_id}, error: {e}")
+            return False
+        
+        # Validate bot_memory structure before saving
+        if not isinstance(bot_memory, dict):
+            logger.error(
+                f"Invalid bot_memory type: {type(bot_memory)}, expected dict"
+            )
+            return False
         
         # Load chat from database
         chat_repo = ChatRepository(db_session)
@@ -316,11 +336,6 @@ async def save_bot_memory(
             logger.error(f"Cannot save bot_memory: chat not found: {chat_id}")
             return False
         
-        # Validate bot_memory structure
-        if not isinstance(bot_memory, dict):
-            logger.error(f"Invalid bot_memory type: {type(bot_memory)}, expected dict")
-            return False
-        
         # Update chat with new bot_memory
         await chat_repo.update(chat, {"bot_memory": bot_memory})
         
@@ -328,11 +343,16 @@ async def save_bot_memory(
         logger.debug(f"Saved bot_memory for chat {chat_id}")
         return True
         
-    except ValueError as e:
-        logger.error(f"Invalid chat_id format: {chat_id}, error: {e}")
-        return False
     except Exception as e:
-        logger.error(f"Error saving bot_memory for chat {chat_id}: {e}", exc_info=True)
+        # Log error but don't raise - allow conversation to continue (Requirement 20.2)
+        logger.error(
+            f"Error saving bot_memory for chat {chat_id}: {e}",
+            exc_info=True
+        )
+        logger.warning(
+            f"Bot memory will not be persisted for chat {chat_id}, "
+            "but conversation can continue"
+        )
         return False
 
 

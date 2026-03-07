@@ -412,8 +412,11 @@ async def _process_confirmation_response(
     """
     # Use LLM to parse user intent
     try:
+        # Get current date for validation context
+        current_date = datetime.now().date().strftime("%Y-%m-%d")  # ISO format
+        
         # Create confirmation prompt
-        prompt = create_confirm_booking_prompt(flow_state)
+        prompt = create_confirm_booking_prompt(flow_state, current_date)
         
         # Prepare messages for LLM
         messages = [
