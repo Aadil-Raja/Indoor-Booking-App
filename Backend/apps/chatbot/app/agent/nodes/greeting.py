@@ -58,13 +58,11 @@ async def greeting_handler(
         owner_profile = await _fetch_owner_profile(owner_profile_id, chat_id)
         properties = await _fetch_owner_properties(owner_profile_id, chat_id)
         
-        # Cache properties for booking flow
-        if properties:
-            flow_state["owner_properties"] = properties
-            logger.info(f"Cached {len(properties)} properties in flow_state for chat {chat_id}")
-        
-        # Mark properties as initialized (even if empty, we tried)
+        # Cache properties for booking flow (always cache, even if empty list)
+        flow_state["owner_properties"] = properties
         flow_state["owner_properties_initialized"] = True
+        
+        logger.info(f"Cached {len(properties)} properties in flow_state for chat {chat_id}")
         
         if properties:
             # Generate greeting based on property count
