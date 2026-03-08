@@ -2,12 +2,14 @@
 Booking service for business logic operations.
 """
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from shared.repositories import booking_repo, court_repo, pricing_repo, availability_repo, property_repo
 from shared.utils.response_utils import make_response
 from shared.utils import OwnerContext
 from shared.schemas.booking import BookingCreate
 from shared.models import BookingStatus, PaymentStatus, CourtPricing
 from datetime import datetime, timedelta
+from typing import Optional
 
 
 def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
@@ -30,23 +32,61 @@ def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
         return make_response(False, "This time slot is already booked", status_code=409)
 
     day_of_week = data.booking_date.weekday()
-    pricing = (
+     
+    # Find pricing rule that covers the booking time slot
+    # Get all pricing rules for this day and filter in Python
+    pricing_candidates = (
         db.query(CourtPricing)
         .filter(
             CourtPricing.court_id == data.court_id,
-            CourtPricing.days.contains([day_of_week]),
-            CourtPricing.start_time <= data.start_time,
-            CourtPricing.end_time >= data.end_time
+            CourtPricing.days.any(day_of_week)
         )
-        .first()
+        .all()
     )
+    
+    print(f"DEBUG: Found {len(pricing_candidates)} pricing candidates for day {day_of_week}")
+    
+    # Filter pricing rules in Python to find one that covers the booking start time
+    pricing = None
+    for p in pricing_candidates:
+        print(f"DEBUG: Checking pricing {p.id}: {p.start_time} <= {data.start_time} <= {p.end_time}?")
+        
+        # Check if booking start time falls within pricing range
+        if p.start_time <= data.start_time:
+            # Check end time - handle XX:59 format
+            if p.end_time >= data.start_time:
+                print(f"DEBUG: Pricing {p.id} matches!")
+                pricing = p
+                break
+            # Special case: if end_time is XX:59 and booking start is in that hour
+            elif p.end_time.minute == 59 and p.end_time.hour >= data.start_time.hour:
+                print(f"DEBUG: Pricing {p.id} matches (XX:59 format)!")
+                pricing = p
+                break
 
     if not pricing:
+        print(f"DEBUG: No pricing found for start_time: {data.start_time}, day: {day_of_week}")
         return make_response(False, "No pricing available for this time slot", status_code=400)
+    
 
+    # With XX:00-XX:59 pricing, duration calculation is straightforward
     start_datetime = datetime.combine(data.booking_date, data.start_time)
     end_datetime = datetime.combine(data.booking_date, data.end_time)
-    total_hours = (end_datetime - start_datetime).total_seconds() / 3600
+    # Handle midnight crossing for bookings (11 PM - 12 AM becomes 11 PM - 12 AM next day)
+    if data.end_time <= data.start_time:
+        end_datetime = datetime.combine(data.booking_date + timedelta(days=1), data.end_time)
+    
+    # Calculate total hours
+    # Since we use XX:00-XX:59 format, each hour slot is exactly 1 hour
+    # For example: 01:00-01:59 is 1 hour, 01:00-02:59 is 2 hours, etc.
+    total_seconds = (end_datetime - start_datetime).total_seconds()
+    total_hours = total_seconds / 3600
+    
+    # Round to nearest hour to handle XX:59 format correctly
+    # 01:00 to 01:59 = 3599 seconds = 0.9997 hours, should be 1 hour
+    # 01:00 to 02:59 = 7199 seconds = 1.9997 hours, should be 2 hours
+    total_hours = round(total_hours)
+    
     total_price = total_hours * pricing.price_per_hour
 
     try:
@@ -81,9 +121,13 @@ def create_booking(db: Session, *, customer_id: int, data: BookingCreate):
         return make_response(False, "Failed to create booking", status_code=500, error=str(e))
 
 
-def get_user_bookings(db: Session, *, user_id: int):
+def get_user_bookings(db: Session, *, user_id: int, status_filter: Optional[str] = None):
     """Get all bookings for a user"""
     bookings = booking_repo.get_by_customer(db, user_id)
+
+    # Filter by status if provided
+    if status_filter:
+        bookings = [b for b in bookings if b.status.value == status_filter]
 
     data = [
         {
@@ -93,7 +137,9 @@ def get_user_bookings(db: Session, *, user_id: int):
             "end_time": b.end_time.isoformat(),
             "total_price": b.total_price,
             "status": b.status.value,
+            "total_hours": b.total_hours,
             "payment_status": b.payment_status.value,
+            "court_id": b.court_id,
             "court_name": b.court.name,
             "sport_type": b.court.sport_type,
             "property_name": b.court.property.name,
