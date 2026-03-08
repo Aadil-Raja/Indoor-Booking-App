@@ -12,8 +12,7 @@ from app.agent.state.flow_state_manager import (
     initialize_flow_state,
     validate_flow_state,
     update_flow_state,
-    clear_flow_state,
-    clear_booking_field
+
 )
 from app.agent.state.llm_response_parser import (
     parse_llm_response,
@@ -35,7 +34,7 @@ __all__ = [
     "validate_flow_state",
     "update_flow_state",
     "clear_flow_state",
-    "clear_booking_field",
+ 
     "parse_llm_response",
     "validate_llm_response_structure",
     "LLMResponseParseError",

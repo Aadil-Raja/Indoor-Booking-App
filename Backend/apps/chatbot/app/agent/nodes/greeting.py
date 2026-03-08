@@ -59,10 +59,27 @@ async def greeting_handler(
         properties = await _fetch_owner_properties(owner_profile_id, chat_id)
         
         # Cache properties for booking flow (always cache, even if empty list)
-        flow_state["owner_properties"] = properties
+        flow_state["available_properties"] = properties
         flow_state["owner_properties_initialized"] = True
         
         logger.info(f"Cached {len(properties)} properties in flow_state for chat {chat_id}")
+        
+        # Fetch and cache court details for all properties
+        all_courts = []
+        for prop in properties:
+            prop_id = prop.get("id")
+            if prop_id:
+                prop_details = await _fetch_property_details(prop_id, chat_id)
+                if prop_details and "courts" in prop_details:
+                    courts = prop_details.get("courts", [])
+                    # Extract only essential court details
+                    for court in courts:
+                        essential_court = _extract_essential_court_details(court, prop_id)
+                        all_courts.append(essential_court)
+        
+        # Save all courts in available_courts
+        flow_state["available_courts"] = all_courts
+        logger.info(f"Cached {len(all_courts)} courts (essential details only) in flow_state for chat {chat_id}")
         
         if properties:
             # Generate greeting based on property count
@@ -93,6 +110,33 @@ async def greeting_handler(
     )
     
     return state
+
+
+def _extract_essential_court_details(court: dict, property_id: int) -> dict:
+    """
+    Extract only essential court details to save in flow_state.
+    
+    Reduces memory usage by storing only necessary fields:
+    - id: Court ID
+    - name: Court name
+    - property_id: Associated property ID
+    - sport_type: Type of sport (e.g., "Futsal", "Cricket")
+    - description: Court description
+    
+    Args:
+        court: Full court dictionary from API
+        property_id: Property ID to associate with this court
+        
+    Returns:
+        Dictionary with only essential court fields
+    """
+    return {
+        "id": court.get("id"),
+        "name": court.get("name"),
+        "property_id": property_id,
+        "sport_type": court.get("sport_type"),
+        "description": court.get("description")
+    }
 
 
 def _generate_new_user_greeting(owner_profile: dict) -> str:
@@ -177,6 +221,8 @@ async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
         return []
 
 
+
+
 async def _generate_new_user_greeting_with_properties(
     owner_profile: dict,
     properties: list,
@@ -230,7 +276,7 @@ async def _generate_new_user_greeting_with_properties(
     if len(courts) == 1:
         court_info = courts[0]
         flow_state["court_id"] = court_info.get("id")
-        flow_state["court_name"] = court_info.get("name", "Court")
+        flow_state["court_type"] = court_info.get("sport_type") or court_info.get("name", "Court")
         logger.info(
             f"Auto-set court_id={court_info.get('id')} for single court "
             f"in chat {chat_id}"
@@ -261,28 +307,28 @@ def _generate_returning_user_greeting(bot_memory: dict, flow_state: dict) -> str
     property_id = flow_state.get("property_id")
     court_id = flow_state.get("court_id")
     property_name = flow_state.get("property_name")
-    court_name = flow_state.get("court_name")
-    owner_properties = flow_state.get("owner_properties", [])
+    court_type = flow_state.get("court_type")
+    available_properties = flow_state.get("available_properties", [])
     
     # Edge case: Court selected but no property (data inconsistency)
     if court_id and not property_id:
         logger.warning("Data inconsistency: court_id set but property_id is None, clearing court")
         flow_state["court_id"] = None
-        flow_state["court_name"] = None
+        flow_state["court_type"] = None
         court_id = None
-        court_name = None
+        court_type = None
     
     # Case C: Both property and court selected
-    if property_id and court_id and property_name and court_name:
+    if property_id and court_id and property_name and court_type:
         return (
-            f"Welcome back! I see you were looking at {property_name} - {court_name}. "
+            f"Welcome back! I see you were looking at {property_name} - {court_type}. "
             f"Ready to continue with your booking?"
         )
     
     # Case B: Only property selected
-    if property_id and owner_properties:
+    if property_id and available_properties:
         # Find property in cached list
-        property_info = _find_property_by_id(owner_properties, property_id)
+        property_info = _find_property_by_id(available_properties, property_id)
         if property_info:
             return _generate_selected_property_greeting(property_info)
         elif property_name:
@@ -294,8 +340,8 @@ def _generate_returning_user_greeting(bot_memory: dict, flow_state: dict) -> str
             )
     
     # Case A: No property selected - show property list if available
-    if owner_properties and len(owner_properties) > 0:
-        return _generate_property_selection_greeting(owner_properties)
+    if available_properties and len(available_properties) > 0:
+        return _generate_property_selection_greeting(available_properties)
     
     # Fallback: Generic returning user greeting
     context = bot_memory.get("context", {})
@@ -443,8 +489,7 @@ def _generate_single_property_single_court_greeting(business_name: str, property
     Generate greeting for single property with single court.
     """
     property_name = property_info.get("name", "Facility")
-    court_name = court_info.get("name", "Court")
-    sport_type = court_info.get("sport_type", "")
+    court_type = court_info.get("sport_type") or court_info.get("name", "Court")
     address = property_info.get("address", "")
     city = property_info.get("city", "")
     state_name = property_info.get("state", "")
@@ -467,10 +512,7 @@ def _generate_single_property_single_court_greeting(business_name: str, property
     if maps_link:
         greeting_text += f"View on map: {maps_link}\n"
     
-    greeting_text += f"\n🏟️ Court: {court_name}"
-    if sport_type:
-        greeting_text += f" ({sport_type})"
-    greeting_text += "\n"
+    greeting_text += f"\n🏟️ Court: {court_type}\n"
     
     greeting_text += "\nHow can I help you today? I can:\n"
     greeting_text += "• Show you available time slots\n"

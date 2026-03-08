@@ -2,7 +2,7 @@
 Flow state management utilities.
 
 This module provides functions for managing flow_state, which contains temporary
-conversation state including current intent, booking progress, and cached data.
+conversation state including router results, pending actions, and cached data.
 Flow state is cleared after booking completion or cancellation.
 
 Requirements: 3.1, 3.9, 15.1, 15.5
@@ -29,33 +29,35 @@ def initialize_flow_state() -> Dict[str, Any]:
         flow_state = initialize_flow_state()
         # Returns:
         # {
-        #     "current_intent": None,
         #     "property_id": None,
         #     "property_name": None,
         #     "court_id": None,
-        #     "court_name": None,
-        #     "date": None,
-        #     "time_slot": None,
-        #     "booking_step": None,
-        #     "owner_properties": None,
-        #     "context": {}
+        #     "court_type": None,
+        #     "available_properties": [],
+        #     "owner_properties_initialized": False,
+        #     "last_node": None,
+        #     "awaiting_input": None,
+        #     "pending_actions": [],
+        #     "requested_actions": [],
+        #     "router_result": {},
+        #     "bot_response": "",
+        #     "available_courts": []
         # }
     
     Requirements: 3.1, 3.9
     """
     flow_state = {
-        "current_intent": None,
         "property_id": None,
         "property_name": None,
         "court_id": None,
-        "court_name": None,
-        "date": None,
-        "time_slot": None,
-        "booking_step": None,
-        "owner_properties": None,
+        "court_type": None,
+        "available_properties": [],
         "owner_properties_initialized": False,
         "last_node": None,
-        "context": {}
+        "awaiting_input": None,  # None | "property_selection" | "court_selection"
+        "pending_actions": [],  # actions waiting because some input was missing
+        "requested_actions": [],  # actions from current message
+        "available_courts": []
     }
     
     logger.debug("Initialized empty flow_state")
@@ -94,11 +96,11 @@ def ensure_flow_state_fields(flow_state: Dict[str, Any]) -> Dict[str, Any]:
     merged_state = default_state.copy()
     merged_state.update(flow_state)
     
-    # Special handling for context - merge dicts
-    if "context" in flow_state and isinstance(flow_state["context"], dict):
-        merged_context = default_state["context"].copy()
-        merged_context.update(flow_state["context"])
-        merged_state["context"] = merged_context
+    # Special handling for router_result - merge dicts
+    if "router_result" in flow_state and isinstance(flow_state["router_result"], dict):
+        merged_router_result = default_state["router_result"].copy()
+        merged_router_result.update(flow_state["router_result"])
+        merged_state["router_result"] = merged_router_result
     
     logger.debug("Ensured flow_state has all required fields")
     return merged_state
@@ -131,18 +133,17 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
     
     # Define expected fields (all are optional, but structure should exist)
     expected_fields = {
-        "current_intent",
         "property_id",
         "property_name",
         "court_id",
-        "court_name",
-        "date",
-        "time_slot",
-        "booking_step",
-        "owner_properties",
+        "court_type",
+        "available_properties",
         "owner_properties_initialized",
         "last_node",
-        "context"
+        "awaiting_input",
+        "pending_actions",
+        "requested_actions",
+        "available_courts"
     }
     
     # Check if all expected fields exist (values can be None)
@@ -155,9 +156,30 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
         return False
     
     # Validate context is a dict if present
-    if "context" in flow_state and flow_state["context"] is not None:
-        if not isinstance(flow_state["context"], dict):
-            logger.warning(f"Invalid context type: {type(flow_state['context'])}, expected dict")
+    if "router_result" in flow_state and flow_state["router_result"] is not None:
+        if not isinstance(flow_state["router_result"], dict):
+            logger.warning(f"Invalid router_result type: {type(flow_state['router_result'])}, expected dict")
+            return False
+    
+    # Validate list fields
+    if "pending_actions" in flow_state and flow_state["pending_actions"] is not None:
+        if not isinstance(flow_state["pending_actions"], list):
+            logger.warning(f"Invalid pending_actions type: {type(flow_state['pending_actions'])}, expected list")
+            return False
+    
+    if "requested_actions" in flow_state and flow_state["requested_actions"] is not None:
+        if not isinstance(flow_state["requested_actions"], list):
+            logger.warning(f"Invalid requested_actions type: {type(flow_state['requested_actions'])}, expected list")
+            return False
+    
+    if "available_properties" in flow_state and flow_state["available_properties"] is not None:
+        if not isinstance(flow_state["available_properties"], list):
+            logger.warning(f"Invalid available_properties type: {type(flow_state['available_properties'])}, expected list")
+            return False
+    
+    if "available_courts" in flow_state and flow_state["available_courts"] is not None:
+        if not isinstance(flow_state["available_courts"], list):
+            logger.warning(f"Invalid available_courts type: {type(flow_state['available_courts'])}, expected list")
             return False
     
     logger.debug("Flow state structure is valid")
@@ -173,7 +195,7 @@ def update_flow_state(
     
     Updates flow_state with new values from the updates dictionary.
     Performs a shallow merge for top-level fields and deep merge for
-    the context field to preserve existing context data.
+    the router_result field to preserve existing router data.
     
     Includes error handling for corrupted state.
     
@@ -186,10 +208,10 @@ def update_flow_state(
         
     Example:
         updated = update_flow_state(
-            current_flow_state={"property_id": None, "context": {"step": 1}},
-            updates={"property_id": 123, "context": {"property_name": "Court A"}}
+            current_flow_state={"property_id": None, "router_result": {"intent": "booking"}},
+            updates={"property_id": 123, "router_result": {"confidence": 0.95}}
         )
-        # Returns: {"property_id": 123, "context": {"step": 1, "property_name": "Court A"}}
+        # Returns: {"property_id": 123, "router_result": {"intent": "booking", "confidence": 0.95}}
     
     Requirements: 3.9, 15.1, 20.2
     """
@@ -221,18 +243,18 @@ def update_flow_state(
         logger.error(f"Error copying flow_state: {e}, reinitializing")
         updated_state = initialize_flow_state()
     
-    # Update all fields except context (shallow merge)
+    # Update all fields except router_result (shallow merge)
     for key, value in updates.items():
         try:
-            if key == "context":
-                # Deep merge for context field
-                if "context" not in updated_state or updated_state["context"] is None:
-                    updated_state["context"] = {}
+            if key == "router_result":
+                # Deep merge for router_result field
+                if "router_result" not in updated_state or updated_state["router_result"] is None:
+                    updated_state["router_result"] = {}
                 
                 if isinstance(value, dict):
-                    updated_state["context"].update(value)
+                    updated_state["router_result"].update(value)
                 else:
-                    logger.warning(f"Context update value is not a dict: {type(value)}")
+                    logger.warning(f"router_result update value is not a dict: {type(value)}")
             else:
                 # Shallow merge for other fields
                 updated_state[key] = value
@@ -263,98 +285,3 @@ def clear_flow_state() -> Dict[str, Any]:
     """
     logger.info("Clearing flow_state after booking completion/cancellation")
     return initialize_flow_state()
-
-
-def clear_booking_field(
-    flow_state: Dict[str, Any],
-    field_name: str
-) -> Dict[str, Any]:
-    """
-    Clear a specific booking field and its related fields from flow_state.
-    
-    This function supports selective field updates for reversibility.
-    When a user changes a specific booking detail, only that field and
-    dependent fields are cleared while preserving other information.
-    
-    Field clearing rules:
-    - property: clears property_id, property_name, and all downstream fields
-    - court: clears court_id, court_name, and all downstream fields
-    - date: clears date and all downstream fields
-    - time_slot: clears only time_slot
-    
-    Args:
-        flow_state: Current flow state dictionary
-        field_name: Name of the field to clear ("property", "court", "date", "time_slot")
-        
-    Returns:
-        Dict[str, Any]: Updated flow_state with cleared fields
-        
-    Example:
-        # User wants to change property
-        flow_state = clear_booking_field(flow_state, "property")
-        # Clears: property_id, property_name, court_id, court_name, date, time_slot
-        
-    Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6
-    """
-    if not isinstance(flow_state, dict):
-        logger.warning("Flow state is not a dict, cannot clear field")
-        return flow_state
-    
-    # Create a copy to avoid mutating the original
-    updated_state = flow_state.copy()
-    
-    if field_name == "property":
-        # Clear property and all downstream fields
-        updated_state["property_id"] = None
-        updated_state["property_name"] = None
-        updated_state["court_id"] = None
-        updated_state["court_name"] = None
-        updated_state["date"] = None
-        updated_state["time_slot"] = None
-        updated_state["booking_step"] = None
-        logger.info("Cleared property and all downstream booking fields")
-        
-    elif field_name == "court":
-        # Clear court and all downstream fields
-        updated_state["court_id"] = None
-        updated_state["court_name"] = None
-        updated_state["date"] = None
-        updated_state["time_slot"] = None
-        # Update booking step to property_selected
-        if updated_state.get("property_id"):
-            updated_state["booking_step"] = "property_selected"
-        else:
-            updated_state["booking_step"] = None
-        logger.info("Cleared court and all downstream booking fields")
-        
-    elif field_name == "date":
-        # Clear date and all downstream fields
-        updated_state["date"] = None
-        updated_state["time_slot"] = None
-        # Update booking step to court_selected
-        if updated_state.get("court_id"):
-            updated_state["booking_step"] = "court_selected"
-        elif updated_state.get("property_id"):
-            updated_state["booking_step"] = "property_selected"
-        else:
-            updated_state["booking_step"] = None
-        logger.info("Cleared date and all downstream booking fields")
-        
-    elif field_name == "time_slot":
-        # Clear only time_slot
-        updated_state["time_slot"] = None
-        # Update booking step to date_selected
-        if updated_state.get("date"):
-            updated_state["booking_step"] = "date_selected"
-        elif updated_state.get("court_id"):
-            updated_state["booking_step"] = "court_selected"
-        elif updated_state.get("property_id"):
-            updated_state["booking_step"] = "property_selected"
-        else:
-            updated_state["booking_step"] = None
-        logger.info("Cleared time_slot field")
-        
-    else:
-        logger.warning(f"Unknown field name for clearing: {field_name}")
-    
-    return updated_state

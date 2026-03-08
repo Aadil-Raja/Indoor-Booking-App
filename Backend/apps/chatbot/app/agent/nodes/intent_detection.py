@@ -61,7 +61,6 @@ async def intent_detection(
             user_message=user_message,
             recent_messages=recent_messages,
             last_node=flow_state.get("last_node"),
-            current_intent=flow_state.get("current_intent"),
             llm_provider=llm_provider,
             chat_id=state['chat_id']
         )
@@ -83,7 +82,6 @@ async def _llm_routing_decision(
     user_message: str,
     recent_messages: list,
     last_node: str,
-    current_intent: str,
     llm_provider: LLMProvider,
     chat_id: str
 ) -> str:
@@ -97,8 +95,7 @@ async def _llm_routing_decision(
     prompt = get_routing_prompt(
         message=user_message,
         recent_messages=recent_messages,
-        last_node=last_node,
-        current_intent=current_intent
+        last_node=last_node
     )
     
     try:

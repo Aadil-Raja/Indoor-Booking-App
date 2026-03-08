@@ -29,7 +29,6 @@ Analyze the user's message and decide which handler should process it.
 
 **Current Context:**
 - Last action: {last_node}
-- Current intent: {current_intent}
 
 **User Message:**
 "{message}"
@@ -47,8 +46,7 @@ Respond with ONLY a JSON object:
 def get_routing_prompt(
     message: str,
     recent_messages: list = None,
-    last_node: str = None,
-    current_intent: str = None
+    last_node: str = None
 ) -> str:
     """
     Get the routing prompt for LLM decision.
@@ -68,11 +66,9 @@ def get_routing_prompt(
     
     # Format context
     last_node_str = last_node if last_node else "None (new conversation)"
-    current_intent_str = current_intent if current_intent else "None"
     
     return INTENT_ROUTING_PROMPT.format(
         message=message,
         conversation_context=conversation_context,
-        last_node=last_node_str,
-        current_intent=current_intent_str
+        last_node=last_node_str
     )

@@ -33,15 +33,14 @@ def search_properties(
     if city:
         query = query.filter(Property.city.ilike(f"%{city}%"))
 
-        if sport_type:
+    if sport_type:
         query = query.filter(Court.sport_type.ilike(f"%{sport_type}%"))
 
-
-        if min_price is not None:
-            query = query.filter(CourtPricing.price_per_hour >= min_price)
+    if min_price is not None:
+        query = query.filter(CourtPricing.price_per_hour >= min_price)
     
-        if max_price is not None:
-            query = query.filter(CourtPricing.price_per_hour <= max_price)
+    if max_price is not None:
+        query = query.filter(CourtPricing.price_per_hour <= max_price)
 
         
     # Count total

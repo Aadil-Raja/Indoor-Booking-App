@@ -16,8 +16,7 @@ from app.agent.state.conversation_state import ConversationState
 from app.agent.nodes.basic_nodes import load_chat
 from app.agent.nodes.intent_detection import intent_detection
 from app.agent.nodes.greeting import greeting_handler
-# from app.agent.nodes.indoor_search import indoor_search_handler  # Replaced by information_handler
-from app.agent.nodes.information import information_handler  # New LangChain agent-based node
+from app.agent.graphs.information_subgraph import create_information_subgraph
 from app.agent.graphs.booking_subgraph import create_booking_subgraph
 
 logger = logging.getLogger(__name__)
@@ -64,9 +63,9 @@ def create_main_graph(
         return await greeting_handler(s, llm_provider)
     graph.add_node("greeting", greeting_wrapper)
     
-    async def information_wrapper(s):
-        return await information_handler(s, llm_provider)
-    graph.add_node("information", information_wrapper)
+    # Add information subgraph
+    information_subgraph = create_information_subgraph(llm_provider)
+    graph.add_node("information", information_subgraph)
     
     # Add booking subgraph
     booking_subgraph = create_booking_subgraph(tools)
