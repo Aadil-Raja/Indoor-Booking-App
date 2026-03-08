@@ -30,6 +30,8 @@ async def intent_detection(
     
     Uses conversation context for better routing of ambiguous messages.
     Falls back to "greeting" if LLM fails.
+    
+    New users (owner_properties not initialized) are forced to greeting.
     """
     user_message = state["user_message"]
     recent_messages = state.get("messages", [])
@@ -40,7 +42,20 @@ async def intent_detection(
         f"message_preview={user_message[:50]}..."
     )
     
-    # Use LLM for routing decision
+    # Check if owner_properties have been initialized
+    owner_properties_initialized = flow_state.get("owner_properties_initialized", False)
+    
+    if not owner_properties_initialized:
+        # New user - force to greeting to initialize properties
+        logger.info(
+            f"New user detected (owner_properties not initialized) for chat {state['chat_id']}, "
+            f"forcing route to greeting"
+        )
+        state["next_node"] = "greeting"
+        state["is_first_message"] = True
+        return state
+    
+    # Returning user - use LLM for routing decision
     if llm_provider:
         next_node = await _llm_routing_decision(
             user_message=user_message,

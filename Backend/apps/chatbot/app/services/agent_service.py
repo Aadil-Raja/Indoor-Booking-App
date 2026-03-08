@@ -170,12 +170,17 @@ class AgentService:
             bot_memory = _ensure_bot_memory_structure(bot_memory)
         
         # Initialize flow_state properly with all fields
-        from app.agent.state.flow_state_manager import initialize_flow_state, validate_flow_state
+        from app.agent.state.flow_state_manager import initialize_flow_state, ensure_flow_state_fields
         
         flow_state = chat.flow_state or {}
-        if not flow_state or not validate_flow_state(flow_state):
+        if not flow_state:
+            # New chat - initialize fresh
             flow_state = initialize_flow_state()
-            logger.info(f"Initialized flow_state for chat {chat.id}")
+            logger.info(f"Initialized flow_state for new chat {chat.id}")
+        else:
+            # Existing chat - ensure all fields exist without losing data
+            flow_state = ensure_flow_state_fields(flow_state)
+            logger.debug(f"Ensured flow_state fields for chat {chat.id}")
         
         return {
             # IDs (always present from chat object)

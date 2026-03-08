@@ -15,12 +15,9 @@ from shared.services import court_service
 logger = logging.getLogger(__name__)
 
 
-def _get_management_services():
+def _get_court_service():
     """
-    Dynamically import management services to avoid import conflicts.
-    
-    This function imports the management app services at runtime to prevent
-    conflicts with the chatbot's app.services module.
+    Import court_service from shared.
     """
     import sys
     from pathlib import Path
@@ -30,45 +27,13 @@ def _get_management_services():
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
     
-    # Add management app path at the beginning to prioritize it
-    management_path = backend_path / "apps" / "management"
-    if str(management_path) not in sys.path:
-        sys.path.insert(0, str(management_path))
-    
-    # Import services from management app
-    # We need to temporarily remove chatbot path to avoid conflicts
-    chatbot_path = str(Path(__file__).parent.parent.parent.parent.parent)
-    original_path = sys.path.copy()
-    
+    # Import court_service from shared
     try:
-        # Remove chatbot path temporarily
-        if chatbot_path in sys.path:
-            sys.path.remove(chatbot_path)
-        
-        # Import directly from service modules
-        from app.services import court_service, public_service
-        return court_service, public_service
-    except ImportError:
-        # Fallback: import modules directly
-        import importlib.util
-        
-        court_service_path = management_path / "app" / "services" / "court_service.py"
-        public_service_path = management_path / "app" / "services" / "public_service.py"
-        
-        # Load court_service
-        spec = importlib.util.spec_from_file_location("court_service", court_service_path)
-        court_service = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(court_service)
-        
-        # Load public_service
-        spec = importlib.util.spec_from_file_location("public_service", public_service_path)
-        public_service = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(public_service)
-        
-        return court_service, public_service
-    finally:
-        # Restore original path
-        sys.path = original_path
+        from shared.services import court_service
+        return court_service
+    except ImportError as e:
+        logger.error(f"Failed to import court_service from shared: {e}")
+        raise
 
 
 async def search_courts_tool(
@@ -106,8 +71,8 @@ async def search_courts_tool(
             f"property_id={property_id}, limit={limit}"
         )
         
-        # Get management services
-        court_service, public_service = _get_management_services()
+        # Get court service from shared
+        court_service = _get_court_service()
         
         # If property_id is specified, get courts for that property
         if property_id:
@@ -215,8 +180,8 @@ async def get_court_details_tool(court_id: int) -> Optional[Dict[str, Any]]:
     try:
         logger.info(f"Getting court details: court_id={court_id}")
         
-        # Get management services
-        court_service, public_service = _get_management_services()
+        # Get court service from shared
+        court_service = _get_court_service()
         
         # Call sync service using the bridge
         result = await call_sync_service(
@@ -272,8 +237,8 @@ async def get_property_courts_tool(
             f"owner_id={owner_id}"
         )
         
-        # Get management services
-        court_service, public_service = _get_management_services()
+        # Get court service from shared
+        court_service = _get_court_service()
         
         if owner_id:
             # Use owner-specific service

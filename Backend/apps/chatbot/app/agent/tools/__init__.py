@@ -40,6 +40,7 @@ from app.agent.tools.property_tool import (
     search_properties_tool,
     get_property_details_tool,
     get_owner_properties_tool,
+    get_property_details_public_tool,
 )
 
 from app.agent.tools.court_tool import (
@@ -64,6 +65,10 @@ from app.agent.tools.booking_tool import (
     cancel_booking_tool,
 )
 
+from app.agent.tools.owner_profile_tool import (
+    get_owner_profile_tool,
+)
+
 from app.agent.tools.information_tools import (
     search_properties_tool as info_search_properties_tool,
     get_property_details_tool as info_get_property_details_tool,
@@ -84,6 +89,10 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "search_properties": search_properties_tool,
     "get_property_details": get_property_details_tool,
     "get_owner_properties": get_owner_properties_tool,
+    "get_property_details_public": get_property_details_public_tool,
+    
+    # Owner profile tools
+    "get_owner_profile": get_owner_profile_tool,
     
     # Court tools (legacy/direct use)
     "search_courts": search_courts_tool,
@@ -242,6 +251,8 @@ __all__ = [
     "search_properties_tool",
     "get_property_details_tool",
     "get_owner_properties_tool",
+    "get_property_details_public_tool",
+    "get_owner_profile_tool",
     "search_courts_tool",
     "get_court_details_tool",
     "get_property_courts_tool",

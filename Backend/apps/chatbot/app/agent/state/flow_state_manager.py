@@ -53,12 +53,55 @@ def initialize_flow_state() -> Dict[str, Any]:
         "time_slot": None,
         "booking_step": None,
         "owner_properties": None,
+        "owner_properties_initialized": False,
         "last_node": None,
         "context": {}
     }
     
     logger.debug("Initialized empty flow_state")
     return flow_state
+
+
+def ensure_flow_state_fields(flow_state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure flow_state has all required fields without losing existing data.
+    
+    Adds missing fields with default values while preserving existing data.
+    This is used when the flow_state structure is updated with new fields.
+    
+    Args:
+        flow_state: Existing flow state dictionary
+        
+    Returns:
+        Dict[str, Any]: Flow state with all required fields
+        
+    Example:
+        # Old flow_state missing new fields
+        old_state = {"property_id": 123, "court_id": 456}
+        
+        # Ensure all fields exist
+        updated = ensure_flow_state_fields(old_state)
+        # Returns: {"property_id": 123, "court_id": 456, "owner_properties_initialized": False, ...}
+    """
+    if not isinstance(flow_state, dict):
+        logger.warning(f"Invalid flow_state type: {type(flow_state)}, initializing new")
+        return initialize_flow_state()
+    
+    # Get default structure
+    default_state = initialize_flow_state()
+    
+    # Merge: keep existing values, add missing fields with defaults
+    merged_state = default_state.copy()
+    merged_state.update(flow_state)
+    
+    # Special handling for context - merge dicts
+    if "context" in flow_state and isinstance(flow_state["context"], dict):
+        merged_context = default_state["context"].copy()
+        merged_context.update(flow_state["context"])
+        merged_state["context"] = merged_context
+    
+    logger.debug("Ensured flow_state has all required fields")
+    return merged_state
 
 
 def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
@@ -97,6 +140,8 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
         "time_slot",
         "booking_step",
         "owner_properties",
+        "owner_properties_initialized",
+        "last_node",
         "context"
     }
     
