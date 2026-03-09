@@ -34,7 +34,7 @@ def search_properties(
         query = query.filter(Property.city.ilike(f"%{city}%"))
 
         if sport_type:
-            query = query.filter(Court.sport_type.ilike(f"%{sport_type}%"))
+            query = query.filter(Court.sport_types.contains([sport_type.lower()]))
 
 
         if min_price is not None:
@@ -62,7 +62,7 @@ def search_properties(
         items.append({
             "id": court.id,
             "name": court.name,
-            "sport_type": court.sport_type,
+            "sport_types": court.sport_types,
             "description": court.description,
             "min_price": min_court_price,
             "property": {
@@ -129,7 +129,7 @@ def get_property_details(db: Session, *, property_id: int):
             {
                 "id": c.id,
                 "name": c.name,
-                "sport_type": c.sport_type,
+                "sport_types": c.sport_types,
                 "description": c.description,
                 "specifications": c.specifications,
                 "amenities": c.amenities,
@@ -183,7 +183,7 @@ def get_court_details(db: Session, *, court_id: int):
     data = {
         "id": court.id,
         "name": court.name,
-        "sport_type": court.sport_type,
+        "sport_types": court.sport_types,
         "description": court.description,
         "specifications": court.specifications,
         "amenities": court.amenities,
@@ -454,7 +454,7 @@ def search_courts(
         court_data = {
             "id": court.id,
             "name": court.name,
-            "sport_type": court.sport_type,
+            "sport_types": court.sport_types,
             "description": court.description,
             "specifications": court.specifications,
             "amenities": court.amenities,

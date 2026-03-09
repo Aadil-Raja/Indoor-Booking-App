@@ -1,6 +1,16 @@
 import api from './api';
 
 export const courtService = {
+  // Get available sport types
+  async getSportTypes() {
+    try {
+      const response = await api.get('/api/sport-types');
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
   // Get all courts for a property
   async getPropertyCourts(propertyId) {
     try {
