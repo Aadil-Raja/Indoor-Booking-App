@@ -13,6 +13,8 @@ from typing import Dict, Any
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.prompts.information_prompts import get_information_router_prompt
+from app.agent.utils.llm_logger import get_llm_logger
+from app.agent.utils.json_parser import parse_llm_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -52,46 +54,34 @@ async def information_router(
         # Call LLM to analyze the message
         llm_response = await llm_provider.generate(prompt)
         
+        # Log the LLM call
+        llm_logger = get_llm_logger()
+        llm_logger.log_llm_call(
+            node_name="information_router",
+            prompt=prompt,
+            response=llm_response,
+            parameters=None
+        )
+        
         # Log full LLM response
         logger.info(f"[ROUTER LLM RESPONSE] Chat {chat_id}:\n{llm_response}")
         
-        # Parse JSON response - extract JSON from response
-        try:
-            # Try to find JSON in the response (handle cases where LLM adds extra text)
-            json_str = llm_response.strip()
-            
-            # If response has markdown code blocks, extract JSON
-            if "```json" in json_str:
-                json_str = json_str.split("```json")[1].split("```")[0].strip()
-            elif "```" in json_str:
-                json_str = json_str.split("```")[1].split("```")[0].strip()
-            
-            # Find the first { and last } to extract just the JSON object
-            start_idx = json_str.find("{")
-            end_idx = json_str.rfind("}") + 1
-            
-            if start_idx != -1 and end_idx > start_idx:
-                json_str = json_str[start_idx:end_idx]
-            
-            router_result = json.loads(json_str)
-            
-            # Log parsed result
-            logger.info(f"[ROUTER PARSED RESULT] Chat {chat_id}: {json.dumps(router_result, indent=2)}")
-            
-        except json.JSONDecodeError as e:
-            logger.error(
-                f"Failed to parse router JSON for chat {chat_id}: {e}\n"
-                f"Response was: {llm_response}"
-            )
-            # Fallback to unclear message
-            router_result = {
+        # Parse JSON response using utility function
+        router_result = parse_llm_json_response(
+            response=llm_response,
+            fallback={
                 "message_type": "unclear",
                 "reply_target": None,
                 "requested_actions": [],
                 "mentioned_property_name": None,
                 "mentioned_court_name": None,
                 "unclear": True
-            }
+            },
+            context=f"information_router for chat {chat_id}"
+        )
+        
+        # Log parsed result
+        logger.info(f"[ROUTER PARSED RESULT] Chat {chat_id}: {json.dumps(router_result, indent=2)}")
         
         # Store router result in flow_state
         flow_state["router_result"] = router_result

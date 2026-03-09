@@ -107,8 +107,16 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
     graph.add_edge("ask_property", "format_response")
     graph.add_edge("ask_court", "format_response")
     
-    # execute_actions goes to format_response
-    graph.add_edge("execute_actions", "format_response")
+    # execute_actions can go to ask nodes OR format_response (conditional)
+    graph.add_conditional_edges(
+        "execute_actions",
+        route_after_execute,
+        {
+            "ask_property": "ask_property",
+            "ask_court": "ask_court",
+            "format_response": "format_response"
+        }
+    )
     
     # format_response goes to END
     graph.add_edge("format_response", END)
@@ -144,3 +152,29 @@ def route_check_requirements(state: ConversationState) -> str:
     else:
         logger.warning(f"Unknown next_step '{next_step}', defaulting to execute_actions")
         return "execute_actions"
+
+
+def route_after_execute(state: ConversationState) -> str:
+    """
+    Route after execute_actions based on after_execute.
+    
+    This function reads flow_state["after_execute"] and routes to:
+    - "ask_property" if we need to ask for property
+    - "ask_court" if we need to ask for court
+    - "format_response" if we're done (no more questions)
+    
+    Args:
+        state: ConversationState containing flow_state
+        
+    Returns:
+        Next node name
+    """
+    flow_state = state.get("flow_state", {})
+    after_execute = flow_state.get("after_execute")
+    
+    logger.debug(f"Routing after execute_actions: after_execute={after_execute}")
+    
+    if after_execute in ["ask_property", "ask_court"]:
+        return after_execute
+    else:
+        return "format_response"

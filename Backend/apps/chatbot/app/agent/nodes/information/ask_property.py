@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any
 
 from app.agent.state.conversation_state import ConversationState
+from app.agent.utils.llm_logger import get_llm_logger
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,9 @@ async def ask_property(
     # Set awaiting_input
     flow_state["awaiting_input"] = "property_selection"
     
-    # Move requested_actions to pending_actions
-    requested_actions = flow_state.get("requested_actions", [])
-    flow_state["pending_actions"] = requested_actions
-    flow_state["requested_actions"] = []
+    # Note: requested_actions and pending_actions are already set by check_requirements
+    # requested_actions = actions that can execute now (if any)
+    # pending_actions = actions that need property/court
     
     # Prepare response
     if available_properties:
@@ -56,13 +56,27 @@ async def ask_property(
     else:
         response = "No properties available. Please contact support."
     
-    # Set response
-    state["response_content"] = response
-    state["response_type"] = "text"
+    # Store question in flow_state (not response_content directly)
+    # This allows format_response to combine with execution results
+    flow_state["question"] = response
     
     # Track last node
     flow_state["last_node"] = "information-ask_property"
     state["flow_state"] = flow_state
+    
+    # Log ask property action
+    llm_logger = get_llm_logger()
+    ask_summary = (
+        f"Pending Actions: {flow_state.get('pending_actions')}\n"
+        f"Available Properties: {len(available_properties)}\n"
+        f"Response:\n{response}"
+    )
+    llm_logger.log_llm_call(
+        node_name="ask_property",
+        prompt="[No LLM call - asks user to select property from available list]",
+        response=ask_summary,
+        parameters=None
+    )
     
     logger.info(
         f"[ASK PROPERTY] Chat {chat_id}:\n"

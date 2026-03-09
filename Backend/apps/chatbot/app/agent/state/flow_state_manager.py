@@ -1,9 +1,26 @@
 """
 Flow state management utilities.
 
-This module provides functions for managing flow_state, which contains temporary
-conversation state including router results, pending actions, and cached data.
-Flow state is cleared after booking completion or cancellation.
+This module provides functions for managing flow_state, which contains both
+persistent and temporary conversation state.
+
+Persistent fields (saved to database):
+- property_id, property_name: Selected property
+- court_id, court_type: Selected court
+- available_properties: Cached property list
+- available_courts: Cached court list
+- owner_properties_initialized: Initialization flag
+- last_node: Last executed node
+- awaiting_input: What input we're waiting for
+- pending_actions: Actions waiting for input
+
+Temporary fields (NOT saved to database):
+- router_result: LLM analysis result
+- execution_results: Action execution results
+- validation_error: Validation error flag
+- bot_response: Temporary response text
+- next_step: Routing decision
+- requested_actions: Current request actions
 
 Requirements: 3.1, 3.9, 15.1, 15.5
 """
@@ -12,6 +29,31 @@ from typing import Dict, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# Persistent fields that SHOULD be saved to database
+PERSISTABLE_FIELDS = {
+    "property_id",
+    "property_name",
+    "court_id",
+    "court_type",
+    "available_properties",
+    "owner_properties_initialized",
+    "last_node",
+    "awaiting_input",
+    "pending_actions",
+    "available_courts"
+}
+
+# Temporary fields that should NOT be saved to database
+TEMPORARY_FIELDS = {
+    "router_result",
+    "execution_results",
+    "validation_error",
+    "bot_response",
+    "next_step",
+    "requested_actions"
+}
 
 
 def initialize_flow_state() -> Dict[str, Any]:
@@ -38,9 +80,6 @@ def initialize_flow_state() -> Dict[str, Any]:
         #     "last_node": None,
         #     "awaiting_input": None,
         #     "pending_actions": [],
-        #     "requested_actions": [],
-        #     "router_result": {},
-        #     "bot_response": "",
         #     "available_courts": []
         # }
     
@@ -56,7 +95,6 @@ def initialize_flow_state() -> Dict[str, Any]:
         "last_node": None,
         "awaiting_input": None,  # None | "property_selection" | "court_selection"
         "pending_actions": [],  # actions waiting because some input was missing
-        "requested_actions": [],  # actions from current message
         "available_courts": []
     }
     
@@ -142,7 +180,6 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
         "last_node",
         "awaiting_input",
         "pending_actions",
-        "requested_actions",
         "available_courts"
     }
     
@@ -165,11 +202,6 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
     if "pending_actions" in flow_state and flow_state["pending_actions"] is not None:
         if not isinstance(flow_state["pending_actions"], list):
             logger.warning(f"Invalid pending_actions type: {type(flow_state['pending_actions'])}, expected list")
-            return False
-    
-    if "requested_actions" in flow_state and flow_state["requested_actions"] is not None:
-        if not isinstance(flow_state["requested_actions"], list):
-            logger.warning(f"Invalid requested_actions type: {type(flow_state['requested_actions'])}, expected list")
             return False
     
     if "available_properties" in flow_state and flow_state["available_properties"] is not None:
@@ -285,3 +317,74 @@ def clear_flow_state() -> Dict[str, Any]:
     """
     logger.info("Clearing flow_state after booking completion/cancellation")
     return initialize_flow_state()
+
+
+def filter_flow_state_for_db(flow_state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Filter flow_state to include only persistable fields for database storage.
+    
+    Removes temporary fields that should not be saved to the database,
+    keeping only the fields that need to persist across requests.
+    
+    Args:
+        flow_state: Full flow state dictionary (may contain temporary fields)
+        
+    Returns:
+        Dict[str, Any]: Filtered flow state with only persistable fields
+        
+    Example:
+        full_state = {
+            "property_id": 123,
+            "court_id": 456,
+            "router_result": {...},  # temporary - removed
+            "bot_response": "...",   # temporary - removed
+            "available_properties": [...]  # persistent - kept
+        }
+        
+        filtered = filter_flow_state_for_db(full_state)
+        # Returns: {"property_id": 123, "court_id": 456, "available_properties": [...]}
+    """
+    if not isinstance(flow_state, dict):
+        logger.warning(f"Invalid flow_state type: {type(flow_state)}, returning empty dict")
+        return {}
+    
+    # Filter to only include persistable fields
+    filtered_state = {
+        key: value
+        for key, value in flow_state.items()
+        if key in PERSISTABLE_FIELDS
+    }
+    
+    # Log if any fields were filtered out
+    filtered_out = set(flow_state.keys()) - PERSISTABLE_FIELDS
+    if filtered_out:
+        logger.debug(f"Filtered out temporary fields from flow_state: {filtered_out}")
+    
+    logger.debug(f"Filtered flow_state: kept {len(filtered_state)} fields, removed {len(filtered_out)} fields")
+    
+    return filtered_state
+
+
+def validate_persistable_fields(flow_state: Dict[str, Any]) -> bool:
+    """
+    Validate that flow_state contains only persistable fields.
+    
+    This is useful for testing and validation to ensure no temporary
+    fields are accidentally being saved to the database.
+    
+    Args:
+        flow_state: Flow state dictionary to validate
+        
+    Returns:
+        bool: True if all fields are persistable, False otherwise
+    """
+    if not isinstance(flow_state, dict):
+        return False
+    
+    extra_fields = set(flow_state.keys()) - PERSISTABLE_FIELDS
+    
+    if extra_fields:
+        logger.warning(f"Flow state contains non-persistable fields: {extra_fields}")
+        return False
+    
+    return True

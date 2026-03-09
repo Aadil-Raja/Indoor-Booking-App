@@ -17,6 +17,7 @@ import logging
 from typing import Dict, Any, Optional, List
 
 from app.agent.state.conversation_state import ConversationState
+from app.agent.utils.llm_logger import get_llm_logger
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,21 @@ async def validate_and_update_state(
         return state
 
     property_changed = False
+
+    # ---------------------------------
+    # REPLY TARGET VALIDATION (Hybrid Safety Check)
+    # ---------------------------------
+    awaiting_input = flow_state.get("awaiting_input")
+    
+    # Validate reply_target matches awaiting_input
+    if reply_target and reply_target != awaiting_input:
+        logger.warning(
+            f"[VALIDATION MISMATCH] Chat {chat_id}: "
+            f"LLM set reply_target='{reply_target}' but awaiting_input='{awaiting_input}'. "
+            f"Treating as mention instead of reply."
+        )
+        # Nullify reply_target - will be handled by mention validation sections
+        reply_target = None
 
     # ---------------------------------
     # PROPERTY REPLY RESOLUTION
@@ -111,12 +127,43 @@ async def validate_and_update_state(
     # CONTEXT RESET AFTER PROPERTY CHANGE
     # ---------------------------------
     if property_changed:
-        logger.info(f"Property changed for chat {chat_id}, resetting context")
+        logger.info(f"Property changed for chat {chat_id}, checking if court type exists at new property")
 
-        flow_state["court_id"] = None
-        flow_state["court_type"] = None
-        flow_state["date"] = None
-        flow_state["slot"] = None
+        old_court_type = flow_state.get("court_type")
+        new_property_id = flow_state.get("property_id")
+        
+        # Try to find a court with the same sport_type at the new property
+        if old_court_type and available_courts:
+            matching_court = None
+            for court in available_courts:
+                if (court.get("property_id") == new_property_id and 
+                    court.get("sport_type") == old_court_type):
+                    matching_court = court
+                    break
+            
+            if matching_court:
+                # Same court type exists at new property - preserve context
+                logger.info(
+                    f"Court type '{old_court_type}' exists at new property, "
+                    f"updating court_id to {matching_court['id']}"
+                )
+                flow_state["court_id"] = matching_court["id"]
+                flow_state["court_type"] = old_court_type
+                # date and slot remain unchanged
+            else:
+                # Court type doesn't exist at new property - reset court only
+                logger.info(
+                    f"Court type '{old_court_type}' not found at new property, "
+                    f"resetting court_id and court_type"
+                )
+                flow_state["court_id"] = None
+                flow_state["court_type"] = None
+                # date and slot remain unchanged
+        else:
+            # No previous court type - just reset court fields
+            flow_state["court_id"] = None
+            flow_state["court_type"] = None
+            # date and slot remain unchanged
 
     active_property_id = flow_state.get("property_id")
 
@@ -175,28 +222,49 @@ async def validate_and_update_state(
             return state
 
     # ---------------------------------
-    # REQUESTED ACTIONS
+    # REQUESTED ACTIONS (Merge with Pending)
     # ---------------------------------
 
     pending_actions = flow_state.get("pending_actions", [])
 
-    if not requested_actions and pending_actions:
+    if requested_actions and pending_actions:
+        # Merge: new actions first, then add pending actions (deduplicated)
+        combined = list(requested_actions)
+        for action in pending_actions:
+            if action not in combined:
+                combined.append(action)
+        flow_state["requested_actions"] = combined
+        logger.debug(
+            f"Merged actions for chat {chat_id}: "
+            f"new={requested_actions}, pending={pending_actions}, combined={combined}"
+        )
+    elif pending_actions:
+        # Only pending actions, no new ones
         flow_state["requested_actions"] = pending_actions
+        logger.debug(f"Restored pending actions for chat {chat_id}: {pending_actions}")
     else:
+        # Only new actions, no pending
         flow_state["requested_actions"] = requested_actions
 
     state["flow_state"] = flow_state
     
-    # Set a temporary response so we can see the state changes
-    state["response_content"] = (
-        f"✅ State validated and updated:\n\n"
-        f"Property ID: {flow_state.get('property_id')}\n"
-        f"Court ID: {flow_state.get('court_id')}\n"
-        f"Requested Actions: {flow_state.get('requested_actions')}\n"
-        f"Awaiting Input: {flow_state.get('awaiting_input')}\n\n"
-        f"Router Result:\n{router_result}"
+    # Log validation result
+    llm_logger = get_llm_logger()
+    validation_summary = (
+        f"Router Result: {router_result}\n\n"
+        f"Validation Results:\n"
+        f"  Property: {flow_state.get('property_name')} (ID: {flow_state.get('property_id')})\n"
+        f"  Court: {flow_state.get('court_type')} (ID: {flow_state.get('court_id')})\n"
+        f"  Requested Actions: {flow_state.get('requested_actions')}\n"
+        f"  Awaiting Input: {flow_state.get('awaiting_input')}\n"
+        f"  Validation Error: {flow_state.get('validation_error')}"
     )
-    state["response_type"] = "text"
+    llm_logger.log_llm_call(
+        node_name="validate_and_update_state",
+        prompt="[No LLM call - validates router result and updates flow_state]",
+        response=validation_summary,
+        parameters=None
+    )
     
     # Track last node
     flow_state["last_node"] = "information-validate"

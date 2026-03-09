@@ -9,7 +9,6 @@ Simple routing only:
 
 from typing import Optional
 import logging
-import json
 
 from langchain_core.messages import HumanMessage
 
@@ -17,6 +16,8 @@ from app.agent.state.conversation_state import ConversationState
 from app.services.llm.base import LLMProvider, LLMProviderError
 from app.services.llm.langchain_wrapper import create_langchain_llm
 from app.agent.prompts.intent_prompts import get_routing_prompt
+from app.agent.utils.llm_logger import get_llm_logger
+from app.agent.utils.json_parser import parse_llm_json_response, extract_json_field
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,9 @@ async def _llm_routing_decision(
         last_node=last_node
     )
     
+    # Get LLM logger
+    llm_logger = get_llm_logger()
+    
     try:
         # Create LangChain ChatOpenAI instance
         llm = create_langchain_llm(
@@ -108,17 +112,30 @@ async def _llm_routing_decision(
         
         # Call LLM
         response = await llm.ainvoke([HumanMessage(content=prompt)])
+        response_content = response.content.strip()
         
-        # Parse JSON response
-        try:
-            llm_response = json.loads(response.content.strip())
-            next_node = llm_response.get("next_node", "greeting")
-        except json.JSONDecodeError as e:
-            logger.error(
-                f"Failed to parse LLM response for chat {chat_id}: {e}. "
-                f"Response: {response.content[:200]}"
-            )
-            return "greeting"
+        # Log the LLM call
+        llm_logger.log_llm_call(
+            node_name="intent_detection",
+            prompt=prompt,
+            response=response_content,
+            parameters={"temperature": 0.0, "max_tokens": 50}
+        )
+        
+        # Parse JSON response using utility function
+        llm_response = parse_llm_json_response(
+            response=response_content,
+            fallback={"next_node": "greeting"},
+            context=f"intent_detection for chat {chat_id}"
+        )
+        
+        # Extract next_node with validation
+        next_node = extract_json_field(
+            parsed_json=llm_response,
+            field="next_node",
+            default="greeting",
+            field_type=str
+        )
         
         # Validate next_node
         valid_nodes = ["greeting", "information", "booking"]

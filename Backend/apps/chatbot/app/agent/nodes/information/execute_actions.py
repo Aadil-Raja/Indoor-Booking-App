@@ -10,6 +10,7 @@ from typing import Dict, Any
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.tools import TOOL_REGISTRY
+from app.agent.utils.llm_logger import get_llm_logger
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,27 @@ async def execute_actions(
     # Track last node
     flow_state["last_node"] = "information-execute_actions"
     state["flow_state"] = flow_state
+    
+    # Log execution results
+    llm_logger = get_llm_logger()
+    execution_summary = (
+        f"Executed Actions: {list(results.keys())}\n"
+        f"Results Summary:\n"
+    )
+    for action, result in results.items():
+        status = result.get("status")
+        if status == "success":
+            execution_summary += f"  ✓ {action}: Success\n"
+        else:
+            error = result.get("error", "Unknown error")
+            execution_summary += f"  ✗ {action}: Failed - {error}\n"
+    
+    llm_logger.log_llm_call(
+        node_name="execute_actions",
+        prompt=f"[No LLM call - executes backend API calls for: {list(results.keys())}]",
+        response=execution_summary,
+        parameters=None
+    )
     
     logger.info(
         f"[EXECUTE ACTIONS] Chat {chat_id}:\n"

@@ -11,6 +11,7 @@ import logging
 from typing import Dict, Any
 
 from app.agent.state.conversation_state import ConversationState
+from app.agent.utils.llm_logger import get_llm_logger
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ async def format_response(
         state["flow_state"] = flow_state
         return state
     
-    # Check for bot_response (set by ask_property or ask_court)
+    # Check for bot_response (legacy - for backward compatibility)
     bot_response = flow_state.get("bot_response")
     if bot_response:
         state["response_content"] = bot_response
@@ -67,14 +68,13 @@ async def format_response(
         state["flow_state"] = flow_state
         return state
     
+    # Build response from execution results and question
+    response_parts = []
+    
     # Format execution results
     execution_results = flow_state.get("execution_results", {})
     
-    if not execution_results:
-        response = "No results to display."
-    else:
-        response_parts = []
-        
+    if execution_results:
         for action, result in execution_results.items():
             if result.get("status") == "success":
                 data = result.get("data")
@@ -117,8 +117,17 @@ async def format_response(
                     response_parts.append(str(data))
             else:
                 response_parts.append(f"Error getting {action}: {result.get('error', 'Unknown error')}")
-        
+    
+    # Add question if exists (from ask_property or ask_court)
+    question = flow_state.get("question")
+    if question:
+        response_parts.append(question)
+    
+    # Combine all parts
+    if response_parts:
         response = "\n\n".join(response_parts)
+    else:
+        response = "No results to display."
     
     # Set response
     state["response_content"] = response
@@ -127,6 +136,15 @@ async def format_response(
     # Track last node
     flow_state["last_node"] = "information-format_response"
     state["flow_state"] = flow_state
+    
+    # Log the formatted response
+    llm_logger = get_llm_logger()
+    llm_logger.log_llm_call(
+        node_name="information_format_response",
+        prompt="[No LLM call - response formatted from execution results]",
+        response=response,
+        parameters=None
+    )
     
     logger.info(f"[FORMAT RESPONSE] Chat {chat_id}: Response formatted ({len(response)} chars)")
     

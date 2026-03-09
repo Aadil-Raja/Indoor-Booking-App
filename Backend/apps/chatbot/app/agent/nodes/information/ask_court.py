@@ -8,6 +8,7 @@ import logging
 from typing import Dict, Any
 
 from app.agent.state.conversation_state import ConversationState
+from app.agent.utils.llm_logger import get_llm_logger
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,9 @@ async def ask_court(
     # Set awaiting_input
     flow_state["awaiting_input"] = "court_selection"
     
-    # Move requested_actions to pending_actions
-    requested_actions = flow_state.get("requested_actions", [])
-    flow_state["pending_actions"] = requested_actions
-    flow_state["requested_actions"] = []
+    # Note: requested_actions and pending_actions are already set by check_requirements
+    # requested_actions = actions that can execute now (if any)
+    # pending_actions = actions that need court
     
     # Prepare response with unique sport types
     if filtered_courts:
@@ -73,13 +73,28 @@ async def ask_court(
     else:
         response = "No courts available for this property."
     
-    # Set response
-    state["response_content"] = response
-    state["response_type"] = "text"
+    # Store question in flow_state (not response_content directly)
+    # This allows format_response to combine with execution results
+    flow_state["question"] = response
     
     # Track last node
     flow_state["last_node"] = "information-ask_court"
     state["flow_state"] = flow_state
+    
+    # Log ask court action
+    llm_logger = get_llm_logger()
+    ask_summary = (
+        f"Pending Actions: {flow_state.get('pending_actions')}\n"
+        f"Property ID: {property_id}\n"
+        f"Available Courts: {len(filtered_courts)}\n"
+        f"Response:\n{response}"
+    )
+    llm_logger.log_llm_call(
+        node_name="ask_court",
+        prompt="[No LLM call - asks user to select court from available list]",
+        response=ask_summary,
+        parameters=None
+    )
     
     logger.info(
         f"[ASK COURT] Chat {chat_id}:\n"

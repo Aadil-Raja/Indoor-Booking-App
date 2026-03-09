@@ -13,6 +13,7 @@ import logging
 from app.agent.state.conversation_state import ConversationState
 from app.services.llm.base import LLMProvider
 from app.agent.tools import TOOL_REGISTRY
+from app.agent.utils.llm_logger import get_llm_logger
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +102,17 @@ async def greeting_handler(
     # 5. Update state with modified flow_state
     state["flow_state"] = flow_state
     
-    # 6. Track last node and return
+    # 6. Track last node
     state["flow_state"]["last_node"] = "greeting"
+    
+    # 7. Log greeting output (no LLM call, but log the generated response)
+    llm_logger = get_llm_logger()
+    llm_logger.log_llm_call(
+        node_name="greeting",
+        prompt="[No LLM call - greeting generated from templates]",
+        response=state["response_content"],
+        parameters=None
+    )
     
     logger.info(
         f"Greeting completed for chat {chat_id} - "
