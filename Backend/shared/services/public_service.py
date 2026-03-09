@@ -34,7 +34,7 @@ def search_properties(
         query = query.filter(Property.city.ilike(f"%{city}%"))
 
         if sport_type:
-        query = query.filter(Court.sport_type.ilike(f"%{sport_type}%"))
+            query = query.filter(Court.sport_type.ilike(f"%{sport_type}%"))
 
 
         if min_price is not None:
