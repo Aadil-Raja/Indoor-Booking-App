@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Colors } from '@/src/theme/colors';
-import { signUp } from '@/src/api/auth';
+import { apiClient } from '@/src/api/client';
 import { useAuthStore } from '@/src/store/auth';
 
 export default function SignUpScreen() {
@@ -34,17 +34,18 @@ export default function SignUpScreen() {
         try {
             setLoading(true);
             const name = `${firstName} ${lastName}`.trim();
-            const response = await signUp({
+            const response = await apiClient.post('/auth/signup', {
                 name,
                 email,
                 password,
                 role: 'owner',
             });
-            if (response.success) {
+            const data = response.data;
+            if (data.success) {
                 // Signup requires email verification — navigate to OTP screen
                 router.replace({ pathname: '/(auth)/verify', params: { email } } as any);
             } else {
-                Alert.alert('Sign Up Failed', response.message || 'Could not create account');
+                Alert.alert('Sign Up Failed', data.message || 'Could not create account');
             }
         } catch (error: any) {
             const msg = error.response?.data?.message || error.message || 'Sign up failed';
