@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>CourtHub Owner Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              primary: "#10b981", // CourtHub Emerald Green
+              "background-light": "#f9fafb",
+              "background-dark": "#0f172a",
+              "card-light": "#ffffff",
+              "card-dark": "#1e293b",
+            },
+            fontFamily: {
+              display: ["Plus Jakarta Sans", "sans-serif"],
+            },
+            borderRadius: {
+              DEFAULT: "12px",
+            },
+          },
+        },
+      };
+    </script>
+<style>
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .ios-blur {
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+        body {
+            min-height: max(884px, 100dvh);
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen pb-24 text-[15px]">
+<header class="sticky top-0 z-40 bg-background-light/80 dark:bg-background-dark/80 ios-blur px-6 py-4 flex justify-between items-center border-b border-slate-200 dark:border-slate-800">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-white">
+<span class="material-icons-round text-lg">sports_soccer</span>
+</div>
+<h1 class="text-xl font-bold tracking-tight text-slate-800 dark:text-white">CourtHub</h1>
+</div>
+<div class="flex items-center gap-3">
+<button class="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">
+<span class="material-icons-round text-xl">notifications</span>
+</button>
+<div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden border-2 border-primary">
+<img alt="User Profile" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAbLRmvQqc15ID_f9VfTk14Xmqb5BVkguuqWu5YM12CGftHDW4X7b_qU3QBB5NAqXivIdj0ozq8rMZf8PLRf5a90yjq77oNElFfK14_t3xIQh5P8k6R5AiTAgxWnGjNovvm793k9a6Ktp03ARkr6-AHrW9XmJmOC7XeHPSs8WcBXLLovvFMg9-P5egAGOUrWq4C5fC1rgsP5y5BACvgwtuFoueLybTH_svEtSo6ILgUuSs1zCcoEnlv1Nnic9rHMI-iUz_W7_WIfY9E"/>
+</div>
+</div>
+</header>
+<main class="px-5 py-6 space-y-8">
+<section>
+<h2 class="text-2xl font-extrabold text-slate-900 dark:text-white">Dashboard</h2>
+<p class="text-slate-500 dark:text-slate-400 text-sm mt-1">Welcome back! Here's an overview of your business.</p>
+</section>
+<section class="grid grid-cols-2 gap-4">
+<div class="bg-card-light dark:bg-card-dark p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800">
+<div class="w-10 h-10 bg-blue-50 dark:bg-blue-900/30 rounded-xl flex items-center justify-center mb-3">
+<span class="material-icons-round text-blue-600 dark:text-blue-400">domain</span>
+</div>
+<div class="text-2xl font-bold">0</div>
+<div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Properties</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800">
+<div class="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center mb-3">
+<span class="material-icons-round text-primary">sports_tennis</span>
+</div>
+<div class="text-2xl font-bold">0</div>
+<div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Courts</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800">
+<div class="w-10 h-10 bg-amber-50 dark:bg-amber-900/30 rounded-xl flex items-center justify-center mb-3">
+<span class="material-icons-round text-amber-600 dark:text-amber-400">event_available</span>
+</div>
+<div class="text-2xl font-bold">0</div>
+<div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Bookings</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800">
+<div class="w-10 h-10 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl flex items-center justify-center mb-3">
+<span class="material-icons-round text-indigo-600 dark:text-indigo-400">payments</span>
+</div>
+<div class="text-2xl font-bold">₹0</div>
+<div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">Revenue</div>
+</div>
+</section>
+<section class="space-y-4">
+<div class="flex items-center justify-between">
+<h3 class="text-lg font-bold text-slate-900 dark:text-white">Get Started</h3>
+<span class="text-xs font-semibold px-2 py-1 bg-primary/10 text-primary rounded-full">0/3 Completed</span>
+</div>
+<p class="text-sm text-slate-500 dark:text-slate-400 -mt-2">Follow these steps to set up your indoor booking business</p>
+<div class="space-y-3 mt-4">
+<div class="bg-card-light dark:bg-card-dark border-l-4 border-primary p-5 rounded-r-2xl shadow-sm border-y border-r border-slate-100 dark:border-slate-800 flex gap-4">
+<div class="flex-shrink-0">
+<div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold">1</div>
+</div>
+<div class="flex-grow">
+<h4 class="font-bold text-slate-900 dark:text-white">Complete Your Profile</h4>
+<p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Add your business information to build trust.</p>
+<button class="mt-3 text-primary font-semibold text-sm flex items-center gap-1 group">
+                            Go to Profile
+                            <span class="material-icons-round text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+</button>
+</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark border-l-4 border-slate-200 dark:border-slate-700 p-5 rounded-r-2xl shadow-sm border-y border-r border-slate-100 dark:border-slate-800 flex gap-4 opacity-75">
+<div class="flex-shrink-0">
+<div class="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-400 font-bold">2</div>
+</div>
+<div class="flex-grow">
+<h4 class="font-bold text-slate-900 dark:text-white">Add Your First Property</h4>
+<p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Create a property to manage your courts.</p>
+<button class="mt-3 text-primary font-semibold text-sm flex items-center gap-1">
+                            Add Property
+                            <span class="material-icons-round text-sm">arrow_forward</span>
+</button>
+</div>
+</div>
+<div class="bg-card-light dark:bg-card-dark border-l-4 border-slate-200 dark:border-slate-700 p-5 rounded-r-2xl shadow-sm border-y border-r border-slate-100 dark:border-slate-800 flex gap-4 opacity-75">
+<div class="flex-shrink-0">
+<div class="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-slate-600 dark:text-slate-400 font-bold">3</div>
+</div>
+<div class="flex-grow">
+<h4 class="font-bold text-slate-900 dark:text-white">Add Courts &amp; Set Pricing</h4>
+<p class="text-sm text-slate-500 dark:text-slate-400 mt-1">Configure your courts and dynamic pricing rules.</p>
+<button class="mt-3 text-primary font-semibold text-sm flex items-center gap-1">
+                            Manage Properties
+                            <span class="material-icons-round text-sm">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+</section>
+</main>
+<nav class="fixed bottom-0 left-0 right-0 bg-card-light/90 dark:bg-card-dark/90 ios-blur border-t border-slate-200 dark:border-slate-800 px-6 py-3 pb-8 z-50">
+<div class="flex justify-between items-center max-w-lg mx-auto">
+<button class="flex flex-col items-center gap-1 text-primary">
+<span class="material-icons-round">dashboard</span>
+<span class="text-[10px] font-bold uppercase tracking-tighter">Dashboard</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400 dark:text-slate-500">
+<span class="material-icons-round">domain</span>
+<span class="text-[10px] font-bold uppercase tracking-tighter">Properties</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400 dark:text-slate-500">
+<span class="material-icons-round">sports_tennis</span>
+<span class="text-[10px] font-bold uppercase tracking-tighter">Courts</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400 dark:text-slate-500">
+<span class="material-icons-round">event_note</span>
+<span class="text-[10px] font-bold uppercase tracking-tighter">Bookings</span>
+</button>
+<button class="flex flex-col items-center gap-1 text-slate-400 dark:text-slate-500">
+<span class="material-icons-round">person</span>
+<span class="text-[10px] font-bold uppercase tracking-tighter">Profile</span>
+</button>
+</div>
+</nav>
+
+</body></html>
