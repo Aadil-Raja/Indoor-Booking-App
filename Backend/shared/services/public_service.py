@@ -2,7 +2,7 @@
 Public service for business logic operations accessible to all users.
 """
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, any_
 from shared.repositories import property_repo, court_repo, pricing_repo, availability_repo
 from shared.utils.response_utils import make_response
 from shared.models import Property, Court, CourtPricing, Booking, BookingStatus
@@ -33,15 +33,14 @@ def search_properties(
     if city:
         query = query.filter(Property.city.ilike(f"%{city}%"))
 
-        if sport_type:
-            query = query.filter(Court.sport_types.contains([sport_type.lower()]))
+    if sport_type:
+        query = query.filter(sport_type.lower() == any_(Court.sport_types))
 
-
-        if min_price is not None:
-            query = query.filter(CourtPricing.price_per_hour >= min_price)
+    if min_price is not None:
+        query = query.filter(CourtPricing.price_per_hour >= min_price)
     
-        if max_price is not None:
-            query = query.filter(CourtPricing.price_per_hour <= max_price)
+    if max_price is not None:
+        query = query.filter(CourtPricing.price_per_hour <= max_price)
 
         
     # Count total

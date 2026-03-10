@@ -96,8 +96,8 @@ def search_courts_with_filters(
     
     # Sport type filter - check if array contains the sport type
     if sport_type:
-        from sqlalchemy.dialects.postgresql import ARRAY
-        query = query.filter(Court.sport_types.contains([sport_type.lower()]))
+        from sqlalchemy import any_
+        query = query.filter(sport_type.lower() == any_(Court.sport_types))
     
     # Price filter - join with pricing table
     if min_price is not None or max_price is not None:
