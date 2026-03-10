@@ -232,12 +232,13 @@ async def select_court(
         for court in courts:
             court_id = court.get("id")
             court_name = court.get("name", "Unknown Court")
-            sport_type = court.get("sport_type", "")
+            sport_types = court.get("sport_types", [])
             
-            # Include sport type in button text if available
+            # Include sport types in button text if available
             button_text = f"{court_name}"
-            if sport_type:
-                button_text += f" ({sport_type})"
+            if sport_types:
+                sport_types_str = ", ".join(sport_types)
+                button_text += f" ({sport_types_str})"
             
             buttons.append({
                 "id": str(court_id),

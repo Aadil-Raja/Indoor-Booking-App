@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 
 class SearchPropertiesInput(BaseModel):
     """Input schema for search_properties tool."""
+    owner_profile_id: int = Field(
+        description="Owner profile ID to filter properties by (required - use the owner_profile_id from context)",
+        gt=0
+    )
     city: Optional[str] = Field(
         None,
         description="City name to filter properties by (e.g., 'New York', 'Los Angeles')"

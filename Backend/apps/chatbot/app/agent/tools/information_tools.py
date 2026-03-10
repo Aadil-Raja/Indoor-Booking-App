@@ -102,6 +102,7 @@ def _get_public_service():
 
 
 async def search_properties_tool(
+    owner_profile_id: int,
     city: Optional[str] = None,
     sport_type: Optional[str] = None,
     min_price: Optional[float] = None,
@@ -118,6 +119,7 @@ async def search_properties_tool(
     Includes comprehensive error handling for service failures.
     
     Args:
+        owner_profile_id: Owner profile ID to filter properties by (required)
         city: City name to filter by (optional)
         sport_type: Sport type to filter courts by (optional)
         min_price: Minimum price per hour (optional)
@@ -130,6 +132,7 @@ async def search_properties_tool(
         
     Example:
         properties = await search_properties_tool(
+            owner_profile_id=183,
             sport_type="tennis",
             city="New York",
             limit=5
@@ -139,7 +142,7 @@ async def search_properties_tool(
     """
     try:
         logger.info(
-            f"Searching properties: city={city}, sport_type={sport_type}, "
+            f"Searching properties: owner_profile_id={owner_profile_id}, city={city}, sport_type={sport_type}, "
             f"min_price={min_price}, max_price={max_price}, limit={limit}"
         )
         
@@ -150,6 +153,7 @@ async def search_properties_tool(
         result = await call_sync_service(
             public_service.search_properties,
             db=None,  # Auto-managed by sync bridge
+            owner_profile_id=owner_profile_id,
             city=city,
             sport_type=sport_type,
             min_price=min_price,

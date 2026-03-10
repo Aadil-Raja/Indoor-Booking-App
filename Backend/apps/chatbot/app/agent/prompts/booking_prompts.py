@@ -183,9 +183,10 @@ def create_select_service_prompt(
     for i, court in enumerate(courts, 1):
         court_id = court.get("id")
         name = court.get("name", "Unknown Court")
-        sport_type = court.get("sport_type", "Unknown")
+        sport_types = court.get("sport_types", [])
+        sport_types_str = ", ".join(sport_types) if sport_types else "Unknown"
         
-        line = f"{i}. {name} (ID: {court_id}) - Sport: {sport_type}"
+        line = f"{i}. {name} (ID: {court_id}) - Sports: {sport_types_str}"
         courts_lines.append(line)
     
     courts_list = "\n".join(courts_lines) if courts_lines else "No courts available"
@@ -491,7 +492,8 @@ def create_confirm_booking_prompt(
     
     property_name = flow_state.get("property_name", "Unknown Property")
     service_name = flow_state.get("service_name", "Unknown Court")
-    sport_type = flow_state.get("sport_type", "")
+    sport_types = flow_state.get("sport_types", [])
+    sport_types_str = ", ".join(sport_types) if sport_types else ""
     date_str = flow_state.get("date", "")
     start_time = flow_state.get("start_time", "")
     end_time = flow_state.get("end_time", "")

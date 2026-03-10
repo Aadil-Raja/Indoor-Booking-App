@@ -17,6 +17,7 @@ def search_properties(
     sport_type: Optional[str] = None,
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
+    owner_profile_id: Optional[int] = None,
     page: int = 1,
     limit: int = 20
 ):
@@ -30,6 +31,9 @@ def search_properties(
     )
 
     # Apply filters
+    if owner_profile_id is not None:
+        query = query.filter(Property.owner_profile_id == owner_profile_id)
+    
     if city:
         query = query.filter(Property.city.ilike(f"%{city}%"))
 

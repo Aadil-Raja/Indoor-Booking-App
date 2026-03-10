@@ -90,7 +90,7 @@ async def search_courts_tool(
                 if sport_type:
                     courts = [
                         c for c in courts 
-                        if c.get('sport_type', '').lower() == sport_type.lower()
+                        if sport_type.lower() in [st.lower() for st in c.get('sport_types', [])]
                     ]
                 
                 logger.info(f"Found {len(courts)} courts for property_id={property_id}")
@@ -137,7 +137,7 @@ async def search_courts_tool(
                 if sport_type:
                     prop_courts = [
                         c for c in prop_courts 
-                        if c.get('sport_type', '').lower() == sport_type.lower()
+                        if sport_type.lower() in [st.lower() for st in c.get('sport_types', [])]
                     ]
                 
                 # Add property context to each court

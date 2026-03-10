@@ -420,15 +420,16 @@ def _generate_single_property_greeting(business_name: str, property_info: dict, 
     if courts:
         greeting_text += f"\n🏟️ Available Courts ({len(courts)}):\n"
         
-        # Extract unique sport types
-        sport_types = set()
+        # List court names with their sport types
         for court in courts:
-            sport_type = court.get("sport_type") or court.get("name", "").split()[0]
-            if sport_type:
-                sport_types.add(sport_type)
-        
-        if sport_types:
-            greeting_text += "• " + ", ".join(sorted(sport_types)) + "\n"
+            court_name = court.get("name", "Unknown Court")
+            sport_types = court.get("sport_types", [])
+            sport_types_str = ", ".join(sport_types) if sport_types else ""
+            
+            if sport_types_str:
+                greeting_text += f"• {court_name} ({sport_types_str})\n"
+            else:
+                greeting_text += f"• {court_name}\n"
     
     greeting_text += "\nHow can I help you today? I can:\n"
     greeting_text += "• Show you available courts\n"
@@ -444,7 +445,8 @@ def _generate_single_property_single_court_greeting(business_name: str, property
     """
     property_name = property_info.get("name", "Facility")
     court_name = court_info.get("name", "Court")
-    sport_type = court_info.get("sport_type", "")
+    sport_types = court_info.get("sport_types", [])
+    sport_types_str = ", ".join(sport_types) if sport_types else ""
     address = property_info.get("address", "")
     city = property_info.get("city", "")
     state_name = property_info.get("state", "")
@@ -468,8 +470,8 @@ def _generate_single_property_single_court_greeting(business_name: str, property
         greeting_text += f"View on map: {maps_link}\n"
     
     greeting_text += f"\n🏟️ Court: {court_name}"
-    if sport_type:
-        greeting_text += f" ({sport_type})"
+    if sport_types_str:
+        greeting_text += f" ({sport_types_str})"
     greeting_text += "\n"
     
     greeting_text += "\nHow can I help you today? I can:\n"
