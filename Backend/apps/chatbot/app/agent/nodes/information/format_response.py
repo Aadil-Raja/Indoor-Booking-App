@@ -112,6 +112,35 @@ async def format_response(
                             response_parts.append(f"  {idx}. {media.get('media_type', 'image')}: {media.get('url', '')}")
                     else:
                         response_parts.append("No media available.")
+                
+                elif action == "list_courts" and data:
+                    # Format list of courts
+                    if isinstance(data, list) and data:
+                        response_parts.append(f"🏟️ Available Courts ({len(data)}):")
+                        for idx, court in enumerate(data, 1):
+                            sport_types = ", ".join(court.get('sport_types', []))
+                            court_name = court.get('name', 'Court')
+                            
+                            # Build court line
+                            if sport_types:
+                                court_line = f"{idx}. {court_name} ({sport_types})"
+                            else:
+                                court_line = f"{idx}. {court_name}"
+                            
+                            # Add description if available (keep it short)
+                            if court.get('description'):
+                                desc = court['description']
+                                # Truncate to first sentence or 100 chars
+                                if '.' in desc:
+                                    desc = desc.split('.')[0] + '.'
+                                if len(desc) > 100:
+                                    desc = desc[:100] + "..."
+                                court_line += f" - {desc}"
+                            
+                            response_parts.append(court_line)
+                    else:
+                        response_parts.append("No courts available for this property.")
+                
                 else:
                     # Fallback for unknown action
                     response_parts.append(str(data))

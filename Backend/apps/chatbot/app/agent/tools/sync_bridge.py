@@ -201,7 +201,18 @@ async def call_sync_service(
     if 'db' not in kwargs:
         kwargs['db'] = None
     
-    return await run_sync_in_executor(service_func, *args, **kwargs)
+    result = await run_sync_in_executor(service_func, *args, **kwargs)
+    
+    # Auto-extract dict from JSONResponse
+    # This handles cases where service functions return FastAPI JSONResponse objects
+    # instead of plain dictionaries (common in shared services)
+    from fastapi.responses import JSONResponse
+    if isinstance(result, JSONResponse):
+        import json
+        logger.debug(f"Extracting dict from JSONResponse for {service_func.__name__}")
+        return json.loads(result.body)
+    
+    return result
 
 
 def shutdown_executor():

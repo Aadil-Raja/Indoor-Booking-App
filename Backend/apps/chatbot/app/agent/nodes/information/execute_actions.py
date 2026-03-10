@@ -123,6 +123,21 @@ async def execute_actions(
                         "status": "error",
                         "error": "Media tool not found or court_id missing"
                     }
+            
+            elif action == "list_courts":
+                # Call get_property_courts tool to list all courts for the property
+                get_property_courts = TOOL_REGISTRY.get("get_property_courts")
+                if get_property_courts and property_id:
+                    data = await get_property_courts(property_id=property_id, owner_id=None)
+                    results["list_courts"] = {
+                        "status": "success",
+                        "data": data
+                    }
+                else:
+                    results["list_courts"] = {
+                        "status": "error",
+                        "error": "Property courts tool not found or property_id missing"
+                    }
                 
         except Exception as e:
             logger.error(f"Error executing action {action} for chat {chat_id}: {e}")

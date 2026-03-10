@@ -76,10 +76,11 @@ Important rules:
 - Do not include explanation text.
 
 Allowed actions:
-- property_details
-- court_details
-- pricing
-- media
+- property_details (get details of a specific property)
+- court_details (get details of a specific court)
+- list_courts (list all available courts for the selected property)
+- pricing (get pricing information for a specific court)
+- media (get media/images for a specific court)
 
 Return JSON using this exact schema:
 {{
@@ -142,9 +143,17 @@ def get_information_router_prompt(
         # Get unique sport types to avoid duplicates
         sport_types = set()
         for court in available_courts:
-            sport_type = court.get("sport_type")
-            if sport_type:
-                sport_types.add(sport_type)
+            # Handle both old (sport_type) and new (sport_types array) format
+            court_sport_types = court.get("sport_types", [])
+            if not court_sport_types:
+                # Fallback to old format
+                sport_type = court.get("sport_type")
+                if sport_type:
+                    court_sport_types = [sport_type]
+            
+            for st in court_sport_types:
+                if st:
+                    sport_types.add(st)
         formatted_courts = [f'"{st}"' for st in sorted(sport_types)]
         available_courts_str = "[" + ", ".join(formatted_courts) + "]"
     else:

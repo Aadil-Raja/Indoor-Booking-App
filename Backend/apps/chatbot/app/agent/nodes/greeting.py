@@ -130,7 +130,7 @@ def _extract_essential_court_details(court: dict, property_id: int) -> dict:
     - id: Court ID
     - name: Court name
     - property_id: Associated property ID
-    - sport_type: Type of sport (e.g., "Futsal", "Cricket")
+    - sport_types: Array of sport types (e.g., ["Futsal", "Cricket"])
     - description: Court description
     
     Args:
@@ -144,7 +144,7 @@ def _extract_essential_court_details(court: dict, property_id: int) -> dict:
         "id": court.get("id"),
         "name": court.get("name"),
         "property_id": property_id,
-        "sport_type": court.get("sport_type"),
+        "sport_types": court.get("sport_types", []),
         "description": court.get("description")
     }
 
@@ -286,7 +286,8 @@ async def _generate_new_user_greeting_with_properties(
     if len(courts) == 1:
         court_info = courts[0]
         flow_state["court_id"] = court_info.get("id")
-        flow_state["court_type"] = court_info.get("sport_type") or court_info.get("name", "Court")
+        # Use court name as court_type since a court can have multiple sport types
+        flow_state["court_type"] = court_info.get("name", "Court")
         logger.info(
             f"Auto-set court_id={court_info.get('id')} for single court "
             f"in chat {chat_id}"
