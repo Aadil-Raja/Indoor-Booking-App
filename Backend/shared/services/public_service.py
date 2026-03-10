@@ -2,7 +2,7 @@
 Public service for business logic operations accessible to all users.
 """
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, any_
 from shared.repositories import property_repo, court_repo, pricing_repo, availability_repo
 from shared.utils.response_utils import make_response
 from shared.models import Property, Court, CourtPricing, Booking, BookingStatus
@@ -17,6 +17,7 @@ def search_properties(
     sport_type: Optional[str] = None,
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
+    owner_profile_id: Optional[int] = None,
     page: int = 1,
     limit: int = 20
 ):
@@ -30,11 +31,14 @@ def search_properties(
     )
 
     # Apply filters
+    if owner_profile_id is not None:
+        query = query.filter(Property.owner_profile_id == owner_profile_id)
+    
     if city:
         query = query.filter(Property.city.ilike(f"%{city}%"))
 
     if sport_type:
-        query = query.filter(Court.sport_type.ilike(f"%{sport_type}%"))
+        query = query.filter(sport_type.lower() == any_(Court.sport_types))
 
     if min_price is not None:
         query = query.filter(CourtPricing.price_per_hour >= min_price)
@@ -61,7 +65,7 @@ def search_properties(
         items.append({
             "id": court.id,
             "name": court.name,
-            "sport_type": court.sport_type,
+            "sport_types": court.sport_types,
             "description": court.description,
             "min_price": min_court_price,
             "property": {
@@ -128,7 +132,7 @@ def get_property_details(db: Session, *, property_id: int):
             {
                 "id": c.id,
                 "name": c.name,
-                "sport_type": c.sport_type,
+                "sport_types": c.sport_types,
                 "description": c.description,
                 "specifications": c.specifications,
                 "amenities": c.amenities,
@@ -182,7 +186,7 @@ def get_court_details(db: Session, *, court_id: int):
     data = {
         "id": court.id,
         "name": court.name,
-        "sport_type": court.sport_type,
+        "sport_types": court.sport_types,
         "description": court.description,
         "specifications": court.specifications,
         "amenities": court.amenities,
@@ -453,7 +457,7 @@ def search_courts(
         court_data = {
             "id": court.id,
             "name": court.name,
-            "sport_type": court.sport_type,
+            "sport_types": court.sport_types,
             "description": court.description,
             "specifications": court.specifications,
             "amenities": court.amenities,

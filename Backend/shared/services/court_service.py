@@ -27,7 +27,7 @@ def create_court(db: Session, *, property_id: int, current_owner: OwnerContext, 
         return make_response(
             True,
             "Court created successfully",
-            data={"id": court.id, "name": court.name, "sport_type": court.sport_type},
+            data={"id": court.id, "name": court.name, "sport_types": court.sport_types},
             status_code=201
         )
     except Exception as e:
@@ -50,7 +50,7 @@ def get_property_courts(db: Session, *, property_id: int, current_owner: OwnerCo
         {
             "id": c.id,
             "name": c.name,
-            "sport_type": c.sport_type,
+            "sport_types": c.sport_types,
             "description": c.description,
             "specifications": c.specifications,
             "amenities": c.amenities,
@@ -77,7 +77,7 @@ def get_court_details(db: Session, *, court_id: int, current_owner: OwnerContext
         "id": court.id,
         "property_id": court.property_id,
         "name": court.name,
-        "sport_type": court.sport_type,
+        "sport_types": court.sport_types,
         "description": court.description,
         "specifications": court.specifications,
         "amenities": court.amenities,

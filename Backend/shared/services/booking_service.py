@@ -141,7 +141,7 @@ def get_user_bookings(db: Session, *, user_id: int, status_filter: Optional[str]
             "payment_status": b.payment_status.value,
             "court_id": b.court_id,
             "court_name": b.court.name,
-            "sport_type": b.court.sport_type,
+            "sport_types": b.court.sport_types,
             "property_name": b.court.property.name,
             "property_address": b.court.property.address
         }
@@ -178,7 +178,7 @@ def get_booking_details(db: Session, *, booking_id: int, user_id: int):
         "court": {
             "id": booking.court.id,
             "name": booking.court.name,
-            "sport_type": booking.court.sport_type
+            "sport_types": booking.court.sport_types
         },
         "property": {
             "id": booking.court.property.id,

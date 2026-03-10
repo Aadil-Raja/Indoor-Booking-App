@@ -318,7 +318,7 @@ async def _process_service_selection(
             
             # Generate helpful error message with available options
             court_names = [
-                f"{c.get('name', 'Unknown')} ({c.get('sport_type', 'Unknown sport')})"
+                f"{c.get('name', 'Unknown')} ({', '.join(c.get('sport_types', []))})"
                 for c in available_courts
             ]
             options_text = ", ".join(court_names)
@@ -337,18 +337,19 @@ async def _process_service_selection(
         # Valid selection - store in flow_state
         service_id = str(selected_court.get("id"))
         service_name = selected_court.get("name", "Unknown Court")
-        sport_type = selected_court.get("sport_type", "Unknown")
+        sport_types = selected_court.get("sport_types", [])
+        sport_types_str = ", ".join(sport_types) if sport_types else "Unknown"
         
         flow_state["service_id"] = service_id
         flow_state["service_name"] = service_name
-        flow_state["sport_type"] = sport_type
+        flow_state["sport_types"] = sport_types
         flow_state["step"] = "service_selected"
         
         state["flow_state"] = flow_state
         
         # Generate confirmation message
         response = (
-            f"Perfect! You've selected {service_name} ({sport_type}). "
+            f"Perfect! You've selected {service_name} ({sport_types_str}). "
             f"Now let's choose a date for your booking."
         )
         
@@ -359,7 +360,7 @@ async def _process_service_selection(
         logger.info(
             f"Service selected for chat {chat_id}: "
             f"service_id={service_id}, service_name={service_name}, "
-            f"sport_type={sport_type}"
+            f"sport_types={sport_types}"
         )
         
         return state
@@ -393,18 +394,19 @@ async def _process_service_selection(
                 # Valid selection - store in flow_state
                 service_id = str(selected_court.get("id"))
                 service_name = selected_court.get("name", "Unknown Court")
-                sport_type = selected_court.get("sport_type", "Unknown")
+                sport_types = selected_court.get("sport_types", [])
+                sport_types_str = ", ".join(sport_types) if sport_types else "Unknown"
                 
                 flow_state["service_id"] = service_id
                 flow_state["service_name"] = service_name
-                flow_state["sport_type"] = sport_type
+                flow_state["sport_types"] = sport_types
                 flow_state["step"] = "service_selected"
                 
                 state["flow_state"] = flow_state
                 
                 # Generate confirmation message
                 response = (
-                    f"Perfect! You've selected {service_name} ({sport_type}). "
+                    f"Perfect! You've selected {service_name} ({sport_types_str}). "
                     f"Now let's choose a date for your booking."
                 )
                 
@@ -415,7 +417,7 @@ async def _process_service_selection(
                 logger.info(
                     f"Service selected for chat {chat_id}: "
                     f"service_id={service_id}, service_name={service_name}, "
-                    f"sport_type={sport_type}"
+                    f"sport_types={sport_types}"
                 )
                 
                 return state
@@ -446,7 +448,7 @@ async def _process_service_selection(
             
             # Generate helpful error message with available options
             court_names = [
-                f"{c.get('name', 'Unknown')} ({c.get('sport_type', 'Unknown sport')})"
+                f"{c.get('name', 'Unknown')} ({', '.join(c.get('sport_types', []))})"
                 for c in available_courts
             ]
             options_text = ", ".join(court_names)
@@ -465,18 +467,19 @@ async def _process_service_selection(
         # Valid selection - store in flow_state
         service_id = str(selected_court.get("id"))
         service_name = selected_court.get("name", "Unknown Court")
-        sport_type = selected_court.get("sport_type", "Unknown")
+        sport_types = selected_court.get("sport_types", [])
+        sport_types_str = ", ".join(sport_types) if sport_types else "Unknown"
         
         flow_state["service_id"] = service_id
         flow_state["service_name"] = service_name
-        flow_state["sport_type"] = sport_type
+        flow_state["sport_types"] = sport_types
         flow_state["step"] = "service_selected"
         
         state["flow_state"] = flow_state
         
         # Generate confirmation message
         response = (
-            f"Perfect! You've selected {service_name} ({sport_type}). "
+            f"Perfect! You've selected {service_name} ({sport_types_str}). "
             f"Now let's choose a date for your booking."
         )
         
@@ -487,7 +490,7 @@ async def _process_service_selection(
         logger.info(
             f"Service selected for chat {chat_id}: "
             f"service_id={service_id}, service_name={service_name}, "
-            f"sport_type={sport_type}"
+            f"sport_types={sport_types}"
         )
         
         return state
@@ -570,21 +573,22 @@ def _format_courts_as_list(
         
     Example:
         list_items = _format_courts_as_list([
-            {"id": 10, "name": "Court A", "sport_type": "tennis"}
+            {"id": 10, "name": "Court A", "sport_types": ["tennis"]}
         ])
-        # Returns: [{"id": "10", "title": "Court A", "description": "Sport: tennis"}]
+        # Returns: [{"id": "10", "title": "Court A", "description": "Sports: tennis"}]
     """
     list_items = []
     
     for court in courts:
         court_id = court.get("id")
         name = court.get("name", "Unknown Court")
-        sport_type = court.get("sport_type", "Unknown")
+        sport_types = court.get("sport_types", [])
+        sport_types_str = ", ".join(sport_types) if sport_types else "Unknown"
         
         list_items.append({
             "id": str(court_id),
             "title": name,
-            "description": f"Sport: {sport_type}"
+            "description": f"Sports: {sport_types_str}"
         })
     
     return list_items

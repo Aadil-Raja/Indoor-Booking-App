@@ -77,7 +77,7 @@ def get_property_details(db: Session, *, property_id: int, current_owner: OwnerC
             {
                 "id": c.id,
                 "name": c.name,
-                "sport_type": c.sport_type,
+                "sport_types": c.sport_types,
                 "is_active": c.is_active
             }
             for c in property.courts

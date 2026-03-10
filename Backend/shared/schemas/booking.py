@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import Optional, List
 from datetime import date, time, datetime
 from enum import Enum
 
@@ -74,7 +74,7 @@ class BookingResponse(BookingBase):
 
 class BookingWithDetails(BookingResponse):
     court_name: str
-    sport_type: str
+    sport_types: List[str]
     property_name: str
     property_address: str
     customer_name: Optional[str] = None

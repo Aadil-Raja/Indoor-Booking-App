@@ -6,9 +6,9 @@ from shared.models import Court
 from typing import Optional, List
 
 
-def create(db: Session, *, property_id: int, name: str, sport_type: str, **kwargs) -> Court:
+def create(db: Session, *, property_id: int, name: str, sport_types: list, **kwargs) -> Court:
     """Create a new court"""
-    court = Court(property_id=property_id, name=name, sport_type=sport_type, **kwargs)
+    court = Court(property_id=property_id, name=name, sport_types=sport_types, **kwargs)
     db.add(court)
     db.commit()
     db.refresh(court)
@@ -94,9 +94,10 @@ def search_courts_with_filters(
             )
         )
     
-    # Sport type filter
+    # Sport type filter - check if array contains the sport type
     if sport_type:
-        query = query.filter(Court.sport_type.ilike(f"%{sport_type}%"))
+        from sqlalchemy import any_
+        query = query.filter(sport_type.lower() == any_(Court.sport_types))
     
     # Price filter - join with pricing table
     if min_price is not None or max_price is not None:

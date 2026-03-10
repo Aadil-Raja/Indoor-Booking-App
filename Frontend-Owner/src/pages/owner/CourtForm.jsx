@@ -12,9 +12,11 @@ const CourtForm = () => {
   const [loading, setLoading] = useState(isEditMode);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [sportTypes, setSportTypes] = useState([]);
+  const [loadingSportTypes, setLoadingSportTypes] = useState(true);
   const [formData, setFormData] = useState({
     name: '',
-    sport_type: '',
+    sport_types: [],
     description: '',
     specifications: {},
     amenities: []
@@ -24,10 +26,38 @@ const CourtForm = () => {
   const [newSpecValue, setNewSpecValue] = useState('');
 
   useEffect(() => {
+    fetchSportTypes();
+  }, []);
+
+  useEffect(() => {
     if (isEditMode) {
       fetchCourt();
     }
   }, [id]);
+
+  const fetchSportTypes = async () => {
+    try {
+      setLoadingSportTypes(true);
+      const result = await courtService.getSportTypes();
+      if (result.success && result.data) {
+        setSportTypes(result.data);
+      }
+    } catch (err) {
+      console.error('Failed to load sport types:', err);
+      // Fallback to hardcoded values if API fails
+      setSportTypes([
+        { value: 'futsal', label: 'Futsal' },
+        { value: 'football', label: 'Football' },
+        { value: 'cricket', label: 'Cricket' },
+        { value: 'hockey', label: 'Hockey' },
+        { value: 'padel', label: 'Padel' },
+        { value: 'badminton', label: 'Badminton' },
+        { value: 'tennis', label: 'Tennis' }
+      ]);
+    } finally {
+      setLoadingSportTypes(false);
+    }
+  };
 
   const fetchCourt = async () => {
     try {
@@ -38,7 +68,7 @@ const CourtForm = () => {
       if (result.success && result.data) {
         setFormData({
           name: result.data.name || '',
-          sport_type: result.data.sport_type || '',
+          sport_types: result.data.sport_types || [],
           description: result.data.description || '',
           specifications: result.data.specifications || {},
           amenities: result.data.amenities || []
@@ -59,6 +89,19 @@ const CourtForm = () => {
       ...prev,
       [name]: value
     }));
+    setError('');
+  };
+
+  const handleSportTypeToggle = (sportValue) => {
+    setFormData((prev) => {
+      const isSelected = prev.sport_types.includes(sportValue);
+      return {
+        ...prev,
+        sport_types: isSelected
+          ? prev.sport_types.filter((s) => s !== sportValue)
+          : [...prev.sport_types, sportValue]
+      };
+    });
     setError('');
   };
 
@@ -116,8 +159,8 @@ const CourtForm = () => {
       return;
     }
 
-    if (!formData.sport_type.trim()) {
-      setError('Sport type is required');
+    if (!formData.sport_types || formData.sport_types.length === 0) {
+      setError('At least one sport type is required');
       setSaving(false);
       return;
     }
@@ -126,7 +169,7 @@ const CourtForm = () => {
       // Prepare data
       const dataToSend = {
         name: formData.name.trim(),
-        sport_type: formData.sport_type.trim(),
+        sport_types: formData.sport_types,
         specifications: formData.specifications || {},
         amenities: formData.amenities || []
       };
@@ -214,21 +257,57 @@ const CourtForm = () => {
                   required
                 />
               </div>
+            </div>
 
-              <div className="ib-court-form-group">
-                <label htmlFor="sport_type">
-                  Sport Type <span style={{ color: 'red' }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  id="sport_type"
-                  name="sport_type"
-                  value={formData.sport_type}
-                  onChange={handleChange}
-                  placeholder="e.g., Badminton, Tennis, Football"
-                  required
-                />
-              </div>
+            <div className="ib-court-form-group">
+              <label>
+                Sport Types <span style={{ color: 'red' }}>*</span>
+              </label>
+              {loadingSportTypes ? (
+                <div style={{ padding: '12px', color: '#666' }}>Loading sport types...</div>
+              ) : (
+                <>
+                  <div className="ib-sport-types-grid">
+                    {sportTypes.map((sport) => (
+                      <div
+                        key={sport.value}
+                        className={`ib-sport-type-option ${
+                          formData.sport_types.includes(sport.value) ? 'selected' : ''
+                        }`}
+                        onClick={() => handleSportTypeToggle(sport.value)}
+                      >
+                        <div className="ib-sport-type-checkbox">
+                          {formData.sport_types.includes(sport.value) && (
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 16 16"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              <path
+                                d="M13.3334 4L6.00002 11.3333L2.66669 8"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          )}
+                        </div>
+                        <span className="ib-sport-type-label">{sport.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {formData.sport_types.length > 0 && (
+                    <div className="ib-selected-sports">
+                      Selected: {formData.sport_types.map(st => 
+                        sportTypes.find(s => s.value === st)?.label
+                      ).join(', ')}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             <div className="ib-court-form-group">
@@ -256,7 +335,7 @@ const CourtForm = () => {
                   type="text"
                   value={newSpecValue}
                   onChange={(e) => setNewSpecValue(e.target.value)}
-                  onKeyPress={(e) => {
+                  onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       handleAddSpecification();
@@ -299,7 +378,7 @@ const CourtForm = () => {
                   id="amenities"
                   value={newAmenity}
                   onChange={(e) => setNewAmenity(e.target.value)}
-                  onKeyPress={(e) => {
+                  onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       handleAddAmenity();

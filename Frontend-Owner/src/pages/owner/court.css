@@ -668,3 +668,89 @@
 .ib-court-empty-state p {
   margin: 8px 0;
 }
+
+
+/* Sport Types Multi-Select Grid */
+.ib-sport-types-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.ib-sport-type-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 2px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--color-white);
+  user-select: none;
+}
+
+.ib-sport-type-option:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.ib-sport-type-option.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+  box-shadow: 0 0 0 3px var(--color-primary-pale);
+}
+
+.ib-sport-type-checkbox {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-gray-400);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.ib-sport-type-option.selected .ib-sport-type-checkbox {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-white);
+}
+
+.ib-sport-type-label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-gray-700);
+}
+
+.ib-sport-type-option.selected .ib-sport-type-label {
+  color: var(--color-primary-darker);
+  font-weight: 600;
+}
+
+.ib-selected-sports {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-gray-700);
+  border-left: 3px solid var(--color-primary);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .ib-sport-types-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+  }
+  
+  .ib-sport-type-option {
+    padding: 10px 12px;
+  }
+}

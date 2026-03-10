@@ -1,6 +1,19 @@
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, func, JSON
+from enum import Enum
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, func, JSON, ARRAY
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.orm import relationship
 from .base import Base
+
+
+class SportType(str, Enum):
+    """Enum for sport types"""
+    futsal = "futsal"
+    football = "football"
+    cricket = "cricket"
+    hockey = "hockey"
+    padel = "padel"
+    badminton = "badminton"
+    tennis = "tennis"
 
 
 class Court(Base):
@@ -9,7 +22,7 @@ class Court(Base):
     id = Column(Integer, primary_key=True, index=True)
     property_id = Column(Integer, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
-    sport_type = Column(String(50), nullable=False)
+    sport_types = Column(ARRAY(PG_ENUM(SportType, name='sporttype', create_type=False)), nullable=False)
     description = Column(Text)
     specifications = Column(JSON, default=dict)
     amenities = Column(JSON, default=list)
