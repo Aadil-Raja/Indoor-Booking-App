@@ -64,6 +64,9 @@ async def unavailable_service_handler(
         response = _generate_no_courts_message(business_name, property_name)
         logger.info(f"Generated no courts message for chat {chat_id} - "
                    f"property={property_name}")
+    elif unavailable_reason == "system_error":
+        response = _generate_system_error_message(business_name)
+        logger.info(f"Generated system error message for chat {chat_id}")
     else:
         # Fallback for unknown reasons
         response = _generate_generic_unavailable_message(business_name)
@@ -149,6 +152,27 @@ def _generate_generic_unavailable_message(business_name: str) -> str:
         f"Hello! I am {business_name}'s assistant.\n\n"
         "Our booking service is temporarily unavailable.\n\n"
         "Please check back later or contact us directly for assistance.\n"
+        "We apologize for the inconvenience!"
+    )
+
+
+def _generate_system_error_message(business_name: str) -> str:
+    """
+    Generate message for system errors during availability check.
+    
+    Shown when there's a technical error checking service availability
+    (database errors, API failures, etc.).
+    
+    Args:
+        business_name: Name of the business for personalization
+    
+    Returns:
+        Formatted message string
+    """
+    return (
+        f"Hello! I am {business_name}'s assistant.\n\n"
+        "We're experiencing technical difficulties at the moment.\n\n"
+        "Please try again in a few minutes or contact us directly for assistance.\n"
         "We apologize for the inconvenience!"
     )
 

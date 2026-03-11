@@ -494,7 +494,6 @@ async def _check_service_availability(
             if property_to_check:
                 has_courts = await _check_property_has_courts(
                     property_id=selected_property_id,
-                    owner_profile_id=owner_profile_id,
                     chat_id=chat_id
                 )
                 if not has_courts:
@@ -514,7 +513,6 @@ async def _check_service_availability(
                 if prop_id:
                     has_courts = await _check_property_has_courts(
                         property_id=prop_id,
-                        owner_profile_id=owner_profile_id,
                         chat_id=chat_id
                     )
                     if has_courts:
@@ -523,12 +521,11 @@ async def _check_service_availability(
             
             if not any_property_has_courts:
                 logger.warning(f"No properties have courts for owner {owner_profile_id} in chat {chat_id}")
-                # Use first property name for message
-                first_property_name = properties[0].get("name") if properties else None
+                # Don't include property_name when checking all properties
+                # Let unavailable_service use business_name instead
                 return {
                     "available": False,
-                    "reason": "no_courts",
-                    "property_name": first_property_name
+                    "reason": "no_courts"
                 }
         
         # All checks passed - service is available
@@ -540,8 +537,11 @@ async def _check_service_availability(
             f"Error checking service availability for chat {chat_id}: {e}",
             exc_info=True
         )
-        # On error, assume service is available to avoid blocking users
-        return {"available": True}
+        # On error, return unavailable to prevent downstream issues
+        return {
+            "available": False,
+            "reason": "system_error"
+        }
 
 
 async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
@@ -589,7 +589,6 @@ async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
 
 async def _check_property_has_courts(
     property_id: int,
-    owner_profile_id: str,
     chat_id: str
 ) -> bool:
     """
@@ -597,7 +596,6 @@ async def _check_property_has_courts(
     
     Args:
         property_id: Property ID to check
-        owner_profile_id: Owner profile ID as string (not used, kept for signature)
         chat_id: Chat ID for logging
     
     Returns:
