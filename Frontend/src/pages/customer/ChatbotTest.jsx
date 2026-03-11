@@ -116,6 +116,80 @@ const ChatbotTest = () => {
     }, 100);
   };
 
+  // Helper function to render text with markdown and clickable links
+  const renderFormattedText = (text) => {
+    if (!text) return null;
+
+    // Split by newlines to preserve line breaks
+    const lines = text.split('\n');
+    
+    return lines.map((line, lineIndex) => {
+      // Process each line for markdown and URLs
+      const parts = [];
+      let currentIndex = 0;
+      
+      // Regex to match **bold**, URLs, and emojis
+      const regex = /(\*\*[^*]+\*\*|https?:\/\/[^\s]+)/g;
+      let match;
+      
+      while ((match = regex.exec(line)) !== null) {
+        // Add text before match
+        if (match.index > currentIndex) {
+          parts.push(
+            <span key={`text-${lineIndex}-${currentIndex}`}>
+              {line.substring(currentIndex, match.index)}
+            </span>
+          );
+        }
+        
+        const matchedText = match[0];
+        
+        // Check if it's bold text
+        if (matchedText.startsWith('**') && matchedText.endsWith('**')) {
+          const boldText = matchedText.slice(2, -2);
+          parts.push(
+            <strong key={`bold-${lineIndex}-${match.index}`}>
+              {boldText}
+            </strong>
+          );
+        }
+        // Check if it's a URL
+        else if (matchedText.startsWith('http')) {
+          parts.push(
+            <a
+              key={`link-${lineIndex}-${match.index}`}
+              href={matchedText}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="message-link"
+            >
+              {matchedText}
+            </a>
+          );
+        }
+        
+        currentIndex = match.index + matchedText.length;
+      }
+      
+      // Add remaining text
+      if (currentIndex < line.length) {
+        parts.push(
+          <span key={`text-${lineIndex}-${currentIndex}`}>
+            {line.substring(currentIndex)}
+          </span>
+        );
+      }
+      
+      // Return line with <br> if not last line
+      return (
+        <React.Fragment key={`line-${lineIndex}`}>
+          {parts.length > 0 ? parts : line}
+          {lineIndex < lines.length - 1 && <br />}
+        </React.Fragment>
+      );
+    });
+  };
+
   const startNewChat = () => {
     setMessages([]);
     setChatId(null);
@@ -146,7 +220,7 @@ const ChatbotTest = () => {
     return (
       <div key={message.id} className="message-bot">
         <div className="message-content">
-          {message.content}
+          {renderFormattedText(message.content)}
           
           {/* Render buttons if present */}
           {message.message_type === 'button' && message.metadata?.buttons && (

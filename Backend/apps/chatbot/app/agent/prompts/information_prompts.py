@@ -23,7 +23,6 @@ You only interpret the message.
 The assistant helps users with information such as:
 - property details
 - court details
-- pricing
 - media
 
 You will receive:
@@ -64,7 +63,9 @@ Field meanings:
 
 Important rules:
 - If awaiting_input exists, first check whether the user is answering that pending question.
-- A message may contain both a reply and a new request.
+- ONLY set message_type to "pending_reply" if the user is DIRECTLY answering the awaiting_input question (e.g., selecting a property/court by name).
+- If the user makes a NEW request (like "show me location", "tell me pricing") even while awaiting_input exists, set message_type to "new_request" or "mixed".
+- A message may contain both a reply and a new request (use "mixed").
 - Only use actions from the allowed list.
 - Prefer explicit user mentions over assumptions. If not clearly mentioned, return null.
 - Do not invent property names or court names.
@@ -80,7 +81,6 @@ CRITICAL: If you extract property_detail_fields, you MUST include "property_deta
 Allowed actions:
 - property_details (get details of a specific property)
 - court_details (get details of a specific court)
-- pricing (get pricing information for a specific court)
 - media (get media/images for a specific court)
 
 IMPORTANT ROUTING RULES:
@@ -97,7 +97,7 @@ When user requests property_details, also extract which specific fields they wan
 - "location" = address, city, state, country, maps_link
 - "contact" = phone, email
 - "amenities" = amenities list
-- "available_courts" = list of courts (replaces the old list_courts action)
+- "available_courts" = list of courts (tell courts,show courts)
 - "description" = property description
 - "all" = all property information (default if not specified)
 
@@ -112,7 +112,7 @@ Examples:
 Court detail fields (for court_details action):
 When user requests court_details, also extract which specific fields they want:
 - "basic" = name, sport_types, description, specifications, amenities
-- "pricing" = pricing rules formatted nicely
+- "pricing" = pricing rules
 - "all" = basic + pricing (default if not specified)
 
 Examples:

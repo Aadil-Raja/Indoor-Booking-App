@@ -390,3 +390,28 @@
 .chatbot-messages::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
+
+/* Markdown and Link Styles */
+.message-content strong {
+  font-weight: 700;
+  color: inherit;
+}
+
+.message-link {
+  color: #2196F3;
+  text-decoration: underline;
+  word-break: break-all;
+  transition: color 0.2s;
+}
+
+.message-link:hover {
+  color: #1976D2;
+}
+
+.message-bot .message-link {
+  color: #2196F3;
+}
+
+.message-user .message-link {
+  color: #E3F2FD;
+}

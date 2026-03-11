@@ -103,32 +103,32 @@ async def intent_detection(
         return state
     
     # Layer 3: Message relevancy check (LLM, unless conversational response)
-    if _is_conversational_response(user_message):
-        # Skip relevancy check for short conversational responses
-        logger.debug(f"Conversational response detected for chat {chat_id}, skipping relevancy check")
-    else:
-        # Check message relevancy with LLM
-        if llm_provider:
-            relevancy_result = await _check_message_relevancy(
-                user_message=user_message,
-                recent_messages=recent_messages,
-                llm_provider=llm_provider,
-                chat_id=chat_id
-            )
+    # if _is_conversational_response(user_message):
+    #     # Skip relevancy check for short conversational responses
+    #     logger.debug(f"Conversational response detected for chat {chat_id}, skipping relevancy check")
+    # else:
+    #     # Check message relevancy with LLM
+    #     if llm_provider:
+    #         relevancy_result = await _check_message_relevancy(
+    #             user_message=user_message,
+    #             recent_messages=recent_messages,
+    #             llm_provider=llm_provider,
+    #             chat_id=chat_id
+    #         )
             
-            if not relevancy_result["is_relevant"]:
-                logger.info(
-                    f"Message deemed irrelevant for chat {chat_id} - "
-                    f"reason={relevancy_result.get('reason', 'unknown')}"
-                )
-                state["response_content"] = _generate_irrelevant_response()
-                state["response_type"] = "text"
-                state["response_metadata"] = {
-                    "irrelevant_message": True,
-                    "reason": relevancy_result.get("reason", "out_of_scope")
-                }
-                state["next_node"] = None  # Don't route anywhere
-                return state
+    #         if not relevancy_result["is_relevant"]:
+    #             logger.info(
+    #                 f"Message deemed irrelevant for chat {chat_id} - "
+    #                 f"reason={relevancy_result.get('reason', 'unknown')}"
+    #             )
+    #             state["response_content"] = _generate_irrelevant_response()
+    #             state["response_type"] = "text"
+    #             state["response_metadata"] = {
+    #                 "irrelevant_message": True,
+    #                 "reason": relevancy_result.get("reason", "out_of_scope")
+    #             }
+    #             state["next_node"] = None  # Don't route anywhere
+    #             return state
     
     # Layer 4: LLM routing decision (greeting/information/booking)
     if llm_provider:

@@ -103,7 +103,7 @@ async def format_response(
                         if location_parts:
                             response_parts.append(f"📍 Location: {', '.join(location_parts)}")
                         if data.get('maps_link'):
-                            response_parts.append(f"🗺️ Map: {data['maps_link']}")
+                            response_parts.append(f"🗺️ {data['maps_link']}")
                     
                     # Show contact if included
                     if 'phone' in data or 'email' in data:

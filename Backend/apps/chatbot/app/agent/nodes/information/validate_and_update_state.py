@@ -75,31 +75,95 @@ async def validate_and_update_state(
         )
         # Nullify reply_target - will be handled by mention validation sections
         reply_target = None
+    
+    # ---------------------------------
+    # PENDING_REPLY VALIDATION (Fallback for LLM errors)
+    # ---------------------------------
+    # If LLM says "pending_reply" but user has requested actions, it's likely a new request
+    if message_type == "pending_reply" and requested_actions:
+        logger.warning(
+            f"[PENDING_REPLY CORRECTION] Chat {chat_id}: "
+            f"LLM set message_type='pending_reply' but user requested actions: {requested_actions}. "
+            f"Correcting to 'mixed' or 'new_request'."
+        )
+        # If there's a valid reply_target AND actions, it's mixed
+        if reply_target and reply_target == awaiting_input:
+            message_type = "mixed"
+            logger.info(f"Corrected to 'mixed' for chat {chat_id}")
+        else:
+            # No valid reply, just new actions
+            message_type = "new_request"
+            reply_target = None
+            logger.info(f"Corrected to 'new_request' for chat {chat_id}")
+        
+        # Update router_result with corrected message_type
+        router_result["message_type"] = message_type
+        router_result["reply_target"] = reply_target
+        flow_state["router_result"] = router_result
+    
+    # Additional check: If "mixed" but no mentioned property/court, it's just new_request
+    if message_type == "mixed" and not mentioned_property_name and not mentioned_court_name:
+        logger.warning(
+            f"[MIXED CORRECTION] Chat {chat_id}: "
+            f"LLM set message_type='mixed' but no property/court mentioned. "
+            f"Correcting to 'new_request'."
+        )
+        message_type = "new_request"
+        reply_target = None
+        router_result["message_type"] = message_type
+        router_result["reply_target"] = reply_target
+        flow_state["router_result"] = router_result
+    
+    # Additional check: If "new_request" but reply_target is set, clear it
+    if message_type == "new_request" and reply_target:
+        logger.warning(
+            f"[NEW_REQUEST CORRECTION] Chat {chat_id}: "
+            f"LLM set message_type='new_request' but reply_target='{reply_target}'. "
+            f"Clearing reply_target."
+        )
+        reply_target = None
+        router_result["reply_target"] = reply_target
+        flow_state["router_result"] = router_result
 
     # ---------------------------------
     # PROPERTY REPLY RESOLUTION
     # ---------------------------------
     if reply_target == "property_selection":
-        matched_property = _resolve_property_selection(
-            mentioned_property_name,
-            available_properties,
-            chat_id
-        )
-
-        if matched_property:
-            if matched_property["id"] != current_property_id:
-                property_changed = True
-
-            flow_state["property_id"] = matched_property["id"]
-            flow_state["property_name"] = matched_property.get("name")
-
-            flow_state["awaiting_input"] = None
-
+        
+        # Additional validation: If no property mentioned, it's not really a reply
+        if not mentioned_property_name:
+            logger.warning(
+                f"[PROPERTY REPLY VALIDATION] Chat {chat_id}: "
+                f"reply_target='property_selection' but no property mentioned. "
+                f"Treating as new_request instead."
+            )
+            reply_target = None
+            message_type = "new_request"
+            router_result["message_type"] = message_type
+            router_result["reply_target"] = reply_target
+            flow_state["router_result"] = router_result
         else:
-            flow_state["validation_error"] = "invalid_property"
-            flow_state["awaiting_input"] = "property_selection"
-            state["flow_state"] = flow_state
-            return state
+            # User mentioned a property, validate it
+            matched_property = _resolve_property_selection(
+                mentioned_property_name,
+                available_properties,
+                chat_id
+            )
+
+            if matched_property:
+                if matched_property["id"] != current_property_id:
+                    property_changed = True
+
+                flow_state["property_id"] = matched_property["id"]
+                flow_state["property_name"] = matched_property.get("name")
+
+                flow_state["awaiting_input"] = None
+
+            else:
+                flow_state["validation_error"] = "invalid_property"
+                flow_state["awaiting_input"] = "property_selection"
+                state["flow_state"] = flow_state
+                return state
 
     # ---------------------------------
     # PROPERTY MENTION VALIDATION
@@ -174,26 +238,40 @@ async def validate_and_update_state(
     # COURT REPLY RESOLUTION
     # ---------------------------------
     if reply_target == "court_selection":
-
-        matched_sport_type, matched_court_ids = _resolve_court_selection(
-            mentioned_court_name,
-            available_courts,
-            active_property_id,
-            chat_id
-        )
-
-        if matched_court_ids:
-
-            flow_state["court_ids"] = matched_court_ids
-            flow_state["court_type"] = matched_sport_type
-
-            flow_state["awaiting_input"] = None
-
+        
+        # Additional validation: If no court mentioned, it's not really a reply
+        if not mentioned_court_name:
+            logger.warning(
+                f"[COURT REPLY VALIDATION] Chat {chat_id}: "
+                f"reply_target='court_selection' but no court mentioned. "
+                f"Treating as new_request instead."
+            )
+            reply_target = None
+            message_type = "new_request"
+            router_result["message_type"] = message_type
+            router_result["reply_target"] = reply_target
+            flow_state["router_result"] = router_result
         else:
-            flow_state["validation_error"] = "invalid_court"
-            flow_state["awaiting_input"] = "court_selection"
-            state["flow_state"] = flow_state
-            return state
+            # User mentioned a court, validate it
+            matched_sport_type, matched_court_ids = _resolve_court_selection(
+                mentioned_court_name,
+                available_courts,
+                active_property_id,
+                chat_id
+            )
+
+            if matched_court_ids:
+
+                flow_state["court_ids"] = matched_court_ids
+                flow_state["court_type"] = matched_sport_type
+
+                flow_state["awaiting_input"] = None
+
+            else:
+                flow_state["validation_error"] = "invalid_court"
+                flow_state["awaiting_input"] = "court_selection"
+                state["flow_state"] = flow_state
+                return state
 
     # ---------------------------------
     # COURT MENTION VALIDATION
@@ -302,6 +380,91 @@ async def validate_and_update_state(
             f"Defaulting court_detail_fields to ['all'] because court_details action "
             f"was specified but fields were missing for chat {chat_id}"
         )
+
+    # ---------------------------------
+    # KEYWORD-BASED FALLBACK (Generic Solution)
+    # ---------------------------------
+    # If LLM returned empty actions and user is NOT replying, try keyword matching
+    # This handles cases like "tell courts", "show location", "pricing info" etc.
+    if not requested_actions and not reply_target and message_type != "pending_reply":
+        user_message = state.get("user_message", "").lower()
+        
+        # Keyword mappings for common requests
+        keyword_mappings = {
+            # Property-related keywords
+            "location": ("property_details", ["location"]),
+            "address": ("property_details", ["location"]),
+            "where": ("property_details", ["location"]),
+            "map": ("property_details", ["location"]),
+            "contact": ("property_details", ["contact"]),
+            "phone": ("property_details", ["contact"]),
+            "email": ("property_details", ["contact"]),
+            "amenities": ("property_details", ["amenities"]),
+            "amenity": ("property_details", ["amenities"]),
+            "facilities": ("property_details", ["amenities"]),
+            "facility": ("property_details", ["amenities"]),
+            "courts": ("property_details", ["available_courts"]),
+            "court": ("property_details", ["available_courts"]),
+            "available": ("property_details", ["available_courts"]),
+            "description": ("property_details", ["description"]),
+            "about": ("property_details", ["description"]),
+            "details": ("property_details", ["all"]),
+            
+            # Court-related keywords
+            "pricing": ("court_details", ["pricing"]),
+            "price": ("court_details", ["pricing"]),
+            "cost": ("court_details", ["pricing"]),
+            "rate": ("court_details", ["pricing"]),
+            "fee": ("court_details", ["pricing"]),
+            "specification": ("court_details", ["basic"]),
+            "specs": ("court_details", ["basic"]),
+            "media": ("media", None),
+            "image": ("media", None),
+            "photo": ("media", None),
+            "picture": ("media", None),
+        }
+        
+        # Try to match keywords
+        matched_action = None
+        matched_fields = None
+        
+        for keyword, (action, fields) in keyword_mappings.items():
+            if keyword in user_message:
+                matched_action = action
+                matched_fields = fields
+                logger.info(
+                    f"[KEYWORD FALLBACK] Chat {chat_id}: Matched keyword '{keyword}' → "
+                    f"action='{action}', fields={fields}"
+                )
+                break
+        
+        # Apply fallback if matched
+        if matched_action:
+            requested_actions = [matched_action]
+            
+            # Set appropriate fields
+            if matched_action == "property_details" and matched_fields:
+                flow_state["property_detail_fields"] = matched_fields
+            elif matched_action == "court_details" and matched_fields:
+                flow_state["court_detail_fields"] = matched_fields
+            
+            # Update router_result
+            router_result["requested_actions"] = requested_actions
+            if matched_action == "property_details":
+                router_result["property_detail_fields"] = matched_fields
+            elif matched_action == "court_details":
+                router_result["court_detail_fields"] = matched_fields
+            
+            flow_state["router_result"] = router_result
+            
+            logger.info(
+                f"[KEYWORD FALLBACK APPLIED] Chat {chat_id}: "
+                f"Set requested_actions={requested_actions}, fields={matched_fields}"
+            )
+        else:
+            logger.debug(
+                f"[KEYWORD FALLBACK] Chat {chat_id}: No keyword match found in message: {user_message}"
+            )
 
     # ---------------------------------
     # REQUESTED ACTIONS (Smart Pending Logic)

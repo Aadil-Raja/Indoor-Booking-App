@@ -43,16 +43,31 @@ async def show_available_actions(
     property_name = flow_state.get("property_name")
     court_ids = flow_state.get("court_ids", [])
     court_type = flow_state.get("court_type")
+    validation_error = flow_state.get("validation_error")
     
     # Build response based on what's selected
     response_parts = []
     
+    # Add error message if present
+    if validation_error:
+        if validation_error == "invalid_property":
+            response_parts.append("I couldn't find that property.")
+        elif validation_error == "invalid_court":
+            response_parts.append("I couldn't find that court.")
+        elif validation_error == "unclear_message":
+            response_parts.append("I couldn't understand that.")
+        else:
+            response_parts.append("Something went wrong.")
+        response_parts.append("")  # Empty line for spacing
+        
+        # Clear the error after showing it
+        flow_state["validation_error"] = None
+    
     if property_id and court_ids:
         # Both property and court selected
         response_parts.append(
-            f"Great! You've selected {property_name} - {court_type}."
+            f"I can help you with {property_name} - {court_type}:"
         )
-        response_parts.append("\nI can show you:")
         response_parts.append("• Court details and description")
         response_parts.append("• Pricing information")
         response_parts.append("• Photos and media")
@@ -62,9 +77,8 @@ async def show_available_actions(
     elif property_id:
         # Only property selected
         response_parts.append(
-            f"Great! You've selected {property_name}."
+            f"I can help you with {property_name}:"
         )
-        response_parts.append("\nI can show you:")
         response_parts.append("• Property details and facilities")
         response_parts.append("• Available courts")
         response_parts.append("• Location and directions")

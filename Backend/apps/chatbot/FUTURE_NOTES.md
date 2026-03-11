@@ -29,3 +29,10 @@ maybe add fuzzy matching
 
 allow selection using 1 , 2, 3 numbers courtd
 handle this if there exist a court with multiple and one with one sport types then how court selection will be handled as it is currently using first id for details 
+
+what happens if llm says proeprty selection but no properyt or court was matched etc and requested action is also get property details or get court details
+
+
+add fallbacks if llm replies does not matches the options given to it 
+
+what if the user gives reply but it is not clear for eg user first court 
