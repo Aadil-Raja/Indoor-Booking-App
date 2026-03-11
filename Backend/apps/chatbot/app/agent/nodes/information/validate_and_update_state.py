@@ -304,65 +304,63 @@ async def validate_and_update_state(
         )
 
     # ---------------------------------
-    # REQUESTED ACTIONS (Merge with Pending)
+    # REQUESTED ACTIONS (Smart Pending Logic)
     # ---------------------------------
 
     pending_actions = flow_state.get("pending_actions", [])
 
-    if requested_actions and pending_actions:
-        # Merge: new actions first, then add pending actions (deduplicated)
-        combined = list(requested_actions)
-        for action in pending_actions:
-            if action not in combined:
-                combined.append(action)
-        flow_state["requested_actions"] = combined
+    # RULE: Only restore pending actions if user is replying to our question
+    # If user asks something new, don't restore (will be cleared in check_requirements if we execute)
+    is_replying_to_question = reply_target in ["property_selection", "court_selection"]
+
+    if is_replying_to_question and pending_actions:
+        # User is answering our question - restore pending actions
+        if requested_actions:
+            # Merge: new actions first, then add pending actions (deduplicated)
+            combined = list(requested_actions)
+            for action in pending_actions:
+                if action not in combined:
+                    combined.append(action)
+            flow_state["requested_actions"] = combined
+            logger.debug(
+                f"User replied to question - merged actions for chat {chat_id}: "
+                f"new={requested_actions}, pending={pending_actions}, combined={combined}"
+            )
+        else:
+            # Only pending actions, no new ones
+            flow_state["requested_actions"] = pending_actions
+            logger.debug(f"User replied to question - restored pending actions for chat {chat_id}: {pending_actions}")
         
         # Restore pending action params
         pending_action_params = flow_state.get("pending_action_params", {})
         if pending_action_params:
             # Restore property_detail_fields if property_details action is resuming
-            if "property_details" in combined and "property_details" in pending_action_params:
+            if "property_details" in flow_state["requested_actions"] and "property_details" in pending_action_params:
                 property_params = pending_action_params.get("property_details", {})
                 if "property_detail_fields" in property_params:
                     flow_state["property_detail_fields"] = property_params["property_detail_fields"]
                     logger.debug(f"Restored property_detail_fields from pending params: {flow_state['property_detail_fields']}")
             
             # Restore court_detail_fields if court_details action is resuming
-            if "court_details" in combined and "court_details" in pending_action_params:
+            if "court_details" in flow_state["requested_actions"] and "court_details" in pending_action_params:
                 court_params = pending_action_params.get("court_details", {})
                 if "court_detail_fields" in court_params:
                     flow_state["court_detail_fields"] = court_params["court_detail_fields"]
                     logger.debug(f"Restored court_detail_fields from pending params: {flow_state['court_detail_fields']}")
-        
-        logger.debug(
-            f"Merged actions for chat {chat_id}: "
-            f"new={requested_actions}, pending={pending_actions}, combined={combined}"
-        )
-    elif pending_actions:
-        # Only pending actions, no new ones
-        flow_state["requested_actions"] = pending_actions
-        
-        # Restore pending action params
-        pending_action_params = flow_state.get("pending_action_params", {})
-        if pending_action_params:
-            # Restore property_detail_fields if property_details action is resuming
-            if "property_details" in pending_actions and "property_details" in pending_action_params:
-                property_params = pending_action_params.get("property_details", {})
-                if "property_detail_fields" in property_params:
-                    flow_state["property_detail_fields"] = property_params["property_detail_fields"]
-                    logger.debug(f"Restored property_detail_fields from pending params: {flow_state['property_detail_fields']}")
-            
-            # Restore court_detail_fields if court_details action is resuming
-            if "court_details" in pending_actions and "court_details" in pending_action_params:
-                court_params = pending_action_params.get("court_details", {})
-                if "court_detail_fields" in court_params:
-                    flow_state["court_detail_fields"] = court_params["court_detail_fields"]
-                    logger.debug(f"Restored court_detail_fields from pending params: {flow_state['court_detail_fields']}")
-        
-        logger.debug(f"Restored pending actions for chat {chat_id}: {pending_actions}")
     else:
-        # Only new actions, no pending
-        flow_state["requested_actions"] = requested_actions
+        # User asked something new (not replying) - use only new actions
+        # Don't clear pending yet - let check_requirements decide based on whether we execute
+        if requested_actions:
+            flow_state["requested_actions"] = requested_actions
+            logger.debug(
+                f"User asked new action for chat {chat_id}: "
+                f"new={requested_actions}, pending will be evaluated in check_requirements"
+            )
+        else:
+            # No new actions and not replying - use pending if exists, else empty
+            if pending_actions:
+                flow_state["requested_actions"] = []
+                logger.debug(f"No new actions for chat {chat_id}, pending={pending_actions} will be evaluated")
 
     state["flow_state"] = flow_state
     

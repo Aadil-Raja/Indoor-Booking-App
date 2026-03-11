@@ -153,6 +153,7 @@ async def execute_actions(
     # Clear state after successful execution
     flow_state["awaiting_input"] = None
     flow_state["pending_actions"] = []
+    flow_state["pending_action_params"] = {}
     flow_state["requested_actions"] = []
     
     # Track last node
