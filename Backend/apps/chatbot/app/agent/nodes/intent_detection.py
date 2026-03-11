@@ -6,8 +6,10 @@ Simple routing only:
 - "information" for questions
 - "booking" for reservations
 - "unavailable_service" for service unavailability cases
+- "irrelevant" for off-topic messages (combined with routing decision)
 """
 
+import re
 from typing import Optional
 import logging
 
@@ -29,13 +31,12 @@ async def intent_detection(
     llm_provider: Optional[LLMProvider] = None
 ) -> ConversationState:
     """
-    Use LLM to decide routing (greeting/information/booking/unavailable_service).
+    Use LLM to decide routing (greeting/information/booking/unavailable_service/irrelevant).
     
     Validation layers (in order):
     1. Message format validation (length, emojis, spam)
     2. Service availability check (properties/courts)
-    3. Message relevancy check (LLM)
-    4. Intent routing decision (LLM)
+    3. Combined LLM routing decision (includes relevancy check + intent routing)
     
     New users (owner_properties not initialized) are forced to greeting.
     """
@@ -102,35 +103,7 @@ async def intent_detection(
         state["next_node"] = "unavailable_service"
         return state
     
-    # Layer 3: Message relevancy check (LLM, unless conversational response)
-    # if _is_conversational_response(user_message):
-    #     # Skip relevancy check for short conversational responses
-    #     logger.debug(f"Conversational response detected for chat {chat_id}, skipping relevancy check")
-    # else:
-    #     # Check message relevancy with LLM
-    #     if llm_provider:
-    #         relevancy_result = await _check_message_relevancy(
-    #             user_message=user_message,
-    #             recent_messages=recent_messages,
-    #             llm_provider=llm_provider,
-    #             chat_id=chat_id
-    #         )
-            
-    #         if not relevancy_result["is_relevant"]:
-    #             logger.info(
-    #                 f"Message deemed irrelevant for chat {chat_id} - "
-    #                 f"reason={relevancy_result.get('reason', 'unknown')}"
-    #             )
-    #             state["response_content"] = _generate_irrelevant_response()
-    #             state["response_type"] = "text"
-    #             state["response_metadata"] = {
-    #                 "irrelevant_message": True,
-    #                 "reason": relevancy_result.get("reason", "out_of_scope")
-    #             }
-    #             state["next_node"] = None  # Don't route anywhere
-    #             return state
-    
-    # Layer 4: LLM routing decision (greeting/information/booking)
+    # Layer 3: Combined LLM routing decision (includes relevancy + intent)
     if llm_provider:
         next_node = await _llm_routing_decision(
             user_message=user_message,
@@ -139,6 +112,21 @@ async def intent_detection(
             llm_provider=llm_provider,
             chat_id=chat_id
         )
+        
+        # Handle irrelevant messages
+        if next_node == "irrelevant":
+            logger.info(f"Message deemed irrelevant for chat {chat_id}")
+            state["response_content"] = _generate_irrelevant_response(
+                flow_state=flow_state,
+                recent_messages=recent_messages
+            )
+            state["response_type"] = "text"
+            state["response_metadata"] = {
+                "irrelevant_message": True,
+                "reason": "out_of_scope"
+            }
+            state["next_node"] = None  # Don't route anywhere
+            return state
     else:
         logger.warning(
             f"No LLM provider, defaulting to greeting for chat {chat_id}"
@@ -163,7 +151,9 @@ async def _llm_routing_decision(
     """
     Call LLM to get routing decision with conversation context.
     
-    Returns: next_node ("greeting" | "information" | "booking")
+    Now includes relevancy check - returns "irrelevant" for off-topic messages.
+    
+    Returns: next_node ("greeting" | "information" | "booking" | "irrelevant")
     Defaults to "greeting" if LLM fails.
     """
     # Get formatted prompt with context
@@ -211,8 +201,8 @@ async def _llm_routing_decision(
             field_type=str
         )
         
-        # Validate next_node
-        valid_nodes = ["greeting", "information", "booking"]
+        # Validate next_node (now includes "irrelevant")
+        valid_nodes = ["greeting", "information", "booking", "irrelevant"]
         if next_node not in valid_nodes:
             logger.warning(
                 f"Invalid next_node '{next_node}' for chat {chat_id}, "
@@ -237,10 +227,12 @@ def _validate_message_format(user_message: str) -> dict:
     
     Checks:
     1. Empty or whitespace only
-    2. Too short (≤2 characters, excluding conversational responses)
-    3. Only emojis
-    4. Too long (>300 characters)
-    5. Spam patterns (repeated characters)
+    2. Only emojis
+    3. Too long (>300 characters)
+    4. Spam patterns (repeated characters)
+    
+    Note: Length check removed to allow valid short messages like "go", "do", "no", "ok".
+    The LLM handles relevancy for very short messages.
     
     Args:
         user_message: User's message to validate
@@ -261,15 +253,7 @@ def _validate_message_format(user_message: str) -> dict:
     
     cleaned_message = user_message.strip()
     
-    # 2. Too short (≤2 characters, but allow conversational responses)
-    if len(cleaned_message) <= 2 and not _is_conversational_response(user_message):
-        return {
-            "valid": False,
-            "reason": "too_short",
-            "message": "Your message is too short. Please describe what you need help with."
-        }
-    
-    # 3. Only emojis
+    # 2. Only emojis
     if _is_only_emojis(cleaned_message):
         return {
             "valid": False,
@@ -277,7 +261,7 @@ def _validate_message_format(user_message: str) -> dict:
             "message": "I see you sent an emoji! 😊 How can I help you with booking a court today?"
         }
     
-    # 4. Too long (>300 characters)
+    # 3. Too long (>300 characters)
     if len(cleaned_message) > 300:
         return {
             "valid": False,
@@ -285,7 +269,7 @@ def _validate_message_format(user_message: str) -> dict:
             "message": "Your message is too long. Please send a shorter message (under 300 characters)."
         }
     
-    # 5. Spam patterns (repeated characters)
+    # 4. Spam patterns (repeated characters)
     if _is_spam_pattern(cleaned_message):
         return {
             "valid": False,
@@ -297,27 +281,6 @@ def _validate_message_format(user_message: str) -> dict:
     return {"valid": True}
 
 
-def _is_conversational_response(message: str) -> bool:
-    """
-    Check if message is a short conversational response.
-    
-    These responses are context-dependent (responding to bot's previous message)
-    and should bypass relevancy checks.
-    
-    Args:
-        message: User's message
-    
-    Returns:
-        True if conversational response, False otherwise
-    """
-    conversational_responses = {
-        "ok", "okay", "thanks", "thank you", "yes", "no", "sure",
-        "got it", "alright", "fine", "cool", "great", "nope", "yep",
-        "yeah", "nah", "k", "ty", "thx", "please", "pls"
-    }
-    
-    cleaned = message.strip().lower()
-    return cleaned in conversational_responses
 
 
 def _is_only_emojis(message: str) -> bool:
@@ -330,8 +293,6 @@ def _is_only_emojis(message: str) -> bool:
     Returns:
         True if only emojis, False otherwise
     """
-    import re
-    
     # Remove whitespace
     no_whitespace = message.replace(" ", "").replace("\n", "").replace("\t", "")
     
@@ -365,8 +326,6 @@ def _is_spam_pattern(message: str) -> bool:
     Returns:
         True if spam pattern detected, False otherwise
     """
-    import re
-    
     # Check for 5+ repeated characters (e.g., "aaaaa", "!!!!!")
     repeated_char_pattern = re.compile(r"(.)\1{4,}")
     if repeated_char_pattern.search(message):
@@ -382,13 +341,90 @@ def _is_spam_pattern(message: str) -> bool:
     return False
 
 
-def _generate_irrelevant_response() -> str:
+def _generate_irrelevant_response(
+    flow_state: dict = None,
+    recent_messages: list = None
+) -> str:
     """
-    Generate response for irrelevant messages.
+    Generate contextual response for irrelevant messages.
+    
+    Uses flow_state and conversation history to create personalized responses
+    that acknowledge what the user was doing before going off-topic.
+    
+    Args:
+        flow_state: Flow state containing booking context and property info
+        recent_messages: Recent conversation history
     
     Returns:
-        Polite message explaining scope and offering help
+        Contextual message explaining scope and offering help
     """
+    if not flow_state:
+        flow_state = {}
+    
+    # Priority 1: Mid-booking context (highest priority)
+    # If user is in the middle of booking, acknowledge that
+    selected_property_id = flow_state.get("selected_property_id")
+    selected_court_id = flow_state.get("selected_court_id")
+    selected_date = flow_state.get("selected_date")
+    
+    if selected_court_id or selected_date:
+        return (
+            "I can only help with booking-related questions. "
+            "You were in the middle of making a booking. Would you like to:\n\n"
+            "• Continue your current booking\n"
+            "• Start a new booking\n"
+            "• Check court availability"
+        )
+    
+    # Priority 2: Last node context
+    # Acknowledge what they were just doing
+    last_node = flow_state.get("last_node")
+    
+    if last_node == "booking":
+        return (
+            "I see you were working on a booking. "
+            "I can only assist with booking-related questions. "
+            "Would you like to continue booking a court?"
+        )
+    
+    if last_node == "information":
+        return (
+            "I was helping you find court information. "
+            "I can only answer questions about our facilities and bookings. "
+            "What would you like to know about our courts?"
+        )
+    
+    # Priority 3: Property-specific context
+    # Personalize with property name if available
+    properties = flow_state.get("available_properties", [])
+    
+    if properties and len(properties) > 0:
+        # Get property name (use selected property or first property)
+        property_name = None
+        
+        if selected_property_id:
+            # Find selected property name
+            for prop in properties:
+                if prop.get("id") == selected_property_id:
+                    property_name = prop.get("name")
+                    break
+        
+        # Fallback to first property
+        if not property_name and properties:
+            property_name = properties[0].get("name")
+        
+        if property_name:
+            return (
+                f"I'm here to help you with {property_name} bookings. "
+                f"I can assist with:\n\n"
+                f"• Booking courts\n"
+                f"• Checking availability and pricing\n"
+                f"• Information about our facilities\n\n"
+                f"How can I help you today?"
+            )
+    
+    # Priority 4: Generic fallback
+    # Use when no context is available
     return (
         "I'm an indoor sports facility booking assistant. "
         "I can help you with:\n\n"
@@ -400,94 +436,6 @@ def _generate_irrelevant_response() -> str:
     )
 
 
-async def _check_message_relevancy(
-    user_message: str,
-    recent_messages: list,
-    llm_provider: LLMProvider,
-    chat_id: str
-) -> dict:
-    """
-    Check if user message is relevant to indoor booking using LLM.
-    
-    Uses a focused prompt to determine if the message is within scope
-    of indoor sports facility booking services.
-    
-    Args:
-        user_message: User's message to check
-        recent_messages: Recent conversation history (for context)
-        llm_provider: LLM provider for relevancy check
-        chat_id: Chat ID for logging
-    
-    Returns:
-        Dictionary with:
-        - is_relevant: bool (True if relevant)
-        - reason: str (explanation from LLM)
-    """
-    from app.agent.prompts.intent_prompts import get_relevancy_check_prompt
-    
-    # Get formatted prompt with context (only last 2 messages for efficiency)
-    prompt = get_relevancy_check_prompt(
-        message=user_message,
-        recent_messages=recent_messages[-2:] if recent_messages else []
-    )
-    
-    # Get LLM logger
-    llm_logger = get_llm_logger()
-    
-    try:
-        # Create LangChain ChatOpenAI instance
-        llm = create_langchain_llm(
-            llm_provider,
-            temperature=0.0,  # Consistent relevancy checking
-            max_tokens=100    # Just need is_relevant + brief reason
-        )
-        
-        # Call LLM
-        response = await llm.ainvoke([HumanMessage(content=prompt)])
-        response_content = response.content.strip()
-        
-        # Log the LLM call
-        llm_logger.log_llm_call(
-            node_name="intent_detection_relevancy",
-            prompt=prompt,
-            response=response_content,
-            parameters={"temperature": 0.0, "max_tokens": 100}
-        )
-        
-        # Parse JSON response
-        relevancy_response = parse_llm_json_response(
-            response=response_content,
-            fallback={"is_relevant": True, "reason": "parse_error"},
-            context=f"relevancy_check for chat {chat_id}"
-        )
-        
-        # Extract is_relevant field
-        is_relevant = extract_json_field(
-            parsed_json=relevancy_response,
-            field="is_relevant",
-            default=True,  # Default to relevant on error (avoid false positives)
-            field_type=bool
-        )
-        
-        reason = relevancy_response.get("reason", "")
-        
-        logger.info(
-            f"Relevancy check for chat {chat_id}: is_relevant={is_relevant}, "
-            f"reason={reason}"
-        )
-        
-        return {
-            "is_relevant": is_relevant,
-            "reason": reason
-        }
-        
-    except LLMProviderError as e:
-        logger.error(f"LLM relevancy check failed for chat {chat_id}: {e}", exc_info=True)
-        # Default to relevant on error to avoid blocking users
-        return {"is_relevant": True, "reason": "llm_error"}
-    except Exception as e:
-        logger.error(f"Unexpected error in relevancy check for chat {chat_id}: {e}", exc_info=True)
-        return {"is_relevant": True, "reason": "unexpected_error"}
 
 
 
@@ -546,7 +494,6 @@ async def _check_service_availability(
             if property_to_check:
                 has_courts = await _check_property_has_courts(
                     property_id=selected_property_id,
-                    owner_profile_id=owner_profile_id,
                     chat_id=chat_id
                 )
                 if not has_courts:
@@ -566,7 +513,6 @@ async def _check_service_availability(
                 if prop_id:
                     has_courts = await _check_property_has_courts(
                         property_id=prop_id,
-                        owner_profile_id=owner_profile_id,
                         chat_id=chat_id
                     )
                     if has_courts:
@@ -575,12 +521,11 @@ async def _check_service_availability(
             
             if not any_property_has_courts:
                 logger.warning(f"No properties have courts for owner {owner_profile_id} in chat {chat_id}")
-                # Use first property name for message
-                first_property_name = properties[0].get("name") if properties else None
+                # Don't include property_name when checking all properties
+                # Let unavailable_service use business_name instead
                 return {
                     "available": False,
-                    "reason": "no_courts",
-                    "property_name": first_property_name
+                    "reason": "no_courts"
                 }
         
         # All checks passed - service is available
@@ -592,8 +537,11 @@ async def _check_service_availability(
             f"Error checking service availability for chat {chat_id}: {e}",
             exc_info=True
         )
-        # On error, assume service is available to avoid blocking users
-        return {"available": True}
+        # On error, return unavailable to prevent downstream issues
+        return {
+            "available": False,
+            "reason": "system_error"
+        }
 
 
 async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
@@ -641,7 +589,6 @@ async def _fetch_owner_properties(owner_profile_id: str, chat_id: str) -> list:
 
 async def _check_property_has_courts(
     property_id: int,
-    owner_profile_id: str,
     chat_id: str
 ) -> bool:
     """
@@ -649,7 +596,6 @@ async def _check_property_has_courts(
     
     Args:
         property_id: Property ID to check
-        owner_profile_id: Owner profile ID as string (not used, kept for signature)
         chat_id: Chat ID for logging
     
     Returns:

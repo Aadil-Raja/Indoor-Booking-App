@@ -28,7 +28,10 @@ handle duplicate court sport types
 maybe add fuzzy matching
 
 allow selection using 1 , 2, 3 numbers courtd
-handle this if there exist a court with multiple and one with one sport types then how court selection will be handled as it is currently using first id for details 
+handle this if there exist a court with multiple and one with one sport types then how court selection will be handled as it is currently using first id for details
+
+## Property Version-Based Cache Invalidation
+flow_state caches property and court data which becomes stale when owners add/delete/update properties or courts in the database, showing outdated information. Solution: Add property_version (integer) field to properties table that auto-increments whenever the property itself OR any of its courts OR pricing rules change. Store this version in flow_state alongside cached property data. Before critical operations (showing details, booking), compare cached version with current DB version - if mismatch detected, refetch property data and clear dependent selections. 
 
 what happens if llm says proeprty selection but no properyt or court was matched etc and requested action is also get property details or get court details
 
