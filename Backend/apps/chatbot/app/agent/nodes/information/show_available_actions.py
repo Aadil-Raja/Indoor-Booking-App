@@ -72,8 +72,41 @@ async def show_available_actions(
         response_parts.append("\nWhat would you like to know?")
     
     else:
-        # Fallback (shouldn't happen, but handle gracefully)
-        response_parts.append("How can I help you today?")
+        # No property or court selected - show generic help with available options
+        available_properties = flow_state.get("available_properties", [])
+        available_courts = flow_state.get("available_courts", [])
+        
+        response_parts.append("I can help you find information about sports facilities!")
+        response_parts.append("\nYou can ask me about:")
+        response_parts.append("• Property details and facilities")
+        response_parts.append("• Court details and specifications")
+        response_parts.append("• Pricing information")
+        response_parts.append("• Location and directions")
+        response_parts.append("• Photos and media")
+        
+        # Show available properties if any
+        if available_properties:
+            response_parts.append("\n📍 Available Properties:")
+            for prop in available_properties[:5]:  # Show max 5
+                response_parts.append(f"  • {prop.get('name')}")
+            if len(available_properties) > 5:
+                response_parts.append(f"  ... and {len(available_properties) - 5} more")
+        
+        # Show available courts if any
+        if available_courts:
+            # Get unique sport types
+            unique_sports = set()
+            for court in available_courts:
+                sport_types = court.get('sport_types', [])
+                for st in sport_types:
+                    unique_sports.add(st)
+            
+            if unique_sports:
+                response_parts.append("\n🏟️ Available Sports:")
+                for sport in sorted(unique_sports):
+                    response_parts.append(f"  • {sport}")
+        
+        response_parts.append("\nWhich property or sport would you like to know about?")
     
     response = "\n".join(response_parts)
     

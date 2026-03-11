@@ -75,8 +75,8 @@ async def check_requirements(
             logger.info(f"Property/court selected with no actions, routing to show_available_actions")
             return state
         
-        # No property/court selected and no actions - just execute (will be empty)
-        flow_state["next_step"] = "execute_actions"
+        # No property/court selected and no actions - show available options
+        flow_state["next_step"] = "show_available_actions"
         flow_state["last_node"] = "information-check_requirements"
         state["flow_state"] = flow_state
         return state
@@ -114,6 +114,13 @@ async def check_requirements(
     # Determine next step with partial execution support
     # Priority: property first, then court, then execute
     
+    # Check if user was replying to a question (from router_result)
+    router_result = flow_state.get("router_result", {})
+    is_replying = router_result.get("reply_target") in ["property_selection", "court_selection"]
+    
+    # Get old pending actions (before we update)
+    old_pending_actions = flow_state.get("pending_actions", [])
+    
     if needs_property_actions:
         # Some actions need property
         if executable_now:
@@ -132,20 +139,38 @@ async def check_requirements(
         
         # Keep executable actions in requested_actions for immediate execution
         flow_state["requested_actions"] = executable_now
-        # Move actions that need property to pending
-        flow_state["pending_actions"] = needs_property_actions + needs_court_actions
         
-        # Save pending action params
+        # Set NEW pending actions (actions that need property/court)
+        new_pending_actions = needs_property_actions + needs_court_actions
+        flow_state["pending_actions"] = new_pending_actions
+        
+        # Save pending action params for NEW pending actions
         pending_action_params = {}
-        if "property_details" in (needs_property_actions + needs_court_actions):
+        if "property_details" in new_pending_actions:
             pending_action_params["property_details"] = {
                 "property_detail_fields": flow_state.get("property_detail_fields", ["all"])
             }
-        if "court_details" in (needs_property_actions + needs_court_actions):
+        if "court_details" in new_pending_actions:
             pending_action_params["court_details"] = {
                 "court_detail_fields": flow_state.get("court_detail_fields", ["all"])
             }
         flow_state["pending_action_params"] = pending_action_params
+        
+        # SMART CLEAR: If user asked something new (not replying) and we executed something,
+        # don't ask about old pending after execution
+        if executable_now and not is_replying and old_pending_actions:
+            logger.info(
+                f"User asked new action with partial execution - will not ask about old pending after execution for chat {chat_id}: "
+                f"old_pending={old_pending_actions}, new_pending={new_pending_actions}"
+            )
+            # Clear after_execute so we don't ask about old pending
+            # The NEW pending actions are already set above
+            if set(new_pending_actions) == set(old_pending_actions):
+                # Same actions, keep asking
+                pass
+            else:
+                # Different actions, user moved on - don't continue old flow
+                flow_state["after_execute"] = None
         
     elif needs_court_actions:
         # Some actions need court (property exists)
@@ -165,20 +190,38 @@ async def check_requirements(
         
         # Keep executable actions in requested_actions for immediate execution
         flow_state["requested_actions"] = executable_now
-        # Move actions that need court to pending
-        flow_state["pending_actions"] = needs_court_actions
         
-        # Save pending action params
+        # Set NEW pending actions (actions that need court)
+        new_pending_actions = needs_court_actions
+        flow_state["pending_actions"] = new_pending_actions
+        
+        # Save pending action params for NEW pending actions
         pending_action_params = {}
-        if "property_details" in needs_court_actions:
+        if "property_details" in new_pending_actions:
             pending_action_params["property_details"] = {
                 "property_detail_fields": flow_state.get("property_detail_fields", ["all"])
             }
-        if "court_details" in needs_court_actions:
+        if "court_details" in new_pending_actions:
             pending_action_params["court_details"] = {
                 "court_detail_fields": flow_state.get("court_detail_fields", ["all"])
             }
         flow_state["pending_action_params"] = pending_action_params
+        
+        # SMART CLEAR: If user asked something new (not replying) and we executed something,
+        # don't ask about old pending after execution
+        if executable_now and not is_replying and old_pending_actions:
+            logger.info(
+                f"User asked new action with partial execution - will not ask about old pending after execution for chat {chat_id}: "
+                f"old_pending={old_pending_actions}, new_pending={new_pending_actions}"
+            )
+            # Clear after_execute so we don't ask about old pending
+            # The NEW pending actions are already set above
+            if set(new_pending_actions) == set(old_pending_actions):
+                # Same actions, keep asking
+                pass
+            else:
+                # Different actions, user moved on - don't continue old flow
+                flow_state["after_execute"] = None
         
     else:
         # All actions can be executed
@@ -186,6 +229,10 @@ async def check_requirements(
         flow_state["next_step"] = "execute_actions"
         flow_state["after_execute"] = None
         flow_state["requested_actions"] = executable_now
+        
+        # Clear any old pending state since we're executing everything
+        flow_state["pending_actions"] = []
+        flow_state["pending_action_params"] = {}
     
     # Track last node
     flow_state["last_node"] = "information-check_requirements"
