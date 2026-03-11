@@ -22,6 +22,7 @@ from app.agent.nodes.information import (
     ask_property,
     ask_court,
     execute_actions,
+    show_available_actions,
     format_response,
 )
 
@@ -42,6 +43,7 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
     - ask_property: Asks user to select a property
     - ask_court: Asks user to select a court
     - execute_actions: Executes the requested actions
+    - show_available_actions: Shows available actions when property/court selected
     - format_response: Formats the final response
     
     Args:
@@ -74,6 +76,9 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
     async def execute_actions_node(state):
         return await execute_actions(state)
     
+    async def show_available_actions_node(state):
+        return await show_available_actions(state)
+    
     async def format_response_node(state):
         return await format_response(state)
     
@@ -83,6 +88,7 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
     graph.add_node("ask_property", ask_property_node)
     graph.add_node("ask_court", ask_court_node)
     graph.add_node("execute_actions", execute_actions_node)
+    graph.add_node("show_available_actions", show_available_actions_node)
     graph.add_node("format_response", format_response_node)
     
     # Set entry point
@@ -99,13 +105,15 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
         {
             "ask_property": "ask_property",
             "ask_court": "ask_court",
-            "execute_actions": "execute_actions"
+            "execute_actions": "execute_actions",
+            "show_available_actions": "show_available_actions"
         }
     )
     
-    # ask_property and ask_court go to format_response
+    # ask_property, ask_court, and show_available_actions go to END (no format needed)
     graph.add_edge("ask_property", "format_response")
     graph.add_edge("ask_court", "format_response")
+    graph.add_edge("show_available_actions", END)
     
     # execute_actions can go to ask nodes OR format_response (conditional)
     graph.add_conditional_edges(
@@ -134,6 +142,7 @@ def route_check_requirements(state: ConversationState) -> str:
     This function reads flow_state["next_step"] and routes to:
     - "ask_property" if property is missing
     - "ask_court" if court is missing
+    - "show_available_actions" if property/court selected but no actions
     - "execute_actions" if all requirements met
     
     Args:
@@ -147,7 +156,7 @@ def route_check_requirements(state: ConversationState) -> str:
     
     logger.debug(f"Routing from check_requirements: next_step={next_step}")
     
-    if next_step in ["ask_property", "ask_court", "execute_actions"]:
+    if next_step in ["ask_property", "ask_court", "execute_actions", "show_available_actions"]:
         return next_step
     else:
         logger.warning(f"Unknown next_step '{next_step}', defaulting to execute_actions")

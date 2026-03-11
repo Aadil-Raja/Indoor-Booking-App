@@ -60,15 +60,15 @@ async def ask_court(
     
     # Prepare response with unique sport types
     if filtered_courts:
-        # Get unique sport types
-        sport_types = {}
-        for idx, court in enumerate(filtered_courts, 1):
-            sport_type = court.get("sport_type") or court.get("name", "Court")
-            if sport_type not in sport_types:
-                sport_types[sport_type] = idx
+        # Get unique sport types from all courts
+        unique_sport_types = set()
+        for court in filtered_courts:
+            sport_types = court.get("sport_types", [])
+            for sport_type in sport_types:
+                unique_sport_types.add(sport_type)
         
-        response = "Please select a court:\n\n"
-        for idx, sport_type in enumerate(sorted(sport_types.keys()), 1):
+        response = "Please select a sport:\n\n"
+        for idx, sport_type in enumerate(sorted(unique_sport_types), 1):
             response += f"{idx}. {sport_type}\n"
     else:
         response = "No courts available for this property."

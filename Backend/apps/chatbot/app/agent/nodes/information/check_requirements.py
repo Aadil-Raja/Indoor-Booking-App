@@ -54,16 +54,28 @@ async def check_requirements(
     # Get current state
     requested_actions = flow_state.get("requested_actions", [])
     property_id = flow_state.get("property_id")
-    court_id = flow_state.get("court_id")
+    court_ids = flow_state.get("court_ids", [])
     
     logger.debug(
         f"Current state for chat {chat_id}: "
-        f"actions={requested_actions}, property_id={property_id}, court_id={court_id}"
+        f"actions={requested_actions}, property_id={property_id}, court_ids={court_ids}"
     )
     
     # If no actions requested, nothing to check
     if not requested_actions:
-        logger.info(f"No actions requested for chat {chat_id}, routing to execute")
+        logger.info(f"No actions requested for chat {chat_id}")
+        
+        # Requirement 4: If property or court is selected and no actions, suggest showing details
+        if property_id or court_ids:
+            # User has selected property/court but didn't request any specific action
+            # Offer to show details, location, media
+            flow_state["next_step"] = "show_available_actions"
+            flow_state["last_node"] = "information-check_requirements"
+            state["flow_state"] = flow_state
+            logger.info(f"Property/court selected with no actions, routing to show_available_actions")
+            return state
+        
+        # No property/court selected and no actions - just execute (will be empty)
         flow_state["next_step"] = "execute_actions"
         flow_state["last_node"] = "information-check_requirements"
         state["flow_state"] = flow_state
@@ -85,7 +97,7 @@ async def check_requirements(
         if needs_property and not property_id:
             can_execute = False
             needs_property_actions.append(action)
-        elif needs_court and not court_id:
+        elif needs_court and not court_ids:
             can_execute = False
             needs_court_actions.append(action)
         
@@ -123,6 +135,18 @@ async def check_requirements(
         # Move actions that need property to pending
         flow_state["pending_actions"] = needs_property_actions + needs_court_actions
         
+        # Save pending action params
+        pending_action_params = {}
+        if "property_details" in (needs_property_actions + needs_court_actions):
+            pending_action_params["property_details"] = {
+                "property_detail_fields": flow_state.get("property_detail_fields", ["all"])
+            }
+        if "court_details" in (needs_property_actions + needs_court_actions):
+            pending_action_params["court_details"] = {
+                "court_detail_fields": flow_state.get("court_detail_fields", ["all"])
+            }
+        flow_state["pending_action_params"] = pending_action_params
+        
     elif needs_court_actions:
         # Some actions need court (property exists)
         if executable_now:
@@ -144,6 +168,18 @@ async def check_requirements(
         # Move actions that need court to pending
         flow_state["pending_actions"] = needs_court_actions
         
+        # Save pending action params
+        pending_action_params = {}
+        if "property_details" in needs_court_actions:
+            pending_action_params["property_details"] = {
+                "property_detail_fields": flow_state.get("property_detail_fields", ["all"])
+            }
+        if "court_details" in needs_court_actions:
+            pending_action_params["court_details"] = {
+                "court_detail_fields": flow_state.get("court_detail_fields", ["all"])
+            }
+        flow_state["pending_action_params"] = pending_action_params
+        
     else:
         # All actions can be executed
         logger.info(f"All requirements met for chat {chat_id}, routing to execute")
@@ -164,7 +200,7 @@ async def check_requirements(
         f"  Pending (need more info): {flow_state.get('pending_actions', [])}\n"
         f"Current State:\n"
         f"  Have Property: {property_id is not None}\n"
-        f"  Have Court: {court_id is not None}\n"
+        f"  Have Court: {len(court_ids) > 0}\n"
         f"Decision: {flow_state.get('next_step')}"
     )
     llm_logger.log_llm_call(
@@ -180,7 +216,7 @@ async def check_requirements(
         f"  Executable Now: {flow_state.get('requested_actions', [])}\n"
         f"  Pending: {flow_state.get('pending_actions', [])}\n"
         f"  Have Property: {property_id is not None}\n"
-        f"  Have Court: {court_id is not None}\n"
+        f"  Have Court: {len(court_ids) > 0}\n"
         f"  Next Step: {flow_state.get('next_step')}"
     )
     

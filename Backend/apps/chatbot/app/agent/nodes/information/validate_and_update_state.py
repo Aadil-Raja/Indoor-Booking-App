@@ -37,6 +37,8 @@ async def validate_and_update_state(
     message_type = router_result.get("message_type")
     reply_target = router_result.get("reply_target")
     requested_actions = router_result.get("requested_actions", [])
+    property_detail_fields = router_result.get("property_detail_fields", [])
+    court_detail_fields = router_result.get("court_detail_fields", [])
     mentioned_property_name = router_result.get("mentioned_property_name")
     mentioned_court_name = router_result.get("mentioned_court_name")
     unclear = router_result.get("unclear")
@@ -45,7 +47,7 @@ async def validate_and_update_state(
     available_courts = flow_state.get("available_courts", [])
 
     current_property_id = flow_state.get("property_id")
-    current_court_id = flow_state.get("court_id")
+    current_court_ids = flow_state.get("court_ids", [])
 
     flow_state["validation_error"] = None
 
@@ -132,36 +134,37 @@ async def validate_and_update_state(
         old_court_type = flow_state.get("court_type")
         new_property_id = flow_state.get("property_id")
         
-        # Try to find a court with the same sport_type at the new property
+        # Try to find courts with the same sport_type at the new property
         if old_court_type and available_courts:
-            matching_court = None
+            matching_court_ids = []
             for court in available_courts:
-                if (court.get("property_id") == new_property_id and 
-                    court.get("sport_type") == old_court_type):
-                    matching_court = court
-                    break
+                # Check if court belongs to new property and has the preferred sport type
+                if court.get("property_id") == new_property_id:
+                    sport_types = court.get("sport_types", [])
+                    if old_court_type in sport_types:
+                        matching_court_ids.append(court["id"])
             
-            if matching_court:
+            if matching_court_ids:
                 # Same court type exists at new property - preserve context
                 logger.info(
                     f"Court type '{old_court_type}' exists at new property, "
-                    f"updating court_id to {matching_court['id']}"
+                    f"updating court_ids to {matching_court_ids}"
                 )
-                flow_state["court_id"] = matching_court["id"]
+                flow_state["court_ids"] = matching_court_ids
                 flow_state["court_type"] = old_court_type
                 # date and slot remain unchanged
             else:
                 # Court type doesn't exist at new property - reset court only
                 logger.info(
                     f"Court type '{old_court_type}' not found at new property, "
-                    f"resetting court_id and court_type"
+                    f"resetting court_ids and court_type"
                 )
-                flow_state["court_id"] = None
+                flow_state["court_ids"] = []
                 flow_state["court_type"] = None
                 # date and slot remain unchanged
         else:
             # No previous court type - just reset court fields
-            flow_state["court_id"] = None
+            flow_state["court_ids"] = []
             flow_state["court_type"] = None
             # date and slot remain unchanged
 
@@ -172,20 +175,17 @@ async def validate_and_update_state(
     # ---------------------------------
     if reply_target == "court_selection":
 
-        matched_court = _resolve_court_selection(
+        matched_sport_type, matched_court_ids = _resolve_court_selection(
             mentioned_court_name,
             available_courts,
             active_property_id,
             chat_id
         )
 
-        if matched_court:
+        if matched_court_ids:
 
-            flow_state["court_id"] = matched_court["id"]
-            flow_state["court_type"] = (
-                matched_court.get("sport_type")
-                or matched_court.get("name")
-            )
+            flow_state["court_ids"] = matched_court_ids
+            flow_state["court_type"] = matched_sport_type
 
             flow_state["awaiting_input"] = None
 
@@ -200,26 +200,108 @@ async def validate_and_update_state(
     # ---------------------------------
     if mentioned_court_name and not reply_target:
 
-        matched_court = _match_court(
+        matched_sport_type, matched_court_ids = _match_court(
             mentioned_court_name,
             available_courts,
             active_property_id,
             chat_id
         )
 
-        if matched_court:
+        if matched_court_ids:
 
-            flow_state["court_id"] = matched_court["id"]
-            flow_state["court_type"] = (
-                matched_court.get("sport_type")
-                or matched_court.get("name")
-            )
+            flow_state["court_ids"] = matched_court_ids
+            flow_state["court_type"] = matched_sport_type
 
         else:
             flow_state["validation_error"] = "invalid_court"
             flow_state["awaiting_input"] = "court_selection"
             state["flow_state"] = flow_state
             return state
+
+    # ---------------------------------
+    # VALIDATE AND SAVE PROPERTY_DETAIL_FIELDS
+    # ---------------------------------
+    VALID_PROPERTY_DETAIL_FIELDS = {"location", "contact", "amenities", "available_courts", "description", "all"}
+    
+    if property_detail_fields:
+        # Validate fields
+        validated_fields = []
+        for field in property_detail_fields:
+            if field in VALID_PROPERTY_DETAIL_FIELDS:
+                validated_fields.append(field)
+            else:
+                logger.warning(f"Invalid property_detail_field '{field}' ignored for chat {chat_id}")
+        
+        # If no valid fields, default to "all"
+        if not validated_fields:
+            logger.info(f"No valid property_detail_fields, defaulting to 'all' for chat {chat_id}")
+            validated_fields = ["all"]
+        
+        flow_state["property_detail_fields"] = validated_fields
+    else:
+        # No fields specified, default to "all"
+        flow_state["property_detail_fields"] = ["all"]
+    
+    logger.debug(f"Property detail fields for chat {chat_id}: {flow_state['property_detail_fields']}")
+
+    # ---------------------------------
+    # VALIDATE AND SAVE COURT_DETAIL_FIELDS
+    # ---------------------------------
+    VALID_COURT_DETAIL_FIELDS = {"basic", "pricing", "all"}
+    
+    if court_detail_fields:
+        # Validate fields
+        validated_fields = []
+        for field in court_detail_fields:
+            if field in VALID_COURT_DETAIL_FIELDS:
+                validated_fields.append(field)
+            else:
+                logger.warning(f"Invalid court_detail_field '{field}' ignored for chat {chat_id}")
+        
+        # If no valid fields, default to "all"
+        if not validated_fields:
+            logger.info(f"No valid court_detail_fields, defaulting to 'all' for chat {chat_id}")
+            validated_fields = ["all"]
+        
+        flow_state["court_detail_fields"] = validated_fields
+    else:
+        # No fields specified, default to "all"
+        flow_state["court_detail_fields"] = ["all"]
+    
+    logger.debug(f"Court detail fields for chat {chat_id}: {flow_state['court_detail_fields']}")
+
+    # ---------------------------------
+    # AUTO-ADD MISSING ACTIONS (Backend Safety Net)
+    # ---------------------------------
+    # If LLM specified fields but forgot to add the corresponding action, add it automatically
+    if property_detail_fields and "property_details" not in requested_actions:
+        requested_actions.append("property_details")
+        logger.warning(
+            f"Auto-added 'property_details' action because property_detail_fields were specified "
+            f"but action was missing for chat {chat_id}"
+        )
+    
+    if court_detail_fields and "court_details" not in requested_actions:
+        requested_actions.append("court_details")
+        logger.warning(
+            f"Auto-added 'court_details' action because court_detail_fields were specified "
+            f"but action was missing for chat {chat_id}"
+        )
+    
+    # If LLM specified action but forgot fields, default to "all"
+    if "property_details" in requested_actions and not property_detail_fields:
+        flow_state["property_detail_fields"] = ["all"]
+        logger.warning(
+            f"Defaulting property_detail_fields to ['all'] because property_details action "
+            f"was specified but fields were missing for chat {chat_id}"
+        )
+    
+    if "court_details" in requested_actions and not court_detail_fields:
+        flow_state["court_detail_fields"] = ["all"]
+        logger.warning(
+            f"Defaulting court_detail_fields to ['all'] because court_details action "
+            f"was specified but fields were missing for chat {chat_id}"
+        )
 
     # ---------------------------------
     # REQUESTED ACTIONS (Merge with Pending)
@@ -234,6 +316,24 @@ async def validate_and_update_state(
             if action not in combined:
                 combined.append(action)
         flow_state["requested_actions"] = combined
+        
+        # Restore pending action params
+        pending_action_params = flow_state.get("pending_action_params", {})
+        if pending_action_params:
+            # Restore property_detail_fields if property_details action is resuming
+            if "property_details" in combined and "property_details" in pending_action_params:
+                property_params = pending_action_params.get("property_details", {})
+                if "property_detail_fields" in property_params:
+                    flow_state["property_detail_fields"] = property_params["property_detail_fields"]
+                    logger.debug(f"Restored property_detail_fields from pending params: {flow_state['property_detail_fields']}")
+            
+            # Restore court_detail_fields if court_details action is resuming
+            if "court_details" in combined and "court_details" in pending_action_params:
+                court_params = pending_action_params.get("court_details", {})
+                if "court_detail_fields" in court_params:
+                    flow_state["court_detail_fields"] = court_params["court_detail_fields"]
+                    logger.debug(f"Restored court_detail_fields from pending params: {flow_state['court_detail_fields']}")
+        
         logger.debug(
             f"Merged actions for chat {chat_id}: "
             f"new={requested_actions}, pending={pending_actions}, combined={combined}"
@@ -241,6 +341,24 @@ async def validate_and_update_state(
     elif pending_actions:
         # Only pending actions, no new ones
         flow_state["requested_actions"] = pending_actions
+        
+        # Restore pending action params
+        pending_action_params = flow_state.get("pending_action_params", {})
+        if pending_action_params:
+            # Restore property_detail_fields if property_details action is resuming
+            if "property_details" in pending_actions and "property_details" in pending_action_params:
+                property_params = pending_action_params.get("property_details", {})
+                if "property_detail_fields" in property_params:
+                    flow_state["property_detail_fields"] = property_params["property_detail_fields"]
+                    logger.debug(f"Restored property_detail_fields from pending params: {flow_state['property_detail_fields']}")
+            
+            # Restore court_detail_fields if court_details action is resuming
+            if "court_details" in pending_actions and "court_details" in pending_action_params:
+                court_params = pending_action_params.get("court_details", {})
+                if "court_detail_fields" in court_params:
+                    flow_state["court_detail_fields"] = court_params["court_detail_fields"]
+                    logger.debug(f"Restored court_detail_fields from pending params: {flow_state['court_detail_fields']}")
+        
         logger.debug(f"Restored pending actions for chat {chat_id}: {pending_actions}")
     else:
         # Only new actions, no pending
@@ -254,7 +372,7 @@ async def validate_and_update_state(
         f"Router Result: {router_result}\n\n"
         f"Validation Results:\n"
         f"  Property: {flow_state.get('property_name')} (ID: {flow_state.get('property_id')})\n"
-        f"  Court: {flow_state.get('court_type')} (ID: {flow_state.get('court_id')})\n"
+        f"  Court: {flow_state.get('court_type')} (IDs: {flow_state.get('court_ids')})\n"
         f"  Requested Actions: {flow_state.get('requested_actions')}\n"
         f"  Awaiting Input: {flow_state.get('awaiting_input')}\n"
         f"  Validation Error: {flow_state.get('validation_error')}"
@@ -274,7 +392,7 @@ async def validate_and_update_state(
     logger.info(
         f"[VALIDATE FINAL RESULT] Chat {chat_id}:\n"
         f"  Property: {flow_state.get('property_name')} (ID: {flow_state.get('property_id')})\n"
-        f"  Court: {flow_state.get('court_type')} (ID: {flow_state.get('court_id')})\n"
+        f"  Court: {flow_state.get('court_type')} (IDs: {flow_state.get('court_ids')})\n"
         f"  Requested Actions: {flow_state.get('requested_actions')}\n"
         f"  Awaiting Input: {flow_state.get('awaiting_input')}\n"
         f"  Validation Error: {flow_state.get('validation_error')}"
@@ -341,17 +459,38 @@ def _resolve_court_selection(
     available_courts: List[Dict],
     property_id: Optional[int],
     chat_id: str
-) -> Optional[Dict]:
-
+) -> tuple[Optional[str], List[int]]:
+    """
+    Resolve court selection to sport type and matching court IDs.
+    
+    Returns:
+        tuple: (sport_type, [court_ids]) or (None, [])
+    """
     if not mentioned_name or not available_courts:
-        return None
+        return None, []
 
     filtered = _filter_courts_by_property(available_courts, property_id)
 
     try:
         index = int(mentioned_name) - 1
         if 0 <= index < len(filtered):
-            return filtered[index]
+            # Get unique sport types from filtered courts
+            unique_sport_types = []
+            for court in filtered:
+                sport_types = court.get("sport_types", [])
+                for st in sport_types:
+                    if st not in unique_sport_types:
+                        unique_sport_types.append(st)
+            
+            # User selected by index - get the sport type at that index
+            if 0 <= index < len(unique_sport_types):
+                selected_sport = unique_sport_types[index]
+                # Find all courts with this sport type
+                matching_ids = []
+                for court in filtered:
+                    if selected_sport in court.get("sport_types", []):
+                        matching_ids.append(court["id"])
+                return selected_sport, matching_ids
     except (ValueError, TypeError):
         pass
 
@@ -475,6 +614,106 @@ def _match_court(
 
     logger.warning(f"No court match for '{court_name}' chat {chat_id}")
     return None
+
+
+def _match_court(
+    court_name: str,
+    available_courts: List[Dict],
+    property_id: Optional[int],
+    chat_id: str
+) -> tuple[Optional[str], List[int]]:
+    """
+    Match court by sport_type, name, or description with fuzzy matching.
+    
+    Returns tuple: (sport_type, [court_ids])
+    
+    Matching priority:
+    1. Exact sport_type match in sport_types array
+    2. Synonym sport_type match (football → futsal)
+    3. Exact name match
+    4. Partial sport_type match (contains)
+    5. Partial name match (contains)
+    6. Description match (contains)
+    """
+    name_lower = _normalize_sport_name(court_name)
+    user_aliases = _get_sport_aliases(court_name)
+
+    filtered = _filter_courts_by_property(available_courts, property_id)
+
+    # Level 1: Exact sport_type match in sport_types array
+    for court in filtered:
+        sport_types = court.get("sport_types", [])
+        for sport_type in sport_types:
+            if _normalize_sport_name(sport_type) == name_lower:
+                logger.debug(f"Exact sport_type match: '{court_name}' → {sport_type}")
+                # Find all courts with this sport type
+                matching_ids = []
+                for c in filtered:
+                    if sport_type in c.get("sport_types", []):
+                        matching_ids.append(c["id"])
+                return sport_type, matching_ids
+
+    # Level 2: Synonym sport_type match (football → futsal)
+    for court in filtered:
+        sport_types = court.get("sport_types", [])
+        for sport_type in sport_types:
+            court_aliases = _get_sport_aliases(sport_type)
+            # Check if any user alias matches any court alias
+            if any(alias in court_aliases for alias in user_aliases):
+                logger.debug(f"Synonym sport_type match: '{court_name}' → {sport_type}")
+                # Find all courts with this sport type
+                matching_ids = []
+                for c in filtered:
+                    if sport_type in c.get("sport_types", []):
+                        matching_ids.append(c["id"])
+                return sport_type, matching_ids
+
+    # Level 3: Exact name match - return first sport type of that court
+    for court in filtered:
+        cname = _normalize_sport_name(court.get("name") or "")
+        if cname == name_lower:
+            logger.debug(f"Exact name match: '{court_name}' → {court.get('id')}")
+            sport_types = court.get("sport_types", [])
+            if sport_types:
+                return sport_types[0], [court["id"]]
+            return court.get("name"), [court["id"]]
+
+    # Level 4: Partial sport_type match (contains)
+    for court in filtered:
+        sport_types = court.get("sport_types", [])
+        for sport_type in sport_types:
+            sport_type_lower = _normalize_sport_name(sport_type)
+            if name_lower in sport_type_lower or sport_type_lower in name_lower:
+                logger.debug(f"Partial sport_type match: '{court_name}' → {sport_type}")
+                # Find all courts with this sport type
+                matching_ids = []
+                for c in filtered:
+                    if sport_type in c.get("sport_types", []):
+                        matching_ids.append(c["id"])
+                return sport_type, matching_ids
+
+    # Level 5: Partial name match (contains)
+    for court in filtered:
+        cname = _normalize_sport_name(court.get("name") or "")
+        if name_lower in cname or cname in name_lower:
+            logger.debug(f"Partial name match: '{court_name}' → {court.get('id')}")
+            sport_types = court.get("sport_types", [])
+            if sport_types:
+                return sport_types[0], [court["id"]]
+            return court.get("name"), [court["id"]]
+
+    # Level 6: Description match (contains) - fallback
+    for court in filtered:
+        description = _normalize_sport_name(court.get("description") or "")
+        if description and name_lower in description:
+            logger.debug(f"Description match: '{court_name}' → {court.get('id')}")
+            sport_types = court.get("sport_types", [])
+            if sport_types:
+                return sport_types[0], [court["id"]]
+            return court.get("name"), [court["id"]]
+
+    logger.warning(f"No court match for '{court_name}' chat {chat_id}")
+    return None, []
 
 
 def _filter_courts_by_property(

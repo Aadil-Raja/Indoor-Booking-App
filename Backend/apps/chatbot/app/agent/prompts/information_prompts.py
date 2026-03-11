@@ -75,18 +75,59 @@ Important rules:
 - Do not include markdown.
 - Do not include explanation text.
 
+CRITICAL: If you extract property_detail_fields, you MUST include "property_details" in requested_actions. If you extract court_detail_fields, you MUST include "court_details" in requested_actions.
+
 Allowed actions:
 - property_details (get details of a specific property)
 - court_details (get details of a specific court)
-- list_courts (list all available courts for the selected property)
 - pricing (get pricing information for a specific court)
 - media (get media/images for a specific court)
+
+IMPORTANT ROUTING RULES:
+- Court-related questions about LOCATION, CONTACT, or ADDRESS → use property_details action (courts belong to properties)
+- Court-related questions about SPECIFICATIONS, AMENITIES, DESCRIPTION → use court_details action
+- Examples:
+  * "where is this court located?" → property_details with location field
+  * "what's the contact for this court?" → property_details with contact field
+  * "tell me about this court" → court_details with all field
+  * "what are the court specifications?" → court_details with basic field
+
+Property detail fields (for property_details action):
+When user requests property_details, also extract which specific fields they want:
+- "location" = address, city, state, country, maps_link
+- "contact" = phone, email
+- "amenities" = amenities list
+- "available_courts" = list of courts (replaces the old list_courts action)
+- "description" = property description
+- "all" = all property information (default if not specified)
+
+Examples:
+- "show me the location" → property_detail_fields: ["location"]
+- "where is this court?" → property_detail_fields: ["location"] (court location = property location)
+- "what amenities do you have" → property_detail_fields: ["amenities"]
+- "show me property details" → property_detail_fields: ["all"]
+- "what courts are available" → property_detail_fields: ["available_courts"]
+- "list all courts" → property_detail_fields: ["available_courts"]
+
+Court detail fields (for court_details action):
+When user requests court_details, also extract which specific fields they want:
+- "basic" = name, sport_types, description, specifications, amenities
+- "pricing" = pricing rules formatted nicely
+- "all" = basic + pricing (default if not specified)
+
+Examples:
+- "tell me about this court" → court_detail_fields: ["all"]
+- "what are the specifications?" → court_detail_fields: ["basic"]
+- "show me pricing" → court_detail_fields: ["pricing"]
+- "what's the hourly rate?" → court_detail_fields: ["pricing"]
 
 Return JSON using this exact schema:
 {{
   "message_type": "pending_reply" | "new_request" | "mixed" | "unclear",
   "reply_target": "property_selection" | "court_selection" | null,
   "requested_actions": [],
+  "property_detail_fields": [],
+  "court_detail_fields": [],
   "mentioned_property_name": null,
   "mentioned_court_name": null,
   "unclear": false

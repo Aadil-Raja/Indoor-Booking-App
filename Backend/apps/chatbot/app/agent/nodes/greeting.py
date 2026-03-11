@@ -285,11 +285,12 @@ async def _generate_new_user_greeting_with_properties(
     # Case 3: Single property + single court - auto-set both
     if len(courts) == 1:
         court_info = courts[0]
-        flow_state["court_id"] = court_info.get("id")
-        # Use court name as court_type since a court can have multiple sport types
-        flow_state["court_type"] = court_info.get("name", "Court")
+        flow_state["court_ids"] = [court_info.get("id")]
+        # Use first sport type as court_type (preferred sport)
+        sport_types = court_info.get("sport_types", [])
+        flow_state["court_type"] = sport_types[0] if sport_types else court_info.get("name", "Court")
         logger.info(
-            f"Auto-set court_id={court_info.get('id')} for single court "
+            f"Auto-set court_ids=[{court_info.get('id')}] for single court "
             f"in chat {chat_id}"
         )
         return _generate_single_property_single_court_greeting(
@@ -297,6 +298,33 @@ async def _generate_new_user_greeting_with_properties(
         ), "text", {}
     
     # Case 2: Single property + multiple courts
+    # Check if all courts have only one unique sport type
+    unique_sport_types = set()
+    for court in courts:
+        sport_types = court.get("sport_types", [])
+        for st in sport_types:
+            unique_sport_types.add(st)
+    
+    # If only one unique sport type across all courts, auto-set it
+    if len(unique_sport_types) == 1:
+        sport_type = list(unique_sport_types)[0]
+        # Get all court IDs that have this sport type
+        matching_court_ids = []
+        for court in courts:
+            if sport_type in court.get("sport_types", []):
+                matching_court_ids.append(court.get("id"))
+        
+        flow_state["court_ids"] = matching_court_ids
+        flow_state["court_type"] = sport_type
+        logger.info(
+            f"Auto-set court_ids={matching_court_ids} and court_type='{sport_type}' "
+            f"for single sport type in chat {chat_id}"
+        )
+        return _generate_single_property_single_sport_greeting(
+            business_name, property_details, sport_type, len(matching_court_ids)
+        ), "text", {}
+    
+    # Multiple sport types - show all options
     return _generate_single_property_greeting(
         business_name, property_details, courts
     ), "text", {}
@@ -316,21 +344,21 @@ def _generate_returning_user_greeting(bot_memory: dict, flow_state: dict) -> str
     - Missing cached data
     """
     property_id = flow_state.get("property_id")
-    court_id = flow_state.get("court_id")
+    court_ids = flow_state.get("court_ids", [])
     property_name = flow_state.get("property_name")
     court_type = flow_state.get("court_type")
     available_properties = flow_state.get("available_properties", [])
     
     # Edge case: Court selected but no property (data inconsistency)
-    if court_id and not property_id:
-        logger.warning("Data inconsistency: court_id set but property_id is None, clearing court")
-        flow_state["court_id"] = None
+    if court_ids and not property_id:
+        logger.warning("Data inconsistency: court_ids set but property_id is None, clearing court")
+        flow_state["court_ids"] = []
         flow_state["court_type"] = None
-        court_id = None
+        court_ids = []
         court_type = None
     
     # Case C: Both property and court selected
-    if property_id and court_id and property_name and court_type:
+    if property_id and court_ids and property_name and court_type:
         return (
             f"Welcome back! I see you were looking at {property_name} - {court_type}. "
             f"Ready to continue with your booking?"
@@ -473,20 +501,19 @@ def _generate_single_property_greeting(business_name: str, property_info: dict, 
     if maps_link:
         greeting_text += f"View on map: {maps_link}\n"
     
-    # Add court types if available
+    # Add court sport types if available (deduplicated)
     if courts:
-        greeting_text += f"\n🏟️ Available Courts ({len(courts)}):\n"
-        
-        # List court names with their sport types
+        # Collect unique sport types from all courts
+        unique_sport_types = set()
         for court in courts:
-            court_name = court.get("name", "Unknown Court")
             sport_types = court.get("sport_types", [])
-            sport_types_str = ", ".join(sport_types) if sport_types else ""
-            
-            if sport_types_str:
-                greeting_text += f"• {court_name} ({sport_types_str})\n"
-            else:
-                greeting_text += f"• {court_name}\n"
+            for sport_type in sport_types:
+                unique_sport_types.add(sport_type)
+        
+        if unique_sport_types:
+            greeting_text += f"\n🏟️ Available Sports:\n"
+            for sport_type in sorted(unique_sport_types):
+                greeting_text += f"• {sport_type}\n"
     
     greeting_text += "\nHow can I help you today? I can:\n"
     greeting_text += "• Show you available courts\n"
@@ -529,6 +556,46 @@ def _generate_single_property_single_court_greeting(business_name: str, property
     greeting_text += f"\n🏟️ Court: {court_name}"
     if sport_types_str:
         greeting_text += f" ({sport_types_str})"
+    greeting_text += "\n"
+    
+    greeting_text += "\nHow can I help you today? I can:\n"
+    greeting_text += "• Show you available time slots\n"
+    greeting_text += "• Help you make a booking\n"
+    greeting_text += "• Answer questions about pricing"
+    
+    return greeting_text
+
+
+def _generate_single_property_single_sport_greeting(business_name: str, property_info: dict, sport_type: str, court_count: int) -> str:
+    """
+    Generate greeting for single property with single sport type (but multiple courts).
+    """
+    property_name = property_info.get("name", "Facility")
+    address = property_info.get("address", "")
+    city = property_info.get("city", "")
+    state_name = property_info.get("state", "")
+    maps_link = property_info.get("maps_link", "")
+    
+    # Build location
+    location_parts = []
+    if address:
+        location_parts.append(address)
+    if city:
+        location_parts.append(city)
+    if state_name:
+        location_parts.append(state_name)
+    location = ", ".join(location_parts) if location_parts else "Location not specified"
+    
+    greeting_text = f"Hello, I am {business_name}'s assistant!\n\n"
+    greeting_text += f"📍 {property_name}\n"
+    greeting_text += f"Location: {location}\n"
+    
+    if maps_link:
+        greeting_text += f"View on map: {maps_link}\n"
+    
+    greeting_text += f"\n🏟️ Sport: {sport_type}"
+    if court_count > 1:
+        greeting_text += f" ({court_count} courts available)"
     greeting_text += "\n"
     
     greeting_text += "\nHow can I help you today? I can:\n"

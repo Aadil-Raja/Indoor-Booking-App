@@ -35,13 +35,14 @@ logger = logging.getLogger(__name__)
 PERSISTABLE_FIELDS = {
     "property_id",
     "property_name",
-    "court_id",
+    "court_ids",
     "court_type",
     "available_properties",
     "owner_properties_initialized",
     "last_node",
     "awaiting_input",
     "pending_actions",
+    "pending_action_params",
     "available_courts"
 }
 
@@ -52,7 +53,8 @@ TEMPORARY_FIELDS = {
     "validation_error",
     "bot_response",
     "next_step",
-    "requested_actions"
+    "requested_actions",
+    "property_detail_fields"  # Temporary - only for current request
 }
 
 
@@ -88,13 +90,14 @@ def initialize_flow_state() -> Dict[str, Any]:
     flow_state = {
         "property_id": None,
         "property_name": None,
-        "court_id": None,
-        "court_type": None,
+        "court_ids": [],  # Array of court IDs matching the selected sport type
+        "court_type": None,  # Preferred sport type
         "available_properties": [],
         "owner_properties_initialized": False,
         "last_node": None,
         "awaiting_input": None,  # None | "property_selection" | "court_selection"
         "pending_actions": [],  # actions waiting because some input was missing
+        "pending_action_params": {},  # parameters for pending actions (persisted)
         "available_courts": []
     }
     
@@ -173,13 +176,14 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
     expected_fields = {
         "property_id",
         "property_name",
-        "court_id",
+        "court_ids",
         "court_type",
         "available_properties",
         "owner_properties_initialized",
         "last_node",
         "awaiting_input",
         "pending_actions",
+        "pending_action_params",
         "available_courts"
     }
     

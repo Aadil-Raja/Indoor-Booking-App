@@ -80,18 +80,108 @@ async def format_response(
                 data = result.get("data")
                 
                 if action == "property_details" and data:
-                    # Format property details
-                    response_parts.append(f"📍 **{data.get('name', 'Property')}**")
-                    if data.get('description'):
+                    # Format property details based on included fields
+                    fields = result.get("fields", ["all"])
+                    
+                    # Always show name
+                    if data.get('name'):
+                        response_parts.append(f"📍 **{data.get('name')}**")
+                    
+                    # Show description if included
+                    if 'description' in data and data.get('description'):
                         response_parts.append(data['description'])
-                    if data.get('address'):
-                        response_parts.append(f"Location: {data['address']}, {data.get('city', '')}")
+                    
+                    # Show location if included
+                    if 'address' in data:
+                        location_parts = []
+                        if data.get('address'):
+                            location_parts.append(data['address'])
+                        if data.get('city'):
+                            location_parts.append(data['city'])
+                        if data.get('state'):
+                            location_parts.append(data['state'])
+                        if location_parts:
+                            response_parts.append(f"📍 Location: {', '.join(location_parts)}")
+                        if data.get('maps_link'):
+                            response_parts.append(f"🗺️ Map: {data['maps_link']}")
+                    
+                    # Show contact if included
+                    if 'phone' in data or 'email' in data:
+                        contact_parts = []
+                        if data.get('phone'):
+                            contact_parts.append(f"📞 Phone: {data['phone']}")
+                        if data.get('email'):
+                            contact_parts.append(f"📧 Email: {data['email']}")
+                        if contact_parts:
+                            response_parts.extend(contact_parts)
+                    
+                    # Show amenities if included
+                    if 'amenities' in data and data.get('amenities'):
+                        amenities = data['amenities']
+                        if isinstance(amenities, list) and amenities:
+                            response_parts.append(f"✨ Amenities: {', '.join(amenities)}")
+                    
+                    # Show courts if included
+                    if 'courts' in data and data.get('courts'):
+                        courts = data['courts']
+                        if isinstance(courts, list) and courts:
+                            # Get unique sport types
+                            unique_sports = set()
+                            for court in courts:
+                                sport_types = court.get('sport_types', [])
+                                for st in sport_types:
+                                    unique_sports.add(st)
+                            
+                            if unique_sports:
+                                response_parts.append(f"🏟️ Available Sports: {', '.join(sorted(unique_sports))}")
                     
                 elif action == "court_details" and data:
-                    # Format court details
-                    response_parts.append(f"🏟️ **{data.get('name', 'Court')}** ({data.get('sport_type', '')})")
-                    if data.get('description'):
-                        response_parts.append(data['description'])
+                    # Format court details based on included fields
+                    fields = result.get("fields", ["all"])
+                    
+                    # Always show name
+                    if data.get('name'):
+                        response_parts.append(f"🏟️ **{data.get('name')}**")
+                    
+                    # Show sport types if included
+                    if 'sport_types' in data and data.get('sport_types'):
+                        sport_types = data['sport_types']
+                        if isinstance(sport_types, list):
+                            response_parts.append(f"Sports: {', '.join(sport_types)}")
+                    
+                    # Show description if included
+                    if 'description' in data and data.get('description'):
+                        response_parts.append(f"\n{data['description']}")
+                    
+                    # Show specifications if included
+                    if 'specifications' in data and data.get('specifications'):
+                        specs = data['specifications']
+                        # Handle both dict and string formats
+                        if isinstance(specs, dict):
+                            response_parts.append("\n📐 Specifications:")
+                            for key, value in specs.items():
+                                response_parts.append(f"  • {key}: {value}")
+                        elif isinstance(specs, str):
+                            response_parts.append(f"\n📐 Specifications: {specs}")
+                    
+                    # Show amenities if included
+                    if 'amenities' in data and data.get('amenities'):
+                        amenities = data['amenities']
+                        if isinstance(amenities, list) and amenities:
+                            response_parts.append(f"✨ Amenities: {', '.join(str(a) for a in amenities)}")
+                        elif isinstance(amenities, str):
+                            response_parts.append(f"✨ Amenities: {amenities}")
+                    
+                    # Show pricing if included
+                    if 'pricing' in data and data.get('pricing'):
+                        pricing_rules = data['pricing']
+                        if isinstance(pricing_rules, list) and pricing_rules:
+                            response_parts.append("\n💰 Pricing:")
+                            for rule in pricing_rules:
+                                # Use the pre-formatted string
+                                formatted = rule.get('formatted', '')
+                                if formatted:
+                                    response_parts.append(f"  • {formatted}")
                     
                 elif action == "pricing" and data:
                     # Format pricing
@@ -112,34 +202,6 @@ async def format_response(
                             response_parts.append(f"  {idx}. {media.get('media_type', 'image')}: {media.get('url', '')}")
                     else:
                         response_parts.append("No media available.")
-                
-                elif action == "list_courts" and data:
-                    # Format list of courts
-                    if isinstance(data, list) and data:
-                        response_parts.append(f"🏟️ Available Courts ({len(data)}):")
-                        for idx, court in enumerate(data, 1):
-                            sport_types = ", ".join(court.get('sport_types', []))
-                            court_name = court.get('name', 'Court')
-                            
-                            # Build court line
-                            if sport_types:
-                                court_line = f"{idx}. {court_name} ({sport_types})"
-                            else:
-                                court_line = f"{idx}. {court_name}"
-                            
-                            # Add description if available (keep it short)
-                            if court.get('description'):
-                                desc = court['description']
-                                # Truncate to first sentence or 100 chars
-                                if '.' in desc:
-                                    desc = desc.split('.')[0] + '.'
-                                if len(desc) > 100:
-                                    desc = desc[:100] + "..."
-                                court_line += f" - {desc}"
-                            
-                            response_parts.append(court_line)
-                    else:
-                        response_parts.append("No courts available for this property.")
                 
                 else:
                     # Fallback for unknown action
