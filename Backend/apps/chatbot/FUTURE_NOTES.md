@@ -39,3 +39,21 @@ what happens if llm says proeprty selection but no properyt or court was matched
 add fallbacks if llm replies does not matches the options given to it 
 
 what if the user gives reply but it is not clear for eg user first court 
+
+
+add fallbacks if llm replies does not matches the options given to it 
+
+what if the user gives reply but it is not clear for eg user first court 
+
+what happens 
+
+fallback the params and functions matches , else add urself if notmatches
+
+check if there is extra call in console 
+
+
+improve msgs in case of asking to tell selcet a sport for knwoing pricing 
+
+improve greeting welcome back 
+
+handle fallbacks of failurei n tools
