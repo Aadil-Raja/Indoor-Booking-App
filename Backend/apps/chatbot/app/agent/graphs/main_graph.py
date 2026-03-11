@@ -89,7 +89,8 @@ def create_main_graph(
             "greeting": "greeting",
             "information": "information",
             "booking": "booking",
-            "unavailable_service": "unavailable_service"
+            "unavailable_service": "unavailable_service",
+            "END": END  # For validation failures and irrelevant messages
         }
     )
     
@@ -107,12 +108,18 @@ def route_by_next_node(state: ConversationState) -> str:
     """
     Route to handler based on LLM's decision.
     
-    LLM sets state["next_node"] to "greeting", "information", "booking", or "unavailable_service"
+    LLM sets state["next_node"] to "greeting", "information", "booking", "unavailable_service", or None
     This function returns that value to route to the correct handler.
     
+    If None (validation failed or irrelevant), returns END to stop processing.
     If unknown value, defaults to "information".
     """
     next_node = state.get("next_node", "information")
+    
+    # Handle None (validation failed or irrelevant message)
+    if next_node is None:
+        logger.info("next_node is None (validation/relevancy failed), ending conversation")
+        return "END"
     
     valid_nodes = ["greeting", "information", "booking", "unavailable_service"]
     

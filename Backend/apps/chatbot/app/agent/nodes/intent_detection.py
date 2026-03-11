@@ -31,14 +31,13 @@ async def intent_detection(
     """
     Use LLM to decide routing (greeting/information/booking/unavailable_service).
     
-    Uses conversation context for better routing of ambiguous messages.
-    Falls back to "greeting" if LLM fails.
+    Validation layers (in order):
+    1. Message format validation (length, emojis, spam)
+    2. Service availability check (properties/courts)
+    3. Message relevancy check (LLM)
+    4. Intent routing decision (LLM)
     
     New users (owner_properties not initialized) are forced to greeting.
-    
-    Service availability checks:
-    - If owner has no properties → route to unavailable_service
-    - If property has no courts → route to unavailable_service
     """
     user_message = state["user_message"]
     recent_messages = state.get("messages", [])
@@ -64,7 +63,23 @@ async def intent_detection(
         state["is_first_message"] = True
         return state
     
-    # Check service availability before routing
+    # Layer 1: Quick message format validation (no LLM)
+    validation_result = _validate_message_format(user_message)
+    if not validation_result["valid"]:
+        logger.info(
+            f"Message validation failed for chat {chat_id} - "
+            f"reason={validation_result['reason']}"
+        )
+        state["response_content"] = validation_result["message"]
+        state["response_type"] = "text"
+        state["response_metadata"] = {
+            "validation_failed": True,
+            "reason": validation_result["reason"]
+        }
+        state["next_node"] = None  # Don't route anywhere, end conversation
+        return state
+    
+    # Layer 2: Service availability check (API calls)
     availability_check = await _check_service_availability(
         owner_profile_id=owner_profile_id,
         flow_state=flow_state,
@@ -87,7 +102,35 @@ async def intent_detection(
         state["next_node"] = "unavailable_service"
         return state
     
-    # Service available - use LLM for routing decision
+    # Layer 3: Message relevancy check (LLM, unless conversational response)
+    if _is_conversational_response(user_message):
+        # Skip relevancy check for short conversational responses
+        logger.debug(f"Conversational response detected for chat {chat_id}, skipping relevancy check")
+    else:
+        # Check message relevancy with LLM
+        if llm_provider:
+            relevancy_result = await _check_message_relevancy(
+                user_message=user_message,
+                recent_messages=recent_messages,
+                llm_provider=llm_provider,
+                chat_id=chat_id
+            )
+            
+            if not relevancy_result["is_relevant"]:
+                logger.info(
+                    f"Message deemed irrelevant for chat {chat_id} - "
+                    f"reason={relevancy_result.get('reason', 'unknown')}"
+                )
+                state["response_content"] = _generate_irrelevant_response()
+                state["response_type"] = "text"
+                state["response_metadata"] = {
+                    "irrelevant_message": True,
+                    "reason": relevancy_result.get("reason", "out_of_scope")
+                }
+                state["next_node"] = None  # Don't route anywhere
+                return state
+    
+    # Layer 4: LLM routing decision (greeting/information/booking)
     if llm_provider:
         next_node = await _llm_routing_decision(
             user_message=user_message,
@@ -186,6 +229,265 @@ async def _llm_routing_decision(
     except Exception as e:
         logger.error(f"Unexpected error for chat {chat_id}: {e}", exc_info=True)
         return "greeting"
+
+
+def _validate_message_format(user_message: str) -> dict:
+    """
+    Validate message format with quick checks (no LLM).
+    
+    Checks:
+    1. Empty or whitespace only
+    2. Too short (≤2 characters, excluding conversational responses)
+    3. Only emojis
+    4. Too long (>300 characters)
+    5. Spam patterns (repeated characters)
+    
+    Args:
+        user_message: User's message to validate
+    
+    Returns:
+        Dictionary with:
+        - valid: bool (True if valid)
+        - reason: str (failure reason if not valid)
+        - message: str (response message if not valid)
+    """
+    # 1. Empty or whitespace only
+    if not user_message or not user_message.strip():
+        return {
+            "valid": False,
+            "reason": "empty_message",
+            "message": "Please send a message so I can assist you with booking a court."
+        }
+    
+    cleaned_message = user_message.strip()
+    
+    # 2. Too short (≤2 characters, but allow conversational responses)
+    if len(cleaned_message) <= 2 and not _is_conversational_response(user_message):
+        return {
+            "valid": False,
+            "reason": "too_short",
+            "message": "Your message is too short. Please describe what you need help with."
+        }
+    
+    # 3. Only emojis
+    if _is_only_emojis(cleaned_message):
+        return {
+            "valid": False,
+            "reason": "only_emojis",
+            "message": "I see you sent an emoji! 😊 How can I help you with booking a court today?"
+        }
+    
+    # 4. Too long (>300 characters)
+    if len(cleaned_message) > 300:
+        return {
+            "valid": False,
+            "reason": "too_long",
+            "message": "Your message is too long. Please send a shorter message (under 300 characters)."
+        }
+    
+    # 5. Spam patterns (repeated characters)
+    if _is_spam_pattern(cleaned_message):
+        return {
+            "valid": False,
+            "reason": "spam_pattern",
+            "message": "Please send a clear message about what you'd like to do."
+        }
+    
+    # All checks passed
+    return {"valid": True}
+
+
+def _is_conversational_response(message: str) -> bool:
+    """
+    Check if message is a short conversational response.
+    
+    These responses are context-dependent (responding to bot's previous message)
+    and should bypass relevancy checks.
+    
+    Args:
+        message: User's message
+    
+    Returns:
+        True if conversational response, False otherwise
+    """
+    conversational_responses = {
+        "ok", "okay", "thanks", "thank you", "yes", "no", "sure",
+        "got it", "alright", "fine", "cool", "great", "nope", "yep",
+        "yeah", "nah", "k", "ty", "thx", "please", "pls"
+    }
+    
+    cleaned = message.strip().lower()
+    return cleaned in conversational_responses
+
+
+def _is_only_emojis(message: str) -> bool:
+    """
+    Check if message contains only emojis (and whitespace).
+    
+    Args:
+        message: User's message
+    
+    Returns:
+        True if only emojis, False otherwise
+    """
+    import re
+    
+    # Remove whitespace
+    no_whitespace = message.replace(" ", "").replace("\n", "").replace("\t", "")
+    
+    if not no_whitespace:
+        return False
+    
+    # Emoji pattern (basic Unicode emoji ranges)
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags
+        "\U00002702-\U000027B0"  # dingbats
+        "\U000024C2-\U0001F251"
+        "]+",
+        flags=re.UNICODE
+    )
+    
+    # Check if entire message (without whitespace) is emojis
+    return bool(emoji_pattern.fullmatch(no_whitespace))
+
+
+def _is_spam_pattern(message: str) -> bool:
+    """
+    Check if message contains spam patterns (repeated characters).
+    
+    Args:
+        message: User's message
+    
+    Returns:
+        True if spam pattern detected, False otherwise
+    """
+    import re
+    
+    # Check for 5+ repeated characters (e.g., "aaaaa", "!!!!!")
+    repeated_char_pattern = re.compile(r"(.)\1{4,}")
+    if repeated_char_pattern.search(message):
+        return True
+    
+    # Check for 3+ repeated words (e.g., "help help help help")
+    words = message.lower().split()
+    if len(words) >= 3:
+        for i in range(len(words) - 2):
+            if words[i] == words[i+1] == words[i+2]:
+                return True
+    
+    return False
+
+
+def _generate_irrelevant_response() -> str:
+    """
+    Generate response for irrelevant messages.
+    
+    Returns:
+        Polite message explaining scope and offering help
+    """
+    return (
+        "I'm an indoor sports facility booking assistant. "
+        "I can help you with:\n\n"
+        "• Booking courts (tennis, badminton, basketball, etc.)\n"
+        "• Checking availability and pricing\n"
+        "• Information about our facilities\n"
+        "• Managing your bookings\n\n"
+        "How can I assist you with booking today?"
+    )
+
+
+async def _check_message_relevancy(
+    user_message: str,
+    recent_messages: list,
+    llm_provider: LLMProvider,
+    chat_id: str
+) -> dict:
+    """
+    Check if user message is relevant to indoor booking using LLM.
+    
+    Uses a focused prompt to determine if the message is within scope
+    of indoor sports facility booking services.
+    
+    Args:
+        user_message: User's message to check
+        recent_messages: Recent conversation history (for context)
+        llm_provider: LLM provider for relevancy check
+        chat_id: Chat ID for logging
+    
+    Returns:
+        Dictionary with:
+        - is_relevant: bool (True if relevant)
+        - reason: str (explanation from LLM)
+    """
+    from app.agent.prompts.intent_prompts import get_relevancy_check_prompt
+    
+    # Get formatted prompt with context (only last 2 messages for efficiency)
+    prompt = get_relevancy_check_prompt(
+        message=user_message,
+        recent_messages=recent_messages[-2:] if recent_messages else []
+    )
+    
+    # Get LLM logger
+    llm_logger = get_llm_logger()
+    
+    try:
+        # Create LangChain ChatOpenAI instance
+        llm = create_langchain_llm(
+            llm_provider,
+            temperature=0.0,  # Consistent relevancy checking
+            max_tokens=100    # Just need is_relevant + brief reason
+        )
+        
+        # Call LLM
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        response_content = response.content.strip()
+        
+        # Log the LLM call
+        llm_logger.log_llm_call(
+            node_name="intent_detection_relevancy",
+            prompt=prompt,
+            response=response_content,
+            parameters={"temperature": 0.0, "max_tokens": 100}
+        )
+        
+        # Parse JSON response
+        relevancy_response = parse_llm_json_response(
+            response=response_content,
+            fallback={"is_relevant": True, "reason": "parse_error"},
+            context=f"relevancy_check for chat {chat_id}"
+        )
+        
+        # Extract is_relevant field
+        is_relevant = extract_json_field(
+            parsed_json=relevancy_response,
+            field="is_relevant",
+            default=True,  # Default to relevant on error (avoid false positives)
+            field_type=bool
+        )
+        
+        reason = relevancy_response.get("reason", "")
+        
+        logger.info(
+            f"Relevancy check for chat {chat_id}: is_relevant={is_relevant}, "
+            f"reason={reason}"
+        )
+        
+        return {
+            "is_relevant": is_relevant,
+            "reason": reason
+        }
+        
+    except LLMProviderError as e:
+        logger.error(f"LLM relevancy check failed for chat {chat_id}: {e}", exc_info=True)
+        # Default to relevant on error to avoid blocking users
+        return {"is_relevant": True, "reason": "llm_error"}
+    except Exception as e:
+        logger.error(f"Unexpected error in relevancy check for chat {chat_id}: {e}", exc_info=True)
+        return {"is_relevant": True, "reason": "unexpected_error"}
 
 
 
@@ -347,20 +649,13 @@ async def _check_property_has_courts(
     
     Args:
         property_id: Property ID to check
-        owner_profile_id: Owner profile ID as string
+        owner_profile_id: Owner profile ID as string (not used, kept for signature)
         chat_id: Chat ID for logging
     
     Returns:
         True if property has courts, False otherwise
     """
     try:
-        # Validate owner_profile_id
-        try:
-            owner_id = int(owner_profile_id)
-        except (ValueError, TypeError) as e:
-            logger.error(f"Invalid owner_profile_id format: {owner_profile_id}, error: {e}")
-            return False
-        
         # Get the court tool from registry
         get_property_courts = TOOL_REGISTRY.get("get_property_courts")
         
@@ -368,8 +663,8 @@ async def _check_property_has_courts(
             logger.warning(f"get_property_courts tool not found for chat {chat_id}")
             return False
         
-        # Fetch courts for property
-        courts = await get_property_courts(property_id=property_id, owner_id=owner_id)
+        # Fetch courts for property (without owner_id to use public service)
+        courts = await get_property_courts(property_id=property_id)
         
         if not isinstance(courts, list):
             logger.warning(
