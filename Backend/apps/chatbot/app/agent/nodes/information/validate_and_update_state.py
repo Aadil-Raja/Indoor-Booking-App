@@ -22,6 +22,15 @@ from app.agent.utils.llm_logger import get_llm_logger
 logger = logging.getLogger(__name__)
 
 
+# Action requirements map (imported from check_requirements logic)
+ACTION_REQUIREMENTS = {
+    "property_details": {"property": True, "court": False},
+    "court_details": {"property": True, "court": True},
+    "pricing": {"property": True, "court": True},
+    "media": {"property": True, "court": False},
+}
+
+
 async def validate_and_update_state(
     state: ConversationState,
     tools: Dict[str, Any] = None
@@ -60,6 +69,10 @@ async def validate_and_update_state(
         return state
 
     property_changed = False
+    
+    # Track if property/court was set in THIS turn (for pending action resume logic)
+    property_set_this_turn = False
+    court_set_this_turn = False
 
     # ---------------------------------
     # REPLY TARGET VALIDATION (Hybrid Safety Check)
@@ -156,6 +169,7 @@ async def validate_and_update_state(
 
                 flow_state["property_id"] = matched_property["id"]
                 flow_state["property_name"] = matched_property.get("name")
+                property_set_this_turn = True  # Mark that property was set THIS turn
 
                 flow_state["awaiting_input"] = None
 
@@ -182,6 +196,12 @@ async def validate_and_update_state(
 
             flow_state["property_id"] = matched_property["id"]
             flow_state["property_name"] = matched_property.get("name")
+            property_set_this_turn = True  # Mark that property was set THIS turn
+            
+            # Clear awaiting_input if we were waiting for property
+            if flow_state.get("awaiting_input") == "property_selection":
+                flow_state["awaiting_input"] = None
+                logger.info(f"Cleared awaiting_input (property_selection) for chat {chat_id} - user mentioned valid property")
 
         else:
             flow_state["validation_error"] = "invalid_property"
@@ -264,6 +284,7 @@ async def validate_and_update_state(
 
                 flow_state["court_ids"] = matched_court_ids
                 flow_state["court_type"] = matched_sport_type
+                court_set_this_turn = True  # Mark that court was set THIS turn
 
                 flow_state["awaiting_input"] = None
 
@@ -289,6 +310,12 @@ async def validate_and_update_state(
 
             flow_state["court_ids"] = matched_court_ids
             flow_state["court_type"] = matched_sport_type
+            court_set_this_turn = True  # Mark that court was set THIS turn
+            
+            # Clear awaiting_input if we were waiting for court
+            if flow_state.get("awaiting_input") == "court_selection":
+                flow_state["awaiting_input"] = None
+                logger.info(f"Cleared awaiting_input (court_selection) for chat {chat_id} - user mentioned valid court")
 
         else:
             flow_state["validation_error"] = "invalid_court"
@@ -472,27 +499,77 @@ async def validate_and_update_state(
 
     pending_actions = flow_state.get("pending_actions", [])
 
-    # RULE: Only restore pending actions if user is replying to our question
-    # If user asks something new, don't restore (will be cleared in check_requirements if we execute)
-    is_replying_to_question = reply_target in ["property_selection", "court_selection"]
+    # RULE: Resume pending actions ONLY if:
+    # 1. User provided property/court in THIS TURN (property_set_this_turn or court_set_this_turn)
+    #    AND the provided info satisfies requirements for pending actions
+    # 2. OR user explicitly asks for the EXACT SAME action that's pending (not just similar)
+    # 
+    # DON'T resume if:
+    # - User asks something completely new (different requested_actions)
+    # - User didn't provide any new property/court data this turn
+    
+    # Check if user is asking for EXACT same action as pending (all requested actions must be in pending)
+    user_asking_same_action = False
+    if requested_actions and pending_actions:
+        # Only consider it "same action" if ALL requested actions are in pending
+        # This prevents resuming when user asks for something different
+        user_asking_same_action = all(action in pending_actions for action in requested_actions)
+    
+    # Check if provided info (in THIS turn) satisfies requirements for pending actions
+    info_satisfies_pending = False
+    if pending_actions and (property_set_this_turn or court_set_this_turn):
+        for action in pending_actions:
+            action_reqs = ACTION_REQUIREMENTS.get(action, {})
+            needs_property = action_reqs.get("property", False)
+            needs_court = action_reqs.get("court", False)
+            
+            # If action needs property and user just provided property THIS turn
+            if needs_property and property_set_this_turn:
+                info_satisfies_pending = True
+                break
+            
+            # If action needs court and user just provided court THIS turn
+            if needs_court and court_set_this_turn:
+                info_satisfies_pending = True
+                break
+    
+    # Decide whether to resume pending actions
+    # IMPORTANT: Only resume if info was provided this turn OR asking exact same action
+    should_resume_pending = (
+        info_satisfies_pending or
+        user_asking_same_action
+    )
 
-    if is_replying_to_question and pending_actions:
-        # User is answering our question - restore pending actions
-        if requested_actions:
-            # Merge: new actions first, then add pending actions (deduplicated)
+    if should_resume_pending and pending_actions:
+        # User provided relevant info THIS turn OR asking for exact same action - restore pending actions
+        if requested_actions and not user_asking_same_action:
+            # User provided info (property/court) AND has new actions - merge them
             combined = list(requested_actions)
             for action in pending_actions:
                 if action not in combined:
                     combined.append(action)
             flow_state["requested_actions"] = combined
-            logger.debug(
-                f"User replied to question - merged actions for chat {chat_id}: "
-                f"new={requested_actions}, pending={pending_actions}, combined={combined}"
+            logger.info(
+                f"Resuming pending actions for chat {chat_id}: "
+                f"new={requested_actions}, pending={pending_actions}, combined={combined}, "
+                f"reason=info_satisfies_pending, "
+                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}"
+            )
+        elif user_asking_same_action:
+            # User asking for exact same action - just use requested actions (which are same as pending)
+            flow_state["requested_actions"] = requested_actions
+            logger.info(
+                f"User asking for same action as pending for chat {chat_id}: "
+                f"requested={requested_actions}, pending={pending_actions}"
             )
         else:
             # Only pending actions, no new ones
             flow_state["requested_actions"] = pending_actions
-            logger.debug(f"User replied to question - restored pending actions for chat {chat_id}: {pending_actions}")
+            logger.info(
+                f"Restored pending actions for chat {chat_id}: {pending_actions}, "
+                f"reason=info_satisfies_pending, "
+                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}"
+            )
         
         # Restore pending action params
         pending_action_params = flow_state.get("pending_action_params", {})
@@ -510,20 +587,26 @@ async def validate_and_update_state(
                 if "court_detail_fields" in court_params:
                     flow_state["court_detail_fields"] = court_params["court_detail_fields"]
                     logger.debug(f"Restored court_detail_fields from pending params: {flow_state['court_detail_fields']}")
+        
+        # Don't clear pending_actions yet - keep stored until fully executed
+        
     else:
-        # User asked something new (not replying) - use only new actions
-        # Don't clear pending yet - let check_requirements decide based on whether we execute
+        # User asked something new OR didn't provide relevant info this turn - use only new actions
+        # Keep pending_actions stored but don't restore them
         if requested_actions:
             flow_state["requested_actions"] = requested_actions
-            logger.debug(
+            logger.info(
                 f"User asked new action for chat {chat_id}: "
-                f"new={requested_actions}, pending will be evaluated in check_requirements"
+                f"new={requested_actions}, keeping pending={pending_actions} stored (not resuming), "
+                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}"
             )
         else:
-            # No new actions and not replying - use pending if exists, else empty
-            if pending_actions:
-                flow_state["requested_actions"] = []
-                logger.debug(f"No new actions for chat {chat_id}, pending={pending_actions} will be evaluated")
+            # No new actions and not providing relevant info this turn - don't restore pending
+            flow_state["requested_actions"] = []
+            logger.debug(
+                f"No new actions for chat {chat_id}, pending={pending_actions} not resumed "
+                f"(user not providing relevant info this turn)"
+            )
 
     state["flow_state"] = flow_state
     

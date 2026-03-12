@@ -219,10 +219,32 @@ async def execute_actions(
     flow_state["execution_results"] = results
     
     # Clear state after successful execution
+    # Clear awaiting_input since we executed something
     flow_state["awaiting_input"] = None
-    flow_state["pending_actions"] = []
-    flow_state["pending_action_params"] = {}
+    
+    # Clear requested_actions (they've been executed)
     flow_state["requested_actions"] = []
+    
+    # IMPORTANT: Only clear pending_actions if ALL pending actions were executed
+    # This allows pending actions to be stored and resumed later
+    executed_actions = list(results.keys())
+    pending_actions = flow_state.get("pending_actions", [])
+    
+    if pending_actions:
+        # Check if all pending actions were executed
+        all_pending_executed = all(action in executed_actions for action in pending_actions)
+        
+        if all_pending_executed:
+            # All pending actions completed - clear them
+            flow_state["pending_actions"] = []
+            flow_state["pending_action_params"] = {}
+            logger.info(f"All pending actions executed for chat {chat_id}, clearing pending state")
+        else:
+            # Some pending actions still remain - keep them stored
+            logger.info(
+                f"Keeping pending actions stored for chat {chat_id}: "
+                f"pending={pending_actions}, executed={executed_actions}"
+            )
     
     # Track last node
     flow_state["last_node"] = "information-execute_actions"

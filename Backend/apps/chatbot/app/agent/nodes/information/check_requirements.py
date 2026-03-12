@@ -230,9 +230,8 @@ async def check_requirements(
         flow_state["after_execute"] = None
         flow_state["requested_actions"] = executable_now
         
-        # Clear any old pending state since we're executing everything
-        flow_state["pending_actions"] = []
-        flow_state["pending_action_params"] = {}
+        # Don't clear pending_actions here - let execute_actions handle it after successful execution
+        # This ensures pending actions are preserved if execution fails
     
     # Track last node
     flow_state["last_node"] = "information-check_requirements"
