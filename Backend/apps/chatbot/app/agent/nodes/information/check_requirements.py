@@ -21,7 +21,7 @@ ACTION_REQUIREMENTS = {
     "property_details": {"property": True, "court": False},
     "court_details": {"property": True, "court": True},
     "pricing": {"property": True, "court": True},
-    "media": {"property": True, "court": True},
+    "media": {"property": True, "court": False},  # Media works with just property (gets property + court media)
 }
 
 
