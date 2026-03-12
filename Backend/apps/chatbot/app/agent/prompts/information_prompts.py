@@ -193,8 +193,32 @@ Return JSON using this schema:
   "court_detail_fields": [],
   "mentioned_property_name": null,
   "mentioned_court_name": null,
-  "unclear": false
+  "unclear": false,
+  "unclear_reason": null
 }}
+
+CRITICAL - unclear_reason Guidelines:
+If message_type is "unclear" or unclear is true, you MUST provide unclear_reason.
+
+This reason will be DIRECTLY DISPLAYED TO THE CUSTOMER, so write it like you're talking to a friend:
+- Keep it casual and friendly
+- Be brief and simple
+- Help them understand what to do next
+- Use everyday language, not technical terms
+- Sound helpful, not robotic
+
+Good examples (casual and friendly):
+- "Which property are you asking about?"
+- "I'm not sure what you need. Pricing? Location? Something else?"
+- "I didn't catch that. Can you say it differently?"
+- "We don't have that sport. Try Football, Badminton, or Tennis?"
+- "Which court do you mean?"
+
+Bad examples (too formal or technical):
+- "Could you please specify which property you're interested in?"
+- "Ambiguous court reference - 'padel court' is not in the list of valid courts"
+- "Your message is a bit unclear. Could you rephrase what you'd like to know?"
+- "I need more details to help you. Are you asking about pricing, location, or facilities?"
 
 CURRENT STATE
 selected_property: {selected_property}

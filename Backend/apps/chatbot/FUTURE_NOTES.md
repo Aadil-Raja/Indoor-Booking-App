@@ -57,3 +57,11 @@ improve msgs in case of asking to tell selcet a sport for knwoing pricing
 improve greeting welcome back 
 
 handle fallbacks of failurei n tools
+
+
+see when show available actions is called,would it better to make a llm call
+
+complex queures
+
+
+in urdu not working

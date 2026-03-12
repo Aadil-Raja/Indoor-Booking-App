@@ -128,7 +128,8 @@ async def information_router(
                 "requested_actions": [],
                 "mentioned_property_name": None,
                 "mentioned_court_name": None,
-                "unclear": True
+                "unclear": True,
+                "unclear_reason": "Failed to parse response"
             },
             context=f"information_router for chat {chat_id}"
         )
@@ -193,7 +194,8 @@ async def information_router(
             "requested_actions": [],
             "mentioned_property_name": None,
             "mentioned_court_name": None,
-            "unclear": True
+            "unclear": True,
+            "unclear_reason": f"Error processing message: {str(e)}"
         }
         flow_state["last_node"] = "information-router"
         state["flow_state"] = flow_state

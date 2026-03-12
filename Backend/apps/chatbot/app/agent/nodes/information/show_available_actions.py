@@ -44,6 +44,8 @@ async def show_available_actions(
     court_ids = flow_state.get("court_ids", [])
     court_type = flow_state.get("court_type")
     validation_error = flow_state.get("validation_error")
+    router_result = flow_state.get("router_result", {})
+    unclear_reason = router_result.get("unclear_reason")
     
     # Build response based on what's selected
     response_parts = []
@@ -55,7 +57,11 @@ async def show_available_actions(
         elif validation_error == "invalid_court":
             response_parts.append("I couldn't find that court.")
         elif validation_error == "unclear_message":
-            response_parts.append("I couldn't understand that.")
+            # Use unclear_reason if available, otherwise generic message
+            if unclear_reason:
+                response_parts.append(unclear_reason)
+            else:
+                response_parts.append("I couldn't understand that.")
         else:
             response_parts.append("Something went wrong.")
         response_parts.append("")  # Empty line for spacing
