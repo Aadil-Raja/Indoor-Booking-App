@@ -12,6 +12,7 @@ from typing import Dict, Any
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.utils.llm_logger import get_llm_logger
+from app.agent.utils.media_downloader import download_media_batch
 
 logger = logging.getLogger(__name__)
 
@@ -195,11 +196,57 @@ async def format_response(
                         response_parts.append("Pricing information not available.")
                     
                 elif action == "media" and data:
-                    # Format media
+                    # Download and encode media as base64
+                    source = result.get("source", "court")
+                    
                     if isinstance(data, list) and data:
-                        response_parts.append(f"📸 **Media:** {len(data)} items available")
-                        for idx, media in enumerate(data[:3], 1):
-                            response_parts.append(f"  {idx}. {media.get('media_type', 'image')}: {media.get('url', '')}")
+                        # Prepare media items for download with enhanced captions
+                        media_items = []
+                        for media in data:
+                            url = media.get('url')
+                            if url:
+                                # Build meaningful caption
+                                caption_parts = []
+                                
+                                # Add court name if available
+                                court_name = media.get('court_name')
+                                if court_name:
+                                    caption_parts.append(court_name)
+                                
+                                # Add sport types if available (from court data)
+                                sport_types = media.get('sport_types')
+                                if sport_types and isinstance(sport_types, list):
+                                    caption_parts.append(f"({', '.join(sport_types)})")
+                                
+                                # Use original caption if no court info
+                                if not caption_parts and media.get('caption'):
+                                    caption_parts.append(media.get('caption'))
+                                
+                                final_caption = ' '.join(caption_parts) if caption_parts else ''
+                                
+                                media_items.append({
+                                    "url": url,
+                                    "type": media.get('media_type', 'image'),
+                                    "caption": final_caption
+                                })
+                        
+                        # Download media asynchronously
+                        logger.info(f"Downloading {len(media_items)} media items for chat {chat_id}")
+                        downloaded_media = await download_media_batch(media_items)
+                        
+                        if downloaded_media:
+                            # Set response type to media
+                            state["response_type"] = "media"
+                            
+                            # Store in response_metadata for frontend
+                            state["response_metadata"] = {
+                                "media": downloaded_media
+                            }
+                            
+                            # Don't add text response - just show images
+                            logger.info(f"Successfully prepared {len(downloaded_media)} media items for chat {chat_id}")
+                        else:
+                            response_parts.append("Media download failed. Please try again.")
                     else:
                         response_parts.append("No media available.")
                 
@@ -218,11 +265,20 @@ async def format_response(
     if response_parts:
         response = "\n\n".join(response_parts)
     else:
-        response = "No results to display."
+        # If no text parts but media exists, use empty string (media will be in metadata)
+        if state.get("response_type") == "media":
+            response = ""
+        else:
+            response = "No results to display."
     
-    # Set response
+    # Set response (don't override response_type if already set to media)
     state["response_content"] = response
-    state["response_type"] = "text"
+    if "response_type" not in state or state["response_type"] != "media":
+        state["response_type"] = "text"
+    
+    # Ensure response_metadata exists
+    if "response_metadata" not in state:
+        state["response_metadata"] = {}
     
     # Track last node
     flow_state["last_node"] = "information-format_response"

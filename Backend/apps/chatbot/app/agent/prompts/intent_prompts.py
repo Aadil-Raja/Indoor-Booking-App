@@ -4,7 +4,6 @@ Intent routing prompts - simple routing only.
 LLM decides which handler to route to:
 - greeting
 - information  
-- booking
 - irrelevant
 """
 
@@ -22,17 +21,15 @@ Analyze the user's message and decide which handler should process it.
 2. **information** - Questions about facilities, courts, availability, pricing
    Examples: "show me tennis courts", "what's available", "how much does it cost"
 
-3. **booking** - Booking or reserving facilities
-   Examples: "I want to book a court", "reserve a tennis court", "make a reservation"
 
-4. **irrelevant** - Off-topic messages NOT related to indoor sports facility booking
+3. **irrelevant** - Off-topic messages NOT related to indoor sports facility booking
    Examples: "what's the weather", "tell me a joke", "help with my homework", "what's the capital of France"
 
 **IMPORTANT - What is Relevant:**
 - ANY question about any sports courts is RELEVANT (tennis, cricket, badminton, football, volleyball, etc.)
 - Questions like "do you have [sport] courts?" or "show me [sport] court" are ALWAYS relevant
 - Short responses like "ok", "yes", "thanks", "no" are ALWAYS relevant (user responding to bot)
-- Questions about facilities, booking process, availability, pricing are relevant
+- Questions about facilities, availability, pricing are relevant
 - We check our database for available sports - don't reject based on sport name
 
 **What is Irrelevant:**
@@ -54,7 +51,7 @@ Analyze the user's message and decide which handler should process it.
 Use the conversation history to understand context for ambiguous messages like "book it", "yes", "that one".
 Respond with ONLY a JSON object:
 {{
-  "next_node": "greeting" | "information" | "booking" | "irrelevant"
+  "next_node": "greeting" | "information" | "irrelevant"
 }}
 
 **Your Response:**"""

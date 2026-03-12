@@ -19,6 +19,59 @@ from app.agent.utils.json_parser import parse_llm_json_response
 logger = logging.getLogger(__name__)
 
 
+def _deduplicate_list(items: list, chat_id: str, field_name: str) -> list:
+    """
+    Remove duplicates from a list while preserving order.
+    
+    Args:
+        items: List to deduplicate
+        chat_id: Chat ID for logging
+        field_name: Name of the field for logging
+        
+    Returns:
+        Deduplicated list
+    """
+    if not items or not isinstance(items, list):
+        return items
+    
+    original = items
+    deduplicated = list(dict.fromkeys(items))
+    
+    if len(original) != len(deduplicated):
+        logger.info(
+            f"Deduplicated {field_name} for chat {chat_id}: "
+            f"{original} -> {deduplicated}"
+        )
+    
+    return deduplicated
+
+
+def _simplify_fields_with_all(fields: list, chat_id: str, field_name: str) -> list:
+    """
+    Simplify field list if "all" is present - keep only "all".
+    
+    Args:
+        fields: List of fields
+        chat_id: Chat ID for logging
+        field_name: Name of the field for logging
+        
+    Returns:
+        Simplified field list
+    """
+    if not fields or not isinstance(fields, list):
+        return fields
+    
+    if "all" in fields:
+        if len(fields) > 1:
+            logger.info(
+                f"Simplified {field_name} to ['all'] for chat {chat_id}: "
+                f"original={fields}"
+            )
+        return ["all"]
+    
+    return fields
+
+
 async def information_router(
     state: ConversationState,
     llm_provider: Any
@@ -79,6 +132,40 @@ async def information_router(
             },
             context=f"information_router for chat {chat_id}"
         )
+        
+        # Clean up router result: deduplicate and simplify fields
+        if "requested_actions" in router_result:
+            router_result["requested_actions"] = _deduplicate_list(
+                router_result["requested_actions"],
+                chat_id,
+                "requested_actions"
+            )
+        
+        if "property_detail_fields" in router_result:
+            # First deduplicate, then simplify if "all" is present
+            fields = _deduplicate_list(
+                router_result["property_detail_fields"],
+                chat_id,
+                "property_detail_fields"
+            )
+            router_result["property_detail_fields"] = _simplify_fields_with_all(
+                fields,
+                chat_id,
+                "property_detail_fields"
+            )
+        
+        if "court_detail_fields" in router_result:
+            # First deduplicate, then simplify if "all" is present
+            fields = _deduplicate_list(
+                router_result["court_detail_fields"],
+                chat_id,
+                "court_detail_fields"
+            )
+            router_result["court_detail_fields"] = _simplify_fields_with_all(
+                fields,
+                chat_id,
+                "court_detail_fields"
+            )
         
         # Log parsed result
         logger.info(f"[ROUTER PARSED RESULT] Chat {chat_id}: {json.dumps(router_result, indent=2)}")

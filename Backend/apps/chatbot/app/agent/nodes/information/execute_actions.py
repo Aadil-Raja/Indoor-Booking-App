@@ -14,6 +14,9 @@ from app.agent.utils.llm_logger import get_llm_logger
 
 logger = logging.getLogger(__name__)
 
+# Configuration: Number of property media items to show
+PROPERTY_MEDIA_LIMIT = 3  # Changeable: 2-3 or any number
+
 
 async def execute_actions(
     state: ConversationState,
@@ -120,24 +123,89 @@ async def execute_actions(
                     }
                 
             elif action == "media":
-                # For media, use court_details which includes media
-                get_court_details = TOOL_REGISTRY.get("get_court_details")
-                if get_court_details and court_id:
-                    data = await get_court_details(court_id=court_id)
-                    if data and "media" in data:
-                        results["media"] = {
-                            "status": "success",
-                            "data": data["media"]
-                        }
+                # Smart media logic based on what's selected
+                if property_id and court_id:
+                    # Both selected → Get only court media
+                    get_court_details = TOOL_REGISTRY.get("get_court_details")
+                    if get_court_details:
+                        data = await get_court_details(court_id=court_id)
+                        if data and "media" in data:
+                            # Add court name and sport types to each media item
+                            media_with_info = []
+                            for media_item in data["media"]:
+                                media_with_info.append({
+                                    **media_item,
+                                    "court_name": data.get("name"),
+                                    "sport_types": data.get("sport_types", [])
+                                })
+                            
+                            results["media"] = {
+                                "status": "success",
+                                "data": media_with_info,
+                                "source": "court"
+                            }
+                        else:
+                            results["media"] = {
+                                "status": "success",
+                                "data": [],
+                                "source": "court"
+                            }
                     else:
                         results["media"] = {
-                            "status": "success",
-                            "data": []
+                            "status": "error",
+                            "error": "Court details tool not found"
                         }
+                
+                elif property_id and not court_id:
+                    # Only property selected → Get property media + 1 from each court
+                    get_property_details = TOOL_REGISTRY.get("get_property_details")
+                    if get_property_details:
+                        data = await get_property_details(property_id=property_id)
+                        if data:
+                            # Get property media (limit to PROPERTY_MEDIA_LIMIT)
+                            property_media = data.get("media", [])[:PROPERTY_MEDIA_LIMIT]
+                            
+                            # Get 1 media from each court
+                            court_media = []
+                            courts = data.get("courts", [])
+                            for court in courts:
+                                court_media_items = court.get("media", [])
+                                if court_media_items:
+                                    # Take first media from this court and add court info
+                                    court_media.append({
+                                        **court_media_items[0],
+                                        "court_name": court.get("name"),
+                                        "court_id": court.get("id"),
+                                        "sport_types": court.get("sport_types", [])
+                                    })
+                            
+                            # Combine property media + court media
+                            combined_media = property_media + court_media
+                            
+                            results["media"] = {
+                                "status": "success",
+                                "data": combined_media,
+                                "source": "property_and_courts",
+                                "property_media_count": len(property_media),
+                                "court_media_count": len(court_media)
+                            }
+                        else:
+                            results["media"] = {
+                                "status": "success",
+                                "data": [],
+                                "source": "property_and_courts"
+                            }
+                    else:
+                        results["media"] = {
+                            "status": "error",
+                            "error": "Property details tool not found"
+                        }
+                
                 else:
+                    # Neither selected → This shouldn't happen (check_requirements should catch it)
                     results["media"] = {
                         "status": "error",
-                        "error": "Media tool not found or court_id missing"
+                        "error": "Property or court must be selected for media"
                     }
                 
         except Exception as e:

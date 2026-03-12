@@ -222,6 +222,32 @@ const ChatbotTest = () => {
         <div className="message-content">
           {renderFormattedText(message.content)}
           
+          {/* Render media if present */}
+          {message.message_type === 'media' && message.metadata?.media && (
+            <div className="message-media-gallery">
+              {message.metadata.media.map((media, idx) => (
+                <div key={idx} className="media-item">
+                  {media.type === 'image' ? (
+                    <img 
+                      src={media.data} 
+                      alt={media.caption || `Image ${idx + 1}`}
+                      className="media-image"
+                    />
+                  ) : (
+                    <video 
+                      src={media.data} 
+                      controls
+                      className="media-video"
+                    />
+                  )}
+                  {media.caption && (
+                    <div className="media-caption">{media.caption}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          
           {/* Render buttons if present */}
           {message.message_type === 'button' && message.metadata?.buttons && (
             <div className="message-buttons">
