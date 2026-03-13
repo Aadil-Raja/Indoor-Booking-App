@@ -19,17 +19,20 @@ Analyze the user's message and decide which handler should process it.
    Examples: "hi", "hello", "good morning", "hey"
 
 2. **information** - Questions about facilities, courts, availability, pricing
-   Examples: "show me tennis courts", "what's available", "how much does it cost"
+   Examples: "show me tennis courts", "what's available", "how much does it cost", "what amenities do you have", "do you have parking"
 
+3. **booking** - Booking or reserving facilities
+   Examples: "I want to book a court", "reserve a tennis court", "make a reservation"
 
-3. **irrelevant** - Off-topic messages NOT related to indoor sports facility booking
+4. **irrelevant** - Off-topic messages NOT related to indoor sports facility booking
    Examples: "what's the weather", "tell me a joke", "help with my homework", "what's the capital of France"
 
 **IMPORTANT - What is Relevant:**
 - ANY question about any sports courts is RELEVANT (tennis, cricket, badminton, football, volleyball, etc.)
 - Questions like "do you have [sport] courts?" or "show me [sport] court" are ALWAYS relevant
+- Questions about amenities, facilities, parking, location, contact info are ALWAYS relevant
 - Short responses like "ok", "yes", "thanks", "no" are ALWAYS relevant (user responding to bot)
-- Questions about facilities, availability, pricing are relevant
+- Questions about availability, pricing, specifications are relevant
 - We check our database for available sports - don't reject based on sport name
 
 **What is Irrelevant:**
