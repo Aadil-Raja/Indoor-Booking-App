@@ -1,9 +1,30 @@
 """
 Flow state management utilities.
 
-This module provides functions for managing flow_state, which contains temporary
-conversation state including current intent, booking progress, and cached data.
-Flow state is cleared after booking completion or cancellation.
+This module provides functions for managing flow_state, which contains both
+persistent and temporary conversation state.
+
+Persistent fields (saved to database):
+- property_id, property_name: Selected property
+- court_id, court_type: Selected court
+- selected_date: Selected date for availability (YYYY-MM-DD format)
+- selected_start_time: Selected start time (HH:MM format)
+- selected_end_time: Selected end time (HH:MM format)
+- time_period: Selected time period (morning/afternoon/evening/night)
+- available_properties: Cached property list
+- available_courts: Cached court list
+- owner_properties_initialized: Initialization flag
+- last_node: Last executed node
+- awaiting_input: What input we're waiting for
+- pending_actions: Actions waiting for input
+
+Temporary fields (NOT saved to database):
+- router_result: LLM analysis result
+- execution_results: Action execution results
+- validation_error: Validation error flag
+- bot_response: Temporary response text
+- next_step: Routing decision
+- requested_actions: Current request actions
 
 Requirements: 3.1, 3.9, 15.1, 15.5
 """
@@ -12,6 +33,38 @@ from typing import Dict, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# Persistent fields that SHOULD be saved to database
+PERSISTABLE_FIELDS = {
+    "property_id",
+    "property_name",
+    "court_ids",
+    "court_type",
+    # Availability-specific persistent fields
+    "selected_date",  # Backend-normalized date: "2026-03-14"
+    "selected_start_time",  # e.g., "18:00"
+    "selected_end_time",  # e.g., "19:00"
+    "time_period",  # e.g., "morning", "afternoon", "evening", "night"
+    "available_properties",
+    "owner_properties_initialized",
+    "last_node",
+    "awaiting_input",
+    "pending_actions",
+    "pending_action_params",
+    "available_courts"
+}
+
+# Temporary fields that should NOT be saved to database
+TEMPORARY_FIELDS = {
+    "router_result",
+    "execution_results",
+    "validation_error",
+    "bot_response",
+    "next_step",
+    "requested_actions",
+    "property_detail_fields"  # Temporary - only for current request
+}
 
 
 def initialize_flow_state() -> Dict[str, Any]:
@@ -29,36 +82,83 @@ def initialize_flow_state() -> Dict[str, Any]:
         flow_state = initialize_flow_state()
         # Returns:
         # {
-        #     "current_intent": None,
         #     "property_id": None,
         #     "property_name": None,
         #     "court_id": None,
-        #     "court_name": None,
-        #     "date": None,
-        #     "time_slot": None,
-        #     "booking_step": None,
-        #     "owner_properties": None,
-        #     "context": {}
+        #     "court_type": None,
+        #     "available_properties": [],
+        #     "owner_properties_initialized": False,
+        #     "last_node": None,
+        #     "awaiting_input": None,
+        #     "pending_actions": [],
+        #     "available_courts": []
         # }
     
     Requirements: 3.1, 3.9
     """
     flow_state = {
-        "current_intent": None,
         "property_id": None,
         "property_name": None,
-        "court_id": None,
-        "court_name": None,
-        "date": None,
-        "time_slot": None,
-        "booking_step": None,
-        "owner_properties": None,
+        "court_ids": [],  # Array of court IDs matching the selected sport type
+        "court_type": None,  # Preferred sport type
+        # Availability-specific normalized fields
+        "selected_date": None,  # Backend-normalized date: "2026-03-14"
+        "selected_start_time": None,  # e.g., "18:00"
+        "selected_end_time": None,  # e.g., "19:00"
+        "time_period": None,  # e.g., "morning", "afternoon", "evening", "night"
+        "available_properties": [],
+        "owner_properties_initialized": False,
         "last_node": None,
-        "context": {}
+        "awaiting_input": None,  # None | "property_selection" | "court_selection" | "date_selection"
+        "pending_actions": [],  # actions waiting because some input was missing
+        "pending_action_params": {},  # parameters for pending actions (persisted)
+        "available_courts": []
     }
     
     logger.debug("Initialized empty flow_state")
     return flow_state
+
+
+def ensure_flow_state_fields(flow_state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure flow_state has all required fields without losing existing data.
+    
+    Adds missing fields with default values while preserving existing data.
+    This is used when the flow_state structure is updated with new fields.
+    
+    Args:
+        flow_state: Existing flow state dictionary
+        
+    Returns:
+        Dict[str, Any]: Flow state with all required fields
+        
+    Example:
+        # Old flow_state missing new fields
+        old_state = {"property_id": 123, "court_id": 456}
+        
+        # Ensure all fields exist
+        updated = ensure_flow_state_fields(old_state)
+        # Returns: {"property_id": 123, "court_id": 456, "owner_properties_initialized": False, ...}
+    """
+    if not isinstance(flow_state, dict):
+        logger.warning(f"Invalid flow_state type: {type(flow_state)}, initializing new")
+        return initialize_flow_state()
+    
+    # Get default structure
+    default_state = initialize_flow_state()
+    
+    # Merge: keep existing values, add missing fields with defaults
+    merged_state = default_state.copy()
+    merged_state.update(flow_state)
+    
+    # Special handling for router_result - merge dicts
+    if "router_result" in flow_state and isinstance(flow_state["router_result"], dict):
+        merged_router_result = default_state["router_result"].copy()
+        merged_router_result.update(flow_state["router_result"])
+        merged_state["router_result"] = merged_router_result
+    
+    logger.debug("Ensured flow_state has all required fields")
+    return merged_state
 
 
 def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
@@ -88,16 +188,22 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
     
     # Define expected fields (all are optional, but structure should exist)
     expected_fields = {
-        "current_intent",
         "property_id",
         "property_name",
-        "court_id",
-        "court_name",
-        "date",
-        "time_slot",
-        "booking_step",
-        "owner_properties",
-        "context"
+        "court_ids",
+        "court_type",
+        # Availability fields
+        "selected_date",
+        "selected_start_time",
+        "selected_end_time",
+        "time_period",
+        "available_properties",
+        "owner_properties_initialized",
+        "last_node",
+        "awaiting_input",
+        "pending_actions",
+        "pending_action_params",
+        "available_courts"
     }
     
     # Check if all expected fields exist (values can be None)
@@ -110,9 +216,25 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
         return False
     
     # Validate context is a dict if present
-    if "context" in flow_state and flow_state["context"] is not None:
-        if not isinstance(flow_state["context"], dict):
-            logger.warning(f"Invalid context type: {type(flow_state['context'])}, expected dict")
+    if "router_result" in flow_state and flow_state["router_result"] is not None:
+        if not isinstance(flow_state["router_result"], dict):
+            logger.warning(f"Invalid router_result type: {type(flow_state['router_result'])}, expected dict")
+            return False
+    
+    # Validate list fields
+    if "pending_actions" in flow_state and flow_state["pending_actions"] is not None:
+        if not isinstance(flow_state["pending_actions"], list):
+            logger.warning(f"Invalid pending_actions type: {type(flow_state['pending_actions'])}, expected list")
+            return False
+    
+    if "available_properties" in flow_state and flow_state["available_properties"] is not None:
+        if not isinstance(flow_state["available_properties"], list):
+            logger.warning(f"Invalid available_properties type: {type(flow_state['available_properties'])}, expected list")
+            return False
+    
+    if "available_courts" in flow_state and flow_state["available_courts"] is not None:
+        if not isinstance(flow_state["available_courts"], list):
+            logger.warning(f"Invalid available_courts type: {type(flow_state['available_courts'])}, expected list")
             return False
     
     logger.debug("Flow state structure is valid")
@@ -128,7 +250,7 @@ def update_flow_state(
     
     Updates flow_state with new values from the updates dictionary.
     Performs a shallow merge for top-level fields and deep merge for
-    the context field to preserve existing context data.
+    the router_result field to preserve existing router data.
     
     Includes error handling for corrupted state.
     
@@ -141,10 +263,10 @@ def update_flow_state(
         
     Example:
         updated = update_flow_state(
-            current_flow_state={"property_id": None, "context": {"step": 1}},
-            updates={"property_id": 123, "context": {"property_name": "Court A"}}
+            current_flow_state={"property_id": None, "router_result": {"intent": "booking"}},
+            updates={"property_id": 123, "router_result": {"confidence": 0.95}}
         )
-        # Returns: {"property_id": 123, "context": {"step": 1, "property_name": "Court A"}}
+        # Returns: {"property_id": 123, "router_result": {"intent": "booking", "confidence": 0.95}}
     
     Requirements: 3.9, 15.1, 20.2
     """
@@ -176,18 +298,18 @@ def update_flow_state(
         logger.error(f"Error copying flow_state: {e}, reinitializing")
         updated_state = initialize_flow_state()
     
-    # Update all fields except context (shallow merge)
+    # Update all fields except router_result (shallow merge)
     for key, value in updates.items():
         try:
-            if key == "context":
-                # Deep merge for context field
-                if "context" not in updated_state or updated_state["context"] is None:
-                    updated_state["context"] = {}
+            if key == "router_result":
+                # Deep merge for router_result field
+                if "router_result" not in updated_state or updated_state["router_result"] is None:
+                    updated_state["router_result"] = {}
                 
                 if isinstance(value, dict):
-                    updated_state["context"].update(value)
+                    updated_state["router_result"].update(value)
                 else:
-                    logger.warning(f"Context update value is not a dict: {type(value)}")
+                    logger.warning(f"router_result update value is not a dict: {type(value)}")
             else:
                 # Shallow merge for other fields
                 updated_state[key] = value
@@ -220,96 +342,72 @@ def clear_flow_state() -> Dict[str, Any]:
     return initialize_flow_state()
 
 
-def clear_booking_field(
-    flow_state: Dict[str, Any],
-    field_name: str
-) -> Dict[str, Any]:
+def filter_flow_state_for_db(flow_state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Clear a specific booking field and its related fields from flow_state.
+    Filter flow_state to include only persistable fields for database storage.
     
-    This function supports selective field updates for reversibility.
-    When a user changes a specific booking detail, only that field and
-    dependent fields are cleared while preserving other information.
-    
-    Field clearing rules:
-    - property: clears property_id, property_name, and all downstream fields
-    - court: clears court_id, court_name, and all downstream fields
-    - date: clears date and all downstream fields
-    - time_slot: clears only time_slot
+    Removes temporary fields that should not be saved to the database,
+    keeping only the fields that need to persist across requests.
     
     Args:
-        flow_state: Current flow state dictionary
-        field_name: Name of the field to clear ("property", "court", "date", "time_slot")
+        flow_state: Full flow state dictionary (may contain temporary fields)
         
     Returns:
-        Dict[str, Any]: Updated flow_state with cleared fields
+        Dict[str, Any]: Filtered flow state with only persistable fields
         
     Example:
-        # User wants to change property
-        flow_state = clear_booking_field(flow_state, "property")
-        # Clears: property_id, property_name, court_id, court_name, date, time_slot
+        full_state = {
+            "property_id": 123,
+            "court_id": 456,
+            "router_result": {...},  # temporary - removed
+            "bot_response": "...",   # temporary - removed
+            "available_properties": [...]  # persistent - kept
+        }
         
-    Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6
+        filtered = filter_flow_state_for_db(full_state)
+        # Returns: {"property_id": 123, "court_id": 456, "available_properties": [...]}
     """
     if not isinstance(flow_state, dict):
-        logger.warning("Flow state is not a dict, cannot clear field")
-        return flow_state
+        logger.warning(f"Invalid flow_state type: {type(flow_state)}, returning empty dict")
+        return {}
     
-    # Create a copy to avoid mutating the original
-    updated_state = flow_state.copy()
+    # Filter to only include persistable fields
+    filtered_state = {
+        key: value
+        for key, value in flow_state.items()
+        if key in PERSISTABLE_FIELDS
+    }
     
-    if field_name == "property":
-        # Clear property and all downstream fields
-        updated_state["property_id"] = None
-        updated_state["property_name"] = None
-        updated_state["court_id"] = None
-        updated_state["court_name"] = None
-        updated_state["date"] = None
-        updated_state["time_slot"] = None
-        updated_state["booking_step"] = None
-        logger.info("Cleared property and all downstream booking fields")
-        
-    elif field_name == "court":
-        # Clear court and all downstream fields
-        updated_state["court_id"] = None
-        updated_state["court_name"] = None
-        updated_state["date"] = None
-        updated_state["time_slot"] = None
-        # Update booking step to property_selected
-        if updated_state.get("property_id"):
-            updated_state["booking_step"] = "property_selected"
-        else:
-            updated_state["booking_step"] = None
-        logger.info("Cleared court and all downstream booking fields")
-        
-    elif field_name == "date":
-        # Clear date and all downstream fields
-        updated_state["date"] = None
-        updated_state["time_slot"] = None
-        # Update booking step to court_selected
-        if updated_state.get("court_id"):
-            updated_state["booking_step"] = "court_selected"
-        elif updated_state.get("property_id"):
-            updated_state["booking_step"] = "property_selected"
-        else:
-            updated_state["booking_step"] = None
-        logger.info("Cleared date and all downstream booking fields")
-        
-    elif field_name == "time_slot":
-        # Clear only time_slot
-        updated_state["time_slot"] = None
-        # Update booking step to date_selected
-        if updated_state.get("date"):
-            updated_state["booking_step"] = "date_selected"
-        elif updated_state.get("court_id"):
-            updated_state["booking_step"] = "court_selected"
-        elif updated_state.get("property_id"):
-            updated_state["booking_step"] = "property_selected"
-        else:
-            updated_state["booking_step"] = None
-        logger.info("Cleared time_slot field")
-        
-    else:
-        logger.warning(f"Unknown field name for clearing: {field_name}")
+    # Log if any fields were filtered out
+    filtered_out = set(flow_state.keys()) - PERSISTABLE_FIELDS
+    if filtered_out:
+        logger.debug(f"Filtered out temporary fields from flow_state: {filtered_out}")
     
-    return updated_state
+    logger.debug(f"Filtered flow_state: kept {len(filtered_state)} fields, removed {len(filtered_out)} fields")
+    
+    return filtered_state
+
+
+def validate_persistable_fields(flow_state: Dict[str, Any]) -> bool:
+    """
+    Validate that flow_state contains only persistable fields.
+    
+    This is useful for testing and validation to ensure no temporary
+    fields are accidentally being saved to the database.
+    
+    Args:
+        flow_state: Flow state dictionary to validate
+        
+    Returns:
+        bool: True if all fields are persistable, False otherwise
+    """
+    if not isinstance(flow_state, dict):
+        return False
+    
+    extra_fields = set(flow_state.keys()) - PERSISTABLE_FIELDS
+    
+    if extra_fields:
+        logger.warning(f"Flow state contains non-persistable fields: {extra_fields}")
+        return False
+    
+    return True

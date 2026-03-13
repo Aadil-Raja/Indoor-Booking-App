@@ -5,8 +5,20 @@ from app.deps.auth import get_current_owner
 from shared.services import court_service
 from shared.utils import OwnerContext
 from shared.schemas.court import CourtCreate, CourtUpdate
+from shared.models.court import SportType
+from shared.utils.response_utils import make_response
 
 router = APIRouter(tags=["Courts"])
+
+
+@router.get("/sport-types")
+def get_sport_types():
+    """Get all available sport types"""
+    sport_types = [
+        {"value": sport.value, "label": sport.value.capitalize()}
+        for sport in SportType
+    ]
+    return make_response(True, "Sport types retrieved successfully", data=sport_types)
 
 
 @router.post("/properties/{property_id}/courts", status_code=status.HTTP_201_CREATED)

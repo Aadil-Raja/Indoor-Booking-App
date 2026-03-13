@@ -61,7 +61,8 @@ def check_overlap(db: Session, court_id: int, days: List[int], start_time: time,
     for pricing in existing:
         # Check if any day overlaps
         if any(day in pricing.days for day in days):
-            # Check if time ranges overlap
+            # With XX:00-XX:59 format, overlap detection is straightforward
+            # No special cases needed since no slots cross midnight
             if not (end_time <= pricing.start_time or start_time >= pricing.end_time):
                 return True
 

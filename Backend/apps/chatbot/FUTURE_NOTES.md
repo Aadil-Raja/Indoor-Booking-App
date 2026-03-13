@@ -24,326 +24,44 @@ return existing if existing else create_new()
 - `POST /api/chat/new` - UI button to start fresh chat
 
 
----
-
-# Intent Detection - Simplification (Current Session)
-
-## What We Removed
-
-### 1. State Updates in Intent Node
-**Removed:** LLM extracting user preferences during routing
-```python
-# OLD: Intent node extracted preferences
-state_updates = {
-    "bot_memory": {
-        "user_preferences": {"preferred_sport": "tennis"}
-    }
-}
-```
-
-**Why:** 
-- Intent node should ONLY route (one job)
-- Preferences extracted without full context
-- Made routing slower
-
-**Future:** If needed, add preference extraction to:
-- Information node: LangChain agent can extract naturally
-- Booking node: Already collects during flow
-
-### 2. Message Field in Intent Response
-**Removed:** LLM generating transition messages
-```python
-# OLD: Intent node could return message
-message = "Great! Let me help you book a court"
-state["response_content"] = message
-```
-
-**Why:**
-- Handlers generate their own responses anyway
-- Message gets overwritten immediately
-- Wasted LLM tokens
-- Graph doesn't support ending at intent node
-
-**Future:** If you want intent to respond directly:
-- Modify graph to support `next_node = None` → END
-- Useful for simple acknowledgments ("You're welcome!")
-- Adds complexity, only add if needed
-
-## Current Intent Node (Simplified)
-
-**Job:** ONLY routing
-- Input: user_message
-- Output: next_node ("greeting" | "information" | "booking")
-- Fast, simple, one responsibility
-
-**Flow:**
-```
-User: "I want to book a tennis court"
-↓
-Intent Node: Analyzes message
-↓
-Returns: next_node = "booking"
-↓
-Graph routes to booking handler
-↓
-Booking handler: Generates response + extracts preferences
-```
-
-## Benefits of Simplification
-- Faster routing (less LLM work)
-- Simpler prompt (easier to maintain)
-- Clear separation of concerns
-- Each node has one job
-- Easier to debug
-
-
-
----
-
-# Intent Detection - Context-Aware Routing (Current Session)
-
-## What We Added
-
-### 1. Conversation Context in Routing
-**Added:** Recent messages (last 5) to intent routing prompt
-
-**Why:**
-- Helps LLM understand ambiguous messages like "book it", "yes", "that one"
-- Provides conversation history for better context
-- Improves routing accuracy
-
-**Example:**
-```
-User: "Show me tennis courts"
-Bot: "Here are tennis courts..."
-User: "book it"  ← Without context: unclear
-                 ← With context: clearly wants to book
-```
-
-### 2. Last Node Tracking
-**Added:** `flow_state.last_node` field
-
-**What it does:**
-- Tracks which handler processed the last message
-- Values: "greeting", "information", "booking", or None (new chat)
-- Persists in database across messages
-- Helps LLM understand conversation flow
-
-**Example:**
-```python
-flow_state = {
-    "current_intent": "information",
-    "last_node": "information",  # User was browsing
-    "property_id": 123,
-    ...
-}
-```
-
-### 3. Current Intent in Routing
-**Added:** `flow_state.current_intent` to routing prompt
-
-**What it does:**
-- Shows LLM what the user is currently doing
-- Helps maintain conversation flow
-- Values: "greeting", "information", "booking", or None
-
-## Implementation Details
-
-**Intent Prompt Now Includes:**
-```
-Recent Conversation:
-- User: "Show me tennis courts"
-- Bot: "Here are courts..."
-- User: "book it"
-
-Current Context:
-- Last action: information
-- Current intent: None
-
-User Message: "book it"
-```
-
-**Handlers Track Last Node:**
-- Greeting handler: Sets `flow_state["last_node"] = "greeting"`
-- Information handler: Sets `flow_state["last_node"] = "information"`
-- Booking handler: Sets `flow_state["last_node"] = "booking"`
-
-## Benefits
-
-✅ Better routing for ambiguous messages
-✅ Understands follow-up questions
-✅ Maintains conversation context
-✅ Uses existing data (messages already loaded)
-✅ Minimal code changes
-
-## Example Scenarios
-
-**Scenario 1: Ambiguous follow-up**
-```
-User: "Show me tennis courts"
-Bot: "Here are 3 tennis courts..."
-User: "book it"
-
-Without context: Routes to greeting (doesn't understand)
-With context: Routes to booking (understands user wants to book)
-```
-
-**Scenario 2: Continuing conversation**
-```
-User: "What's available tomorrow?"
-Bot: "Here are available slots..."
-User: "the morning one"
-
-Without context: Routes to greeting (unclear)
-With context: Routes to booking (knows user is selecting a slot)
-```
-
-
-
----
-
-# Flow State Initialization - Moved to Agent Service (Current Session)
-
-## Problem Identified
-
-**Issue 1:** `last_node` field was not included in `initialize_flow_state()`
-- Handlers were setting it manually
-- Not part of the default structure
-
-**Issue 2:** Only greeting handler initialized flow_state
-- If user went directly to booking/information → flow_state was empty `{}`
-- Could cause errors when handlers tried to access fields
-
-**Example of problem:**
-```
-User: "I want to book a tennis court"
-↓
-Intent: Routes to booking (skips greeting)
-↓
-Booking handler: Tries to access flow_state.property_id
-↓
-Error: flow_state is {} (empty)
-```
-
-## Solution Implemented
-
-### 1. Added last_node to initialize_flow_state()
-```python
-flow_state = {
-    "current_intent": None,
-    "property_id": None,
-    ...
-    "last_node": None,  # NEW
-    "context": {}
-}
-```
-
-### 2. Moved initialization to agent_service
-**Before:** Greeting handler initialized flow_state
-**After:** Agent service initializes flow_state for ALL handlers
-
-```python
-# agent_service._prepare_conversation_state()
-flow_state = chat.flow_state or {}
-if not flow_state or not validate_flow_state(flow_state):
-    flow_state = initialize_flow_state()
-```
-
-### 3. Removed initialization from greeting handler
-Greeting now just uses the already-initialized flow_state.
-
-## Benefits
-
-✅ All handlers get properly initialized flow_state
-✅ Works for direct booking/information messages
-✅ Consistent structure across all flows
-✅ last_node field always available
-✅ Simpler greeting handler
-
-## Flow Now
-
-```
-User: "I want to book a tennis court"
-↓
-Agent Service: Initializes flow_state with all fields
-↓
-Intent: Routes to booking
-↓
-Booking handler: flow_state is properly initialized ✓
-```
-
-
-
----
-
-# Bot Memory Initialization - Moved to Agent Service (Current Session)
-
-## Problem Identified
-
-**Issue:** Only greeting handler initialized bot_memory properly
-- Used `_initialize_bot_memory()` and `_ensure_bot_memory_structure()`
-- If user went directly to booking/information → bot_memory might be incomplete
-- Agent service only set basic fields manually
-
-**Example of problem:**
-```
-User: "I want to book a tennis court"
-↓
-Intent: Routes to booking (skips greeting)
-↓
-Booking handler: Tries to access bot_memory.user_preferences
-↓
-Might be incomplete or missing fields
-```
-
-## Solution Implemented
-
-### Moved bot_memory initialization to agent_service
-
-**Before:**
-```python
-# agent_service: Manual field setup
-bot_memory = chat.bot_memory or {}
-if "conversation_history" not in bot_memory:
-    bot_memory["conversation_history"] = []
-# ... repeat for each field
-
-# greeting_handler: Proper initialization
-bot_memory = _initialize_bot_memory()
-bot_memory = _ensure_bot_memory_structure(bot_memory)
-```
-
-**After:**
-```python
-# agent_service: Proper initialization
-bot_memory = chat.bot_memory or {}
-if not bot_memory or not isinstance(bot_memory, dict):
-    bot_memory = _initialize_bot_memory()
-else:
-    bot_memory = _ensure_bot_memory_structure(bot_memory)
-
-# greeting_handler: Just uses it
-bot_memory = state.get("bot_memory", {})
-```
-
-### Removed initialization from greeting handler
-- Removed imports: `_initialize_bot_memory`, `_ensure_bot_memory_structure`
-- Removed initialization logic
-- Greeting now just uses the already-initialized bot_memory
-
-## Benefits
-
-✅ All handlers get properly initialized bot_memory
-✅ Works for direct booking/information messages
-✅ Consistent with flow_state initialization
-✅ Uses proper initialization functions
-✅ Simpler greeting handler
-
-## Summary: Centralized Initialization
-
-Both flow_state and bot_memory are now initialized in one place:
-- **agent_service._prepare_conversation_state()**
-- All handlers receive properly initialized state
-- No duplicate initialization logic
-- Consistent across all flows
+handle duplicate court sport types
+maybe add fuzzy matching
 
+allow selection using 1 , 2, 3 numbers courtd
+handle this if there exist a court with multiple and one with one sport types then how court selection will be handled as it is currently using first id for details
+
+## Property Version-Based Cache Invalidation
+flow_state caches property and court data which becomes stale when owners add/delete/update properties or courts in the database, showing outdated information. Solution: Add property_version (integer) field to properties table that auto-increments whenever the property itself OR any of its courts OR pricing rules change. Store this version in flow_state alongside cached property data. Before critical operations (showing details, booking), compare cached version with current DB version - if mismatch detected, refetch property data and clear dependent selections. 
+
+what happens if llm says proeprty selection but no properyt or court was matched etc and requested action is also get property details or get court details
+
+
+add fallbacks if llm replies does not matches the options given to it 
+
+what if the user gives reply but it is not clear for eg user first court 
+
+
+add fallbacks if llm replies does not matches the options given to it 
+
+what if the user gives reply but it is not clear for eg user first court 
+
+what happens 
+
+fallback the params and functions matches , else add urself if notmatches
+
+check if there is extra call in console 
+
+
+improve msgs in case of asking to tell selcet a sport for knwoing pricing 
+
+improve greeting welcome back 
+
+handle fallbacks of failurei n tools
+
+
+see when show available actions is called,would it better to make a llm call
+
+complex queures
+
+
+in urdu not working

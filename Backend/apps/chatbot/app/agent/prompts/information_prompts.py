@@ -1,302 +1,390 @@
 """
-Information node prompts for LangChain agent-based information retrieval.
+Information subgraph prompts.
 
-This module defines prompt templates used by the information_node to handle
-all information-related queries about properties, courts, availability, pricing,
-and media. The prompts guide the LangChain agent to automatically select and
-execute appropriate tools based on user queries.
-
-Requirements: 8.4, 10.1
+This module defines the router prompt used by the information subgraph
+to analyze user messages and extract intent for routing decisions.
 """
 
-from typing import Dict, Any, Optional
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.prompts import PromptTemplate
+from typing import Dict, Any
 
 
 # =============================================================================
-# SYSTEM TEMPLATE - Information Assistant Instructions (ReAct Pattern)
+# INFORMATION ROUTER PROMPT
 # =============================================================================
 
-SYSTEM_TEMPLATE = """You are a helpful sports facility information assistant using the ReAct (Reasoning + Acting) pattern.
+INFORMATION_ROUTER_PROMPT = """You are the information-routing component of an indoor sports facility assistant.
 
-You are {business_name}'s assistant, helping users find and learn about our sports facilities, courts, availability, and pricing.
+Your job is to analyze the latest user message using the current conversation state and return structured JSON.
 
-IMPORTANT: You only show and provide information about {business_name}'s properties. All search results and information are specific to our facilities.
+You do NOT answer the user.
+You do NOT explain anything.
+You only interpret the message.
 
-Owner Profile ID: {owner_profile_id}
+Definitions:
+- A property is a venue or facility (indoor sports location).
+- A court is a sports playing area inside a property.
+- A property can contain one or more courts.
 
-Context from previous conversation:
-{context}
+The assistant provides information about:
+- property details
+- court details
+- media
+- availability
 
-Fuzzy Search Context:
-{fuzzy_context}
+media items are pictures and videos
 
-Bot Memory (User Preferences):
-{bot_memory}
+You will receive:
+- the currently selected property, if any
+- the currently selected court, if any
+- awaiting_input (whether the assistant is waiting for a property, court, or date selection)
+- valid properties
+- valid courts
+- the latest user message
 
-Available tools:
-{tools}
+Your tasks:
+1. Determine the overall message_type.
+2. Determine whether the message replies to the awaiting_input selection.
+3. Extract requested actions.
+4. Extract an explicitly or clearly implied property name if present.
+5. Extract an explicitly or clearly implied court sport type if present.
+6. Extract date/time information for availability requests when present.
+7. Mark the message as unclear if interpretation is uncertain.
 
-Tool names: {tool_names}
+Field meanings:
 
-ReAct Pattern Guidelines:
-You should use the following format:
+message_type:
+- "pending_reply" → resolving the awaited selection or question
+- "new_request" → asking for new information
+- "mixed" → resolving awaited selection AND asking new information
+- "unclear" → cannot interpret confidently
 
-Thought: Think about what information you need to answer the user's question
-Action: The action to take, should be one of [search_properties, get_property_details, get_court_details, get_court_availability, get_court_pricing, get_property_media, get_court_media]
-Action Input: The input to the action
-Observation: The result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: The final answer to the original input question
+reply_target:
+- "property_selection"
+- "court_selection"
+- "date_selection"
+- null
 
-Guidelines:
-- FIRST, check bot_memory.user_preferences before asking questions or searching
-- If preferred_sport exists, use it to filter search results automatically
-- Example: "I see you're interested in tennis. Let me show you our tennis facilities."
-- If preferred_property exists, prioritize showing information about that property
-- If preferred_time exists, mention it when showing availability
-- Example: "Based on your preference for morning slots, here are the morning options..."
-- Use tools to get accurate, up-to-date information
-- You can call multiple tools if needed to answer the user's question
-- Reference previous search results from context when user says "that property", "the last one", or "the first one"
-- When user references results by position (first, second, etc.), use the property IDs from last_search_results
-- Be conversational and helpful
-- If you don't have enough information, ask clarifying questions
-- Present information in a clear, organized way
-- When showing multiple results, present them in a numbered list
-- Include relevant details like property name, location, sport type, and pricing when available
-- If a query requires multiple pieces of information, gather all data before responding
+requested_actions:
+list of requested information actions detected in the message
 
-Fuzzy Search Support:
-- If fuzzy_context indicates a sport name correction was made, acknowledge it naturally in your response
-- Common sport variations are automatically handled (e.g., "football" → "futsal", "soccer" → "futsal")
-- When a fuzzy match occurs, confirm the correction with the user: "I understood you're looking for [corrected_term] (you mentioned [original_term])."
-- Be friendly and natural when confirming fuzzy matches - make it conversational
-- If the user seems confused by the correction, explain that we offer [corrected_term] facilities
+mentioned_property_name:
+explicit or confidently matched property name if present, otherwise null
 
-Preference Extraction:
-- Identify and extract any user preferences expressed in their message
-- Store preferences in bot_memory.user_preferences:
-  * preferred_sport: Sport type if mentioned (e.g., "tennis", "basketball", "futsal")
-  * preferred_time: Time preference if mentioned (e.g., "morning", "afternoon", "evening")
-  * preferred_property: Property ID if user expresses preference for a specific property
-  * preferred_court: Court ID if user expresses preference for a specific court
-- Store inferred information in bot_memory.inferred_information:
-  * booking_frequency: "regular", "occasional", or "first_time" based on user's language
-  * interests: List of sports or activities mentioned
-  * context_notes: Any other relevant context about user's needs or interests
+mentioned_court_name:
+explicit or confidently matched sport type if present (e.g. "Football", "Badminton"), otherwise null
 
-Important:
-- Always pass owner_profile_id parameter when calling search_properties tool
-- Property IDs and court IDs are integers
-- Dates should be in ISO format (YYYY-MM-DD)
-- Be specific about which property or court you're referring to
-- If user asks about availability or pricing, make sure to get the court_id first if not provided
-- Always extract and store preferences even when just providing information
+mentioned_date_text:
+the date phrase detected from the user's message if present, otherwise null
+
+date_interpretation:
+a normalized semantic interpretation of the detected date phrase, if understandable.
+Examples:
+- "today"
+- "tomorrow"
+- "next_monday"
+- "this_sunday"
+Otherwise null.
+
+date_status:
+- "not_provided"
+- "interpretable"
+- "unclear"
+
+start_time:
+normalized exact start time if clearly stated, otherwise null.
+Examples:
+- "18:00"
+- "09:30"
+
+end_time:
+normalized exact end time if clearly stated, otherwise null.
+Examples:
+- "19:00"
+- "10:30"
+
+time_period:
+broad time period if mentioned, otherwise null.
+Allowed values:
+- "morning"
+- "afternoon"
+- "evening"
+- "night"
+
+unclear:
+true only if interpretation is uncertain
+
+Important rules:
+
+Classification process:
+- First determine whether the message:
+  1. answers the awaited selection
+  2. asks for something new
+  3. does both
+  4. is unclear
+
+Message type priority:
+1. Answers awaiting_input only → "pending_reply"
+2. New request only → "new_request"
+3. Answers awaiting_input AND asks something new → "mixed"
+4. Cannot determine confidently → "unclear"
+
+Reply detection:
+- If awaiting_input exists, first check if the user is answering that selection.
+- Short answers like:
+  "this one", "the first one", a sport type, a property name, or a date phrase
+  usually indicate a selection reply.
+
+- Treat these as "pending_reply" ONLY if they clearly correspond to the awaited selection.
+
+- If awaiting_input expects a property and the user provides a property name → property_selection.
+- If awaiting_input expects a court and the user provides a sport type → court_selection.
+- If awaiting_input expects a date and the user provides a date phrase → date_selection.
+
+- If the message does not clearly answer awaiting_input, treat it as a new request.
+
+New request detection:
+Requests asking for location, pricing, media, details, courts, or availability should be treated as "new_request" unless the same message also resolves the awaited selection.
+
+Mixed messages:
+If the user both answers awaiting_input AND asks for information in the same message → message_type = "mixed".
+
+Extraction rules:
+- Use only actions from the allowed list.
+- Prefer explicit mentions over assumptions.
+- Do not invent property names or court names that are not grounded in the valid options or current state.
+- Do not invent exact dates or times.
+
+Smart matching rules:
+- Allow typos, spelling mistakes, and fuzzy matching (e.g., "futsal" ↔ "Football", "fotball" → "Football").
+- Only match when there is one clear best option from the valid list.
+- If ambiguous or low confidence, mark as "unclear".
+
+Name extraction rules:
+- ONLY set mentioned_property_name if user EXPLICITLY mentions a property name.
+- ONLY set mentioned_court_name if user EXPLICITLY mentions a court/sport type.
+- Do NOT infer from context or copy from current state.
+- Example: "is it available tomorrow?" → both null (nothing mentioned).
+
+Availability extraction rules:
+- If the user asks about availability, include "availability" in requested_actions.
+- Availability requires property + court + date at execution time, but the router only extracts what is mentioned.
+- Extract mentioned_date_text if the user mentions a date or relative day such as:
+  today, tomorrow, Sunday, this Sunday, next Monday, 16 March.
+- The user may mention dates in English, Urdu, or Roman Urdu.
+- The user may make small spelling mistakes.
+- Recognize understandable relative expressions such as:
+  today, tomorrow, next monday, this sunday, tonight
+  and Urdu / Roman Urdu equivalents like:
+  aaj, kal, parso, aglay monday, iss sunday, آج, کل, پرسوں, اگلے پیر
+  (Note: aaj = today, kal = tomorrow, parso = day after tomorrow)
+- If the date phrase is understandable, return:
+  - mentioned_date_text = the detected phrase
+  - date_interpretation = a normalized meaning such as "today", "tomorrow", "next_monday", "this_sunday"
+  - date_status = "interpretable"
+- If the message does not contain a date, return:
+  - mentioned_date_text = null
+  - date_interpretation = null
+  - date_status = "not_provided"
+- If it looks like a date phrase but cannot be understood confidently, return:
+  - date_status = "unclear"
+- Do NOT invent a specific calendar date in this router output.
+- Extract start_time and end_time if the user gives an exact time range.
+- ALWAYS extract times even if ambiguous - backend will handle disambiguation.
+- Keep the time format as the user provided it (12-hour or 24-hour):
+  - "6 to 7 pm" → start_time: "6 PM", end_time: "7 PM"
+  - "18:00 to 19:00" → start_time: "18:00", end_time: "19:00"
+  - "6 to 7" → start_time: "6", end_time: "7" (ambiguous - backend will check both AM and PM)
+  - "10 to 12" → start_time: "10", end_time: "12" (ambiguous - backend will check both AM and PM)
+- Extract time_period if the user mentions broad periods:
+  morning, afternoon, evening, night
+- If both exact time and time_period are mentioned, extract both (backend will use time_period to disambiguate)
+- If both a date phrase and a time period are present, extract both.
+- If both an exact time range and a time period appear, extract both.
+- If ONLY a time range is mentioned (like "10 to 12?"), still extract it and set requested_actions to ["availability"].
+
+Examples:
+- "check availability tomorrow"
+  → requested_actions = ["availability"], mentioned_date_text = "tomorrow", date_interpretation = "tomorrow"
+- "availability this sunday evening"
+  → requested_actions = ["availability"], mentioned_date_text = "this sunday", date_interpretation = "this_sunday", time_period = "evening"
+- "is 6 to 7 pm available tomorrow?"
+  → requested_actions = ["availability"], mentioned_date_text = "tomorrow", start_time = "18:00", end_time = "19:00"
+- "kal shaam available hai?"
+  → requested_actions = ["availability"], mentioned_date_text = "kal", date_interpretation = "tomorrow", time_period = "evening"
+- "monady evening badminton available?"
+  → requested_actions = ["availability"], mentioned_date_text = "monady", date_interpretation = "next_monday" only if that is the clear intended meaning, and time_period = "evening"
+
+Output rules:
+- Return JSON only.
+- Do not include markdown.
+- Do not include explanations.
+
+CRITICAL:
+If property_detail_fields is extracted, "property_details" MUST appear in requested_actions.
+If court_detail_fields is extracted, "court_details" MUST appear in requested_actions.
+
+Allowed actions:
+- property_details
+- court_details
+- media
+- availability
+
+Routing rules:
+
+Court questions about LOCATION or CONTACT
+→ property_details
+
+Court questions about SPECIFICATIONS, AMENITIES, DESCRIPTION, or PRICING
+→ court_details
+
+Examples:
+
+"where is this court?"
+→ property_details with ["location"]
+
+"tell me about this court"
+→ court_details with ["all"]
+
+"show pricing"
+→ court_details with ["pricing"]
+
+"what courts are available"
+→ property_details with ["available_courts"]
+
+"check availability tomorrow"
+→ availability
+
+Property detail fields:
+
+- "location"
+- "contact"
+- "amenities"
+- "available_courts"
+- "description"
+- "all"
+
+Court detail fields:
+
+- "basic"
+- "pricing"
+- "all"
+
+Return JSON using this schema:
+
+{{
+  "message_type": "pending_reply" | "new_request" | "mixed" | "unclear",
+  "reply_target": "property_selection" | "court_selection" | "date_selection" | null,
+  "requested_actions": [],
+  "property_detail_fields": [],
+  "court_detail_fields": [],
+  "mentioned_property_name": null,
+  "mentioned_court_name": null,
+  "mentioned_date_text": null,
+  "date_interpretation": null,
+  "date_status": "not_provided" | "interpretable" | "unclear",
+  "start_time": null,
+  "end_time": null,
+  "time_period": null,
+  "unclear": false,
+  "unclear_reason": null
+}}
+
+CRITICAL - unclear_reason Guidelines:
+If message_type is "unclear" or unclear is true, you MUST provide unclear_reason.
+
+This reason will be DIRECTLY DISPLAYED TO THE CUSTOMER, so write it like you're talking to a friend:
+- Keep it casual and friendly
+- Be brief and simple
+- Help them understand what to do next
+- Use everyday language, not technical terms
+- Sound helpful, not robotic
+
+Good examples (casual and friendly):
+- "Which property are you asking about?"
+- "Which date would you like to check?"
+- "I didn't catch the date. Try today, tomorrow, or next Monday."
+- "I'm not sure what you need. Pricing, location, availability, or something else?"
+- "I didn't catch that. Can you say it differently?"
+- "We don't have that sport. Try Football, Badminton, or Tennis?"
+- "Which court do you mean?"
+
+Bad examples (too formal or technical):
+- "Could you please specify which property you're interested in?"
+- "Ambiguous court reference - 'padel court' is not in the list of valid courts"
+- "Your message is a bit unclear. Could you rephrase what you'd like to know?"
+- "I need more details to help you. Are you asking about pricing, location, or facilities?"
+
+CURRENT STATE
+Today: {today_date}
+selected_property: {selected_property}
+selected_court: {selected_court}
+selected_date: {selected_date}
+awaiting_input: {awaiting_input}
+
+VALID PROPERTIES
+{available_properties}
+
+VALID COURTS
+{available_courts}
+
+LATEST USER MESSAGE
+{user_message}
 """
 
 
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
+def get_information_router_prompt(
+    user_message: str,
+    flow_state: Dict[str, Any]
+) -> str:
+    # Get today's date in Asia/Karachi timezone
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    
+    tz = ZoneInfo("Asia/Karachi")
+    now = datetime.now(tz)
+    today_date = now.strftime("%A, %B %d, %Y")  # e.g., "Friday, March 13, 2026"
+    
+    selected_property = flow_state.get("property_name") or "None"
+    selected_court = flow_state.get("court_type") or "None"
+    selected_date = flow_state.get("selected_date") or "None"
+    awaiting_input = flow_state.get("awaiting_input") or "None"
 
-def create_information_prompt(
-    owner_profile_id: int,
-    bot_memory: Dict[str, Any],
-    business_name: Optional[str] = None,
-    fuzzy_context: Optional[Dict[str, Any]] = None
-) -> ChatPromptTemplate:
-    """
-    Create a context-aware prompt for the information agent using ReAct pattern.
-    
-    This function builds a ChatPromptTemplate that includes:
-    - System instructions for the information assistant with ReAct pattern
-    - Business name personalization for the assistant identity
-    - Context that bot only shows owner's properties
-    - Context extracted from bot_memory (previous searches, preferences)
-    - Fuzzy search context for sport name corrections with confirmation prompts
-    - Preference extraction instructions for user_preferences and inferred_information
-    - Message placeholders for chat history and agent scratchpad
-    - Partial variables for owner_profile_id, business_name, context, fuzzy_context, and bot_memory
-    
-    The prompt is designed to work with LangChain's create_react_agent
-    and includes all necessary placeholders for ReAct agent execution.
-    
-    Args:
-        owner_profile_id: The owner profile ID to filter properties by
-        bot_memory: Dictionary containing conversation context and user preferences
-            Expected structure:
-            {
-                "context": {
-                    "last_search_results": ["6", "12", "15"],  # Property IDs
-                    "last_search_params": {"sport_type": "tennis", "city": "NYC"},
-                    "last_viewed_property": 6,
-                    "last_viewed_court": 23,
-                    "last_availability_check": {"court_id": 23, "date": "2026-03-10"}
-                },
-                "user_preferences": {
-                    "preferred_sport": "tennis",
-                    "preferred_time": "morning",
-                    "preferred_property": 6,
-                    "preferred_court": 23
-                },
-                "inferred_information": {
-                    "booking_frequency": "regular",
-                    "interests": ["tennis", "basketball"],
-                    "context_notes": "Prefers morning slots"
-                }
-            }
-        business_name: Optional business name for personalization (e.g., "ABC Sports Center")
-            If not provided, defaults to "our facility"
-        fuzzy_context: Optional dictionary with fuzzy search information
-            {
-                "fuzzy_match": True,
-                "original_term": "football",
-                "corrected_term": "futsal",
-                "confirmation_message": "I understood you're looking for futsal..."
-            }
-            
-    Returns:
-        ChatPromptTemplate with partial variables injected
-        
-    Example:
-        >>> bot_memory = {
-        ...     "context": {"last_search_results": ["6", "12"]},
-        ...     "user_preferences": {"preferred_sport": "tennis", "preferred_time": "morning"}
-        ... }
-        >>> fuzzy_context = {"fuzzy_match": True, "original_term": "football"}
-        >>> prompt = create_information_prompt(
-        ...     owner_profile_id=1,
-        ...     bot_memory=bot_memory,
-        ...     business_name="ABC Sports Center",
-        ...     fuzzy_context=fuzzy_context
-        ... )
-        >>> # Use with LangChain ReAct agent
-        >>> agent = create_react_agent(llm, tools, prompt)
-    """
-    # Extract context from bot_memory
-    context_parts = []
-    
-    # Add last search results
-    if bot_memory.get("context", {}).get("last_search_results"):
-        results = bot_memory["context"]["last_search_results"]
-        context_parts.append(f"Last search returned property IDs: {', '.join(results)}")
-    
-    # Add last search parameters
-    if bot_memory.get("context", {}).get("last_search_params"):
-        params = bot_memory["context"]["last_search_params"]
-        param_strs = []
-        if params.get("sport_type"):
-            param_strs.append(f"sport: {params['sport_type']}")
-        if params.get("city"):
-            param_strs.append(f"city: {params['city']}")
-        if param_strs:
-            context_parts.append(f"Last search was for: {', '.join(param_strs)}")
-    
-    # Add user preferences
-    if bot_memory.get("user_preferences", {}).get("preferred_sport"):
-        sport = bot_memory["user_preferences"]["preferred_sport"]
-        context_parts.append(f"User prefers: {sport}")
-    
-    # Add last viewed property
-    if bot_memory.get("context", {}).get("last_viewed_property"):
-        prop_id = bot_memory["context"]["last_viewed_property"]
-        context_parts.append(f"Last viewed property ID: {prop_id}")
-    
-    # Add last viewed court
-    if bot_memory.get("context", {}).get("last_viewed_court"):
-        court_id = bot_memory["context"]["last_viewed_court"]
-        context_parts.append(f"Last viewed court ID: {court_id}")
-    
-    # Add last availability check
-    if bot_memory.get("context", {}).get("last_availability_check"):
-        avail = bot_memory["context"]["last_availability_check"]
-        context_parts.append(
-            f"Last availability check: court {avail.get('court_id')} on {avail.get('date')}"
-        )
-    
-    # Build context string
-    context = "\n".join(context_parts) if context_parts else "No previous context"
-    
-    # Build fuzzy context string
-    fuzzy_context = fuzzy_context or {}
-    if fuzzy_context.get("fuzzy_match"):
-        fuzzy_str = (
-            f"Sport name correction applied: '{fuzzy_context.get('original_term')}' "
-            f"→ '{fuzzy_context.get('corrected_term')}'"
-        )
+    available_properties = flow_state.get("available_properties", [])
+    available_courts = flow_state.get("available_courts", [])
+
+    if available_properties:
+        formatted_properties = [f'"{p.get("name")}"' for p in available_properties[:10]]
+        available_properties_str = "[" + ", ".join(formatted_properties) + "]"
     else:
-        fuzzy_str = "No fuzzy corrections applied"
-    
-    # Format bot_memory for display in prompt
-    bot_memory_str = f"""
-User Preferences: {bot_memory.get('user_preferences', {})}
-Inferred Information: {bot_memory.get('inferred_information', {})}
-"""
-    
-    # Use business_name or default to "our facility"
-    business_name_str = business_name or "our facility"
-    
-    # Create prompt template with message placeholders for ReAct pattern
-    # Note: agent_scratchpad must be a MessagesPlaceholder for create_react_agent
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_TEMPLATE),
-        MessagesPlaceholder(variable_name="chat_history", optional=True),
-        ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad")
-    ])
-    
-    # Inject owner_profile_id, business_name, context, fuzzy_context, and bot_memory as partial variables
-    return prompt.partial(
-        owner_profile_id=str(owner_profile_id),
-        business_name=business_name_str,
-        context=context,
-        fuzzy_context=fuzzy_str,
-        bot_memory=bot_memory_str
+        available_properties_str = "[]"
+
+    if available_courts:
+        sport_types = set()
+
+        for court in available_courts:
+            court_sport_types = court.get("sport_types", [])
+
+            if not court_sport_types:
+                sport_type = court.get("sport_type")
+                if sport_type:
+                    court_sport_types = [sport_type]
+
+            for st in court_sport_types:
+                if st:
+                    sport_types.add(st)
+
+        formatted_courts = [f'"{st}"' for st in sorted(sport_types)]
+        available_courts_str = "[" + ", ".join(formatted_courts) + "]"
+    else:
+        available_courts_str = "[]"
+
+    return INFORMATION_ROUTER_PROMPT.format(
+        user_message=user_message,
+        today_date=today_date,
+        selected_property=selected_property,
+        selected_court=selected_court,
+        selected_date=selected_date,
+        awaiting_input=awaiting_input,
+        available_properties=available_properties_str,
+        available_courts=available_courts_str,
     )
-
-
-def extract_context_summary(bot_memory: Dict[str, Any]) -> str:
-    """
-    Extract a human-readable summary of context from bot_memory.
-    
-    This is a utility function that can be used for logging or debugging
-    to understand what context is available in bot_memory.
-    
-    Args:
-        bot_memory: Dictionary containing conversation context
-        
-    Returns:
-        Human-readable string summarizing the context
-        
-    Example:
-        >>> bot_memory = {
-        ...     "context": {"last_search_results": ["6", "12"]},
-        ...     "user_preferences": {"preferred_sport": "tennis"}
-        ... }
-        >>> summary = extract_context_summary(bot_memory)
-        >>> print(summary)
-        Context: 2 properties from last search, prefers tennis
-    """
-    parts = []
-    
-    # Search results
-    if bot_memory.get("context", {}).get("last_search_results"):
-        count = len(bot_memory["context"]["last_search_results"])
-        parts.append(f"{count} properties from last search")
-    
-    # Preferences
-    if bot_memory.get("user_preferences", {}).get("preferred_sport"):
-        sport = bot_memory["user_preferences"]["preferred_sport"]
-        parts.append(f"prefers {sport}")
-    
-    # Last viewed
-    if bot_memory.get("context", {}).get("last_viewed_property"):
-        parts.append("viewed a property")
-    
-    if not parts:
-        return "No context available"
-    
-    return "Context: " + ", ".join(parts)

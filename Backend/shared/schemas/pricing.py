@@ -23,9 +23,12 @@ class CourtPricingBase(BaseModel):
     @field_validator('end_time')
     @classmethod
     def validate_time_range(cls, v, info):
-        """Validate end_time is after start_time"""
-        if 'start_time' in info.data and v <= info.data['start_time']:
-            raise ValueError('end_time must be after start_time')
+        if 'start_time' in info.data:
+            start_time = info.data['start_time']
+            # With XX:00-XX:59 format, end_time will always be > start_time within same hour
+            # or end_time will be XX:59 which is always > XX:00
+            if v <= start_time:
+                raise ValueError('end_time must be after start_time')
         return v
 
 

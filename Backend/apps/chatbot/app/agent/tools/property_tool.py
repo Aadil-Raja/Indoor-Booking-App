@@ -76,20 +76,13 @@ async def search_properties_tool(
             current_owner=owner_context
         )
         
-        # Extract data from JSONResponse
-        # The service returns a JSONResponse, we need to get the body content
-        if hasattr(result, 'body'):
-            import json
-            response_data = json.loads(result.body.decode('utf-8'))
-            if response_data.get('success'):
-                properties = response_data.get('data', [])
-                logger.info(f"Found {len(properties)} properties for owner_profile_id={owner_profile_id}")
-                return properties
-            else:
-                logger.warning(f"Property search failed: {response_data.get('message')}")
-                return []
+        # Result is now a dict (auto-extracted from JSONResponse by sync_bridge)
+        if result.get('success'):
+            properties = result.get('data', [])
+            logger.info(f"Found {len(properties)} properties for owner_profile_id={owner_profile_id}")
+            return properties
         else:
-            logger.error(f"Unexpected response type from property service: {type(result)}")
+            logger.warning(f"Property search failed: {result.get('message')}")
             return []
             
     except Exception as e:
@@ -140,22 +133,16 @@ async def get_property_details_tool(
             current_owner=owner_context
         )
         
-        # Extract data from JSONResponse
-        if hasattr(result, 'body'):
-            import json
-            response_data = json.loads(result.body.decode('utf-8'))
-            if response_data.get('success'):
-                property_data = response_data.get('data')
-                logger.info(f"Retrieved property details for property_id={property_id}")
-                return property_data
-            else:
-                logger.warning(
-                    f"Failed to get property details: {response_data.get('message')} "
-                    f"(property_id={property_id})"
-                )
-                return None
+        # Result is now a dict (auto-extracted from JSONResponse by sync_bridge)
+        if result.get('success'):
+            property_data = result.get('data')
+            logger.info(f"Retrieved property details for property_id={property_id}")
+            return property_data
         else:
-            logger.error(f"Unexpected response type from property service: {type(result)}")
+            logger.warning(
+                f"Failed to get property details: {result.get('message')} "
+                f"(property_id={property_id})"
+            )
             return None
             
     except Exception as e:
@@ -197,19 +184,13 @@ async def get_owner_properties_tool(owner_profile_id: int) -> List[Dict[str, Any
             current_owner=owner_context
         )
         
-        # Extract data from JSONResponse
-        if hasattr(result, 'body'):
-            import json
-            response_data = json.loads(result.body.decode('utf-8'))
-            if response_data.get('success'):
-                properties = response_data.get('data', [])
-                logger.info(f"Found {len(properties)} properties for owner_profile_id={owner_profile_id}")
-                return properties
-            else:
-                logger.warning(f"Failed to get owner properties: {response_data.get('message')}")
-                return []
+        # Result is now a dict (auto-extracted from JSONResponse by sync_bridge)
+        if result.get('success'):
+            properties = result.get('data', [])
+            logger.info(f"Found {len(properties)} properties for owner_profile_id={owner_profile_id}")
+            return properties
         else:
-            logger.error(f"Unexpected response type from property service: {type(result)}")
+            logger.warning(f"Failed to get owner properties: {result.get('message')}")
             return []
             
     except Exception as e:
@@ -217,9 +198,57 @@ async def get_owner_properties_tool(owner_profile_id: int) -> List[Dict[str, Any
         return []
 
 
+async def get_property_details_public_tool(property_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Get full property details including courts using public service.
+    
+    This tool uses public_service.get_property_details which doesn't require
+    owner authentication. Returns property details with courts and media.
+    
+    Args:
+        property_id: ID of the property to retrieve
+        
+    Returns:
+        Property details dictionary with courts, or None if not found
+        
+    Example:
+        details = await get_property_details_public_tool(property_id=123)
+        # Returns: {"id": 123, "name": "...", "courts": [...], ...}
+    """
+    try:
+        logger.info(f"Getting public property details: property_id={property_id}")
+        
+        # Import public service
+        from shared.services import public_service
+        
+        # Call sync service using the bridge
+        result = await call_sync_service(
+            public_service.get_property_details,
+            db=None,  # Auto-managed by sync bridge
+            property_id=property_id
+        )
+        
+        # Result is now a dict (auto-extracted from JSONResponse by sync_bridge)
+        if result.get('success'):
+            property_details = result.get('data')
+            logger.info(f"Retrieved public property details for property_id={property_id}")
+            return property_details
+        else:
+            logger.warning(
+                f"Failed to get public property details: {result.get('message')} "
+                f"(property_id={property_id})"
+            )
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error getting public property details: {e}", exc_info=True)
+        return None
+
+
 # Tool registry for easy access
 PROPERTY_TOOLS = {
     "search_properties": search_properties_tool,
     "get_property_details": get_property_details_tool,
     "get_owner_properties": get_owner_properties_tool,
+    "get_property_details_public": get_property_details_public_tool,
 }

@@ -17,6 +17,8 @@ from app.services.chat_service import ChatService
 from app.services.message_service import MessageService
 from app.agent.runtime.graph_runtime import GraphRuntime, GraphExecutionError
 from app.models.chat import Chat
+from app.agent.state.flow_state_manager import filter_flow_state_for_db
+from app.agent.utils.llm_logger import get_llm_logger
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ class AgentService:
         1. Save user message to database
         2. Prepare state (chat history, flow_state, bot_memory)
         3. Run LangGraph (intent detection → handler → response)
-        4. Update chat state with results
+        4. Update chat state with results (filtered flow_state)
         5. Save bot response
         6. Return response
         
@@ -62,6 +64,10 @@ class AgentService:
         """
         chat_id = chat.id
         logger.info(f"Processing message for chat {chat_id}")
+        
+        # Initialize LLM logger for this request
+        llm_logger = get_llm_logger()
+        llm_logger.start_request(str(chat_id), user_message)
         
         try:
             # 1. Save user message
@@ -77,14 +83,24 @@ class AgentService:
             # 3. Run graph (intent detection → handler → response)
             result = await self.graph_runtime.execute(state)
             
-            # 4. Update chat state
+            # 4. Filter flow_state to only include persistable fields
+            full_flow_state = result.get("flow_state", {})
+            filtered_flow_state = filter_flow_state_for_db(full_flow_state)
+            
+            logger.info(
+                f"Filtered flow_state for chat {chat_id}: "
+                f"kept {len(filtered_flow_state)} fields, "
+                f"removed {len(full_flow_state) - len(filtered_flow_state)} temporary fields"
+            )
+            
+            # 5. Update chat state with filtered flow_state
             await self.chat_service.update_chat_state(
                 chat=chat,
-                flow_state=result.get("flow_state"),
+                flow_state=filtered_flow_state,
                 bot_memory=result.get("bot_memory")
             )
             
-            # 5. Save bot response
+            # 6. Save bot response
             bot_message = await self.message_service.create_message(
                 chat_id=chat_id,
                 sender_type="bot",
@@ -94,7 +110,10 @@ class AgentService:
                 token_usage=result.get("token_usage")
             )
             
-            # 6. Return response
+            # 7. End LLM logging
+            llm_logger.end_request()
+            
+            # 8. Return response
             logger.info(f"Message processed successfully for chat {chat_id}")
             
             return {
@@ -106,6 +125,9 @@ class AgentService:
             
         except GraphExecutionError as e:
             logger.error(f"Graph error for chat {chat_id}: {e}", exc_info=True)
+            
+            # End LLM logging on error
+            llm_logger.end_request()
             
             error_message = "I encountered an error. Please try again."
             bot_message = await self.message_service.create_message(
@@ -125,6 +147,9 @@ class AgentService:
             
         except Exception as e:
             logger.error(f"Error processing message for chat {chat_id}: {e}", exc_info=True)
+            
+            # End LLM logging on error
+            llm_logger.end_request()
             
             error_message = "I'm having trouble right now. Please try again."
             
@@ -170,12 +195,17 @@ class AgentService:
             bot_memory = _ensure_bot_memory_structure(bot_memory)
         
         # Initialize flow_state properly with all fields
-        from app.agent.state.flow_state_manager import initialize_flow_state, validate_flow_state
+        from app.agent.state.flow_state_manager import initialize_flow_state, ensure_flow_state_fields
         
         flow_state = chat.flow_state or {}
-        if not flow_state or not validate_flow_state(flow_state):
+        if not flow_state:
+            # New chat - initialize fresh
             flow_state = initialize_flow_state()
-            logger.info(f"Initialized flow_state for chat {chat.id}")
+            logger.info(f"Initialized flow_state for new chat {chat.id}")
+        else:
+            # Existing chat - ensure all fields exist without losing data
+            flow_state = ensure_flow_state_fields(flow_state)
+            logger.debug(f"Ensured flow_state fields for chat {chat.id}")
         
         return {
             # IDs (always present from chat object)

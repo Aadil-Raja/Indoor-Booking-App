@@ -4,7 +4,7 @@ Main conversation graph - defines the flow of nodes.
 Flow:
 START → load_chat → intent_detection → [handler] → END
 
-Handlers: greeting, information, booking
+Handlers: greeting, information, booking, unavailable_service
 """
 
 from typing import Dict, Any
@@ -16,8 +16,8 @@ from app.agent.state.conversation_state import ConversationState
 from app.agent.nodes.basic_nodes import load_chat
 from app.agent.nodes.intent_detection import intent_detection
 from app.agent.nodes.greeting import greeting_handler
-# from app.agent.nodes.indoor_search import indoor_search_handler  # Replaced by information_handler
-from app.agent.nodes.information import information_handler  # New LangChain agent-based node
+from app.agent.nodes.unavailable_service import unavailable_service_handler
+from app.agent.graphs.information_subgraph import create_information_subgraph
 from app.agent.graphs.booking_subgraph import create_booking_subgraph
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def create_main_graph(
     Flow:
     load_chat → intent_detection
       ↓
-    LLM decides: "greeting" or "information" or "booking"
+    LLM decides: "greeting" or "information" or "booking" or "unavailable_service"
       ↓
     Route to that handler → END
     """
@@ -64,9 +64,14 @@ def create_main_graph(
         return await greeting_handler(s, llm_provider)
     graph.add_node("greeting", greeting_wrapper)
     
-    async def information_wrapper(s):
-        return await information_handler(s, llm_provider)
-    graph.add_node("information", information_wrapper)
+    # Add unavailable service handler
+    async def unavailable_service_wrapper(s):
+        return await unavailable_service_handler(s, llm_provider)
+    graph.add_node("unavailable_service", unavailable_service_wrapper)
+    
+    # Add information subgraph
+    information_subgraph = create_information_subgraph(llm_provider)
+    graph.add_node("information", information_subgraph)
     
     # Add booking subgraph
     booking_subgraph = create_booking_subgraph(tools)
@@ -80,13 +85,20 @@ def create_main_graph(
     graph.add_conditional_edges(
         "intent_detection",
         route_by_next_node,
-        {"greeting": "greeting", "information": "information", "booking": "booking"}
+        {
+            "greeting": "greeting",
+            "information": "information",
+            "booking": "booking",
+            "unavailable_service": "unavailable_service",
+            "END": END  # For validation failures and irrelevant messages
+        }
     )
     
     # All handlers go to END
     graph.add_edge("greeting", END)
     graph.add_edge("information", END)
     graph.add_edge("booking", END)
+    graph.add_edge("unavailable_service", END)
     
     logger.info("Main graph created")
     return graph.compile()
@@ -96,14 +108,20 @@ def route_by_next_node(state: ConversationState) -> str:
     """
     Route to handler based on LLM's decision.
     
-    LLM sets state["next_node"] to "greeting", "information", or "booking"
+    LLM sets state["next_node"] to "greeting", "information", "booking", "unavailable_service", or None
     This function returns that value to route to the correct handler.
     
+    If None (validation failed or irrelevant), returns END to stop processing.
     If unknown value, defaults to "information".
     """
     next_node = state.get("next_node", "information")
     
-    valid_nodes = ["greeting", "information", "booking"]
+    # Handle None (validation failed or irrelevant message)
+    if next_node is None:
+        logger.info("next_node is None (validation/relevancy failed), ending conversation")
+        return "END"
+    
+    valid_nodes = ["greeting", "information", "booking", "unavailable_service"]
     
     if next_node in valid_nodes:
         return next_node

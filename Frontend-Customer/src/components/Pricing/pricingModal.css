@@ -1,0 +1,428 @@
+.pricing-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.pricing-modal-content {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.pricing-modal-large {
+  max-width: 800px;
+}
+
+.pricing-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px;
+  border-bottom: 1px solid #e0e0e0;
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 10;
+  border-radius: 12px 12px 0 0;
+}
+
+.pricing-modal-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #1a1a1a;
+  font-weight: 700;
+}
+
+.pricing-modal-close {
+  background: none;
+  border: none;
+  font-size: 2rem;
+  color: #666;
+  cursor: pointer;
+  padding: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.pricing-modal-close:hover {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.pricing-modal-form {
+  padding: 24px;
+}
+
+/* Form Sections */
+.pricing-form-section {
+  margin-bottom: 32px;
+}
+
+.pricing-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.pricing-section-header label {
+  font-weight: 600;
+  color: #1a1a1a;
+  font-size: 1rem;
+}
+
+.pricing-helper-text {
+  font-size: 0.875rem;
+  color: #666;
+  font-weight: 400;
+}
+
+/* Time Slots Grid */
+.pricing-slots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  user-select: none;
+}
+
+.pricing-slot {
+  padding: 12px;
+  border: 2px solid #e0e0e0;
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+  position: relative;
+}
+
+.pricing-slot:hover {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.15);
+}
+
+.pricing-slot.selected {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: white;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+}
+
+.pricing-slot.selected:hover {
+  background: #15803d;
+  border-color: #15803d;
+}
+
+.pricing-slot-time {
+  font-size: 0.875rem;
+  font-weight: 500;
+  display: block;
+}
+
+/* Days Grid */
+.pricing-quick-select {
+  display: flex;
+  gap: 6px;
+}
+
+.pricing-quick-btn {
+  padding: 6px 12px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 0.813rem;
+  font-weight: 500;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pricing-quick-btn:hover {
+  background: #f8fafc;
+  border-color: #16a34a;
+  color: #16a34a;
+}
+
+.pricing-days-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 10px;
+}
+
+.pricing-day-card {
+  padding: 16px 12px;
+  border: 2px solid #e0e0e0;
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.pricing-day-card:hover {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.15);
+}
+
+.pricing-day-card.selected {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: white;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+}
+
+.pricing-day-card.selected:hover {
+  background: #15803d;
+  border-color: #15803d;
+}
+
+.pricing-day-short {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.pricing-day-full {
+  font-size: 0.75rem;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+/* Form Groups */
+.pricing-form-group {
+  margin-bottom: 20px;
+}
+
+.pricing-form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #1a1a1a;
+  font-size: 0.938rem;
+}
+
+.pricing-form-group input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.pricing-form-group input:focus {
+  outline: none;
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
+}
+
+.pricing-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.pricing-error {
+  display: block;
+  color: #dc2626;
+  font-size: 0.875rem;
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+/* Summary Box */
+.pricing-summary {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  border: 2px solid #16a34a;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 24px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pricing-summary-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.pricing-summary-text {
+  font-size: 0.938rem;
+  color: #166534;
+  line-height: 1.5;
+}
+
+.pricing-summary-text strong {
+  font-weight: 700;
+  color: #14532d;
+}
+
+/* Modal Actions */
+.pricing-modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.pricing-btn-primary,
+.pricing-btn-secondary {
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.pricing-btn-primary {
+  background: #16a34a;
+  color: white;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+}
+
+.pricing-btn-primary:hover {
+  background: #15803d;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.4);
+}
+
+.pricing-btn-primary:active {
+  transform: translateY(0);
+}
+
+.pricing-btn-secondary {
+  background: white;
+  color: #666;
+  border: 2px solid #e0e0e0;
+}
+
+.pricing-btn-secondary:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #333;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .pricing-modal-large {
+    max-width: 95%;
+  }
+
+  .pricing-slots-grid {
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 8px;
+  }
+
+  .pricing-slot {
+    padding: 10px 8px;
+  }
+
+  .pricing-slot-time {
+    font-size: 0.75rem;
+  }
+
+  .pricing-days-grid {
+    grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+    gap: 8px;
+  }
+
+  .pricing-day-card {
+    padding: 12px 8px;
+  }
+
+  .pricing-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pricing-section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .pricing-quick-select {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .pricing-quick-btn {
+    flex: 1;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .pricing-modal-content {
+    max-height: 95vh;
+  }
+
+  .pricing-modal-header {
+    padding: 16px;
+  }
+
+  .pricing-modal-form {
+    padding: 16px;
+  }
+
+  .pricing-slots-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .pricing-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .pricing-btn-primary,
+  .pricing-btn-secondary {
+    width: 100%;
+  }
+}
+
+/* Loading Spinner */
+.pricing-btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: pricing-spin 0.6s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+@keyframes pricing-spin {
+  to { transform: rotate(360deg); }
+}
