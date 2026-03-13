@@ -207,6 +207,127 @@ async def execute_actions(
                         "status": "error",
                         "error": "Property or court must be selected for media"
                     }
+            
+            elif action == "availability":
+                # Call get_available_slots tool with smart filtering
+                get_available_slots = TOOL_REGISTRY.get("get_available_slots")
+                if get_available_slots and court_id and flow_state.get("selected_date"):
+                    # Get date and time constraints from flow_state
+                    selected_date_str = flow_state.get("selected_date")  # "2026-03-14"
+                    start_time = flow_state.get("selected_start_time")  # "18:00"
+                    end_time = flow_state.get("selected_end_time")  # "19:00"
+                    time_period = flow_state.get("time_period")  # "evening"
+                    
+                    # Convert date string to date object
+                    from datetime import datetime
+                    selected_date = datetime.fromisoformat(selected_date_str).date()
+                    
+                    # Call tool with filtering parameters
+                    availability_result = await get_available_slots(
+                        court_id=court_id,
+                        date_val=selected_date,
+                        start_time=start_time,
+                        end_time=end_time,
+                        time_period=time_period
+                    )
+                    
+                    if availability_result.get("success"):
+                        results["availability"] = {
+                            "status": "success",
+                            "data": availability_result,
+                            "date": selected_date_str,
+                            "filters": {
+                                "start_time": start_time,
+                                "end_time": end_time,
+                                "time_period": time_period
+                            }
+                        }
+                        
+                        # Update flow_state with the actual matched slot times
+                        # ONLY if there's exactly ONE slot (single_slot_selected)
+                        available_slots = availability_result.get("available_slots", [])
+                        
+                        if len(available_slots) == 1:
+                            # Only ONE slot - save its details
+                            first_slot = available_slots[0]
+                            actual_start = first_slot.get("start_time", "")
+                            actual_end = first_slot.get("end_time", "")
+                            
+                            # Normalize to HH:MM format
+                            if actual_start and len(actual_start) > 5:
+                                actual_start = actual_start[:5]
+                            if actual_end and len(actual_end) > 5:
+                                actual_end = actual_end[:5]
+                            
+                            # Handle :59 case - normalize for storage
+                            if actual_end and actual_end.endswith(':59'):
+                                # Convert 18:59 to 19:00 for cleaner storage
+                                try:
+                                    hour = int(actual_end.split(':')[0])
+                                    next_hour = (hour + 1) % 24
+                                    actual_end = f"{next_hour:02d}:00"
+                                except:
+                                    pass
+                            
+                            if actual_start:
+                                flow_state["selected_start_time"] = actual_start
+                            if actual_end:
+                                flow_state["selected_end_time"] = actual_end
+                            
+                            # Update time period based on the matched slot
+                            slot_period = None
+                            if actual_start:
+                                hour = int(actual_start.split(':')[0])
+                                if 6 <= hour < 12:
+                                    slot_period = "morning"
+                                elif 12 <= hour < 18:
+                                    slot_period = "afternoon"
+                                elif 18 <= hour < 21:
+                                    slot_period = "evening"
+                                else:
+                                    slot_period = "night"
+                            
+                            if slot_period:
+                                flow_state["time_period"] = slot_period
+                            
+                            flow_state["single_slot_selected"] = True
+                            
+                            logger.info(
+                                f"Single slot found and saved: times={actual_start}-{actual_end}, "
+                                f"period={slot_period} for chat {chat_id}"
+                            )
+                        else:
+                            # Multiple slots or no slots - don't update times
+                            flow_state["single_slot_selected"] = False
+                            logger.info(
+                                f"Multiple slots ({len(available_slots)}) found - not updating times for chat {chat_id}"
+                            )
+                        
+                        logger.info(
+                            f"Availability check successful for chat {chat_id}: "
+                            f"court_id={court_id}, date={selected_date_str}, "
+                            f"found {len(available_slots)} slots"
+                        )
+                    else:
+                        results["availability"] = {
+                            "status": "error",
+                            "error": availability_result.get("error", "Failed to get availability"),
+                            "date": selected_date_str
+                        }
+                else:
+                    # Missing requirements
+                    missing = []
+                    if not get_available_slots:
+                        missing.append("availability tool")
+                    if not court_id:
+                        missing.append("court_id")
+                    if not flow_state.get("selected_date"):
+                        missing.append("selected_date")
+                    
+                    results["availability"] = {
+                        "status": "error",
+                        "error": f"Missing requirements: {', '.join(missing)}"
+                    }
                 
         except Exception as e:
             logger.error(f"Error executing action {action} for chat {chat_id}: {e}")

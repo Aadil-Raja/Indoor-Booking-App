@@ -7,6 +7,10 @@ persistent and temporary conversation state.
 Persistent fields (saved to database):
 - property_id, property_name: Selected property
 - court_id, court_type: Selected court
+- selected_date: Selected date for availability (YYYY-MM-DD format)
+- selected_start_time: Selected start time (HH:MM format)
+- selected_end_time: Selected end time (HH:MM format)
+- time_period: Selected time period (morning/afternoon/evening/night)
 - available_properties: Cached property list
 - available_courts: Cached court list
 - owner_properties_initialized: Initialization flag
@@ -37,6 +41,11 @@ PERSISTABLE_FIELDS = {
     "property_name",
     "court_ids",
     "court_type",
+    # Availability-specific persistent fields
+    "selected_date",  # Backend-normalized date: "2026-03-14"
+    "selected_start_time",  # e.g., "18:00"
+    "selected_end_time",  # e.g., "19:00"
+    "time_period",  # e.g., "morning", "afternoon", "evening", "night"
     "available_properties",
     "owner_properties_initialized",
     "last_node",
@@ -92,10 +101,15 @@ def initialize_flow_state() -> Dict[str, Any]:
         "property_name": None,
         "court_ids": [],  # Array of court IDs matching the selected sport type
         "court_type": None,  # Preferred sport type
+        # Availability-specific normalized fields
+        "selected_date": None,  # Backend-normalized date: "2026-03-14"
+        "selected_start_time": None,  # e.g., "18:00"
+        "selected_end_time": None,  # e.g., "19:00"
+        "time_period": None,  # e.g., "morning", "afternoon", "evening", "night"
         "available_properties": [],
         "owner_properties_initialized": False,
         "last_node": None,
-        "awaiting_input": None,  # None | "property_selection" | "court_selection"
+        "awaiting_input": None,  # None | "property_selection" | "court_selection" | "date_selection"
         "pending_actions": [],  # actions waiting because some input was missing
         "pending_action_params": {},  # parameters for pending actions (persisted)
         "available_courts": []
@@ -178,6 +192,11 @@ def validate_flow_state(flow_state: Dict[str, Any]) -> bool:
         "property_name",
         "court_ids",
         "court_type",
+        # Availability fields
+        "selected_date",
+        "selected_start_time",
+        "selected_end_time",
+        "time_period",
         "available_properties",
         "owner_properties_initialized",
         "last_node",

@@ -250,6 +250,100 @@ async def format_response(
                     else:
                         response_parts.append("No media available.")
                 
+                elif action == "availability" and data:
+                    # New simplified availability response
+                    available_slots = data.get("available_slots", [])
+                    match_type = data.get("match_type", "")
+                    user_guidance = data.get("user_guidance", "")
+                    filter_info = data.get("filter_info", {})
+                    slots_by_period = data.get("slots_by_period", {})
+                    court_name = data.get("court_name", "Court")
+                    date_str = result.get("date", "")
+                    
+                    # Format date for display
+                    try:
+                        from datetime import datetime
+                        date_obj = datetime.fromisoformat(date_str)
+                        formatted_date = date_obj.strftime("%A, %B %d, %Y")
+                    except:
+                        formatted_date = date_str
+                    
+                    response_parts.append(f"📅 Availability for {court_name} on {formatted_date}:")
+                    response_parts.append("")
+                    
+                    # Show filter info if applicable
+                    if filter_info.get("type") == "time_range":
+                        start = filter_info.get("start_time")
+                        end = filter_info.get("end_time")
+                        period = filter_info.get("time_period")
+                        filter_desc = f"Searching: {start} to {end}"
+                        if period:
+                            filter_desc += f" ({period})"
+                        response_parts.append(filter_desc)
+                        response_parts.append("")
+                    
+                    # Display results based on match type
+                    if match_type == "exact":
+                        response_parts.append("✅ Your requested time is available!")
+                        response_parts.append("")
+                        for slot in available_slots[:10]:
+                            formatted_slot = _format_slot(slot)
+                            response_parts.append(f"  • {formatted_slot}")
+                    
+                    elif match_type in ["within_range", "overlapping", "from_start", "until_end", "period"]:
+                        response_parts.append("Here are available options:")
+                        response_parts.append("")
+                        for slot in available_slots[:10]:
+                            formatted_slot = _format_slot(slot)
+                            response_parts.append(f"  • {formatted_slot}")
+                        
+                        if len(available_slots) > 10:
+                            response_parts.append(f"  ... and {len(available_slots) - 10} more slots")
+                    
+                    elif match_type == "closest":
+                        response_parts.append("❌ Requested time not available. Here are the closest alternatives:")
+                        response_parts.append("")
+                        for slot in available_slots[:5]:
+                            formatted_slot = _format_slot(slot)
+                            response_parts.append(f"  • {formatted_slot}")
+                    
+                    elif match_type == "all" and slots_by_period:
+                        # Show grouped by period
+                        period_emojis = {
+                            "morning": "🌅",
+                            "afternoon": "☀️",
+                            "evening": "🌆",
+                            "night": "🌙"
+                        }
+                        
+                        for period in ["morning", "afternoon", "evening", "night"]:
+                            period_slots = slots_by_period.get(period, [])
+                            if period_slots:
+                                emoji = period_emojis.get(period, "")
+                                response_parts.append(f"{emoji} {period.capitalize()} slots:")
+                                for slot in period_slots[:5]:
+                                    formatted_slot = _format_slot(slot)
+                                    response_parts.append(f"  • {formatted_slot}")
+                                if len(period_slots) > 5:
+                                    response_parts.append(f"  ... and {len(period_slots) - 5} more")
+                                response_parts.append("")
+                    
+                    else:
+                        # Fallback
+                        if available_slots:
+                            response_parts.append("Available slots:")
+                            response_parts.append("")
+                            for slot in available_slots[:10]:
+                                formatted_slot = _format_slot(slot)
+                                response_parts.append(f"  • {formatted_slot}")
+                        else:
+                            response_parts.append("❌ No available slots for this date.")
+                    
+                    # Add user guidance
+                    if user_guidance:
+                        response_parts.append("")
+                        response_parts.append(f"💡 {user_guidance}")
+                
                 else:
                     # Fallback for unknown action
                     response_parts.append(str(data))
@@ -296,3 +390,59 @@ async def format_response(
     logger.info(f"[FORMAT RESPONSE] Chat {chat_id}: Response formatted ({len(response)} chars)")
     
     return state
+
+
+
+def _format_slot(slot: Dict[str, Any]) -> str:
+    """
+    Format a single availability slot for display.
+    
+    Handles :59 case - converts "18:00-18:59" to "6:00 PM - 7:00 PM"
+    
+    Args:
+        slot: Slot dictionary with start_time, end_time, price_per_hour, label
+        
+    Returns:
+        Formatted string like "6:00 PM - 7:00 PM (PKR 500/hour - Evening Rate)"
+    """
+    start_time = slot.get("start_time", "")
+    end_time = slot.get("end_time", "")
+    price = slot.get("price_per_hour", 0)
+    label = slot.get("label", "")
+    
+    # Convert 24-hour to 12-hour format
+    try:
+        from datetime import datetime
+        
+        # Parse times (handle both HH:MM and HH:MM:SS formats)
+        if len(start_time) == 8:  # HH:MM:SS
+            start_obj = datetime.strptime(start_time, "%H:%M:%S")
+            end_obj = datetime.strptime(end_time, "%H:%M:%S")
+        else:  # HH:MM
+            start_obj = datetime.strptime(start_time, "%H:%M")
+            end_obj = datetime.strptime(end_time, "%H:%M")
+        
+        # Handle :59 case - if end time is XX:59, show as next hour
+        if end_obj.minute == 59:
+            end_obj = end_obj.replace(minute=0)
+            # Add 1 hour
+            from datetime import timedelta
+            end_obj = datetime.combine(datetime.today(), end_obj.time()) + timedelta(hours=1)
+        
+        # Format to 12-hour with AM/PM
+        start_12h = start_obj.strftime("%I:%M %p").lstrip("0")
+        end_12h = end_obj.strftime("%I:%M %p").lstrip("0")
+        
+        time_str = f"{start_12h} - {end_12h}"
+    except:
+        # Fallback to original format if parsing fails
+        time_str = f"{start_time} - {end_time}"
+    
+    # Build price string
+    price_str = f"PKR {price:.0f}/hour"
+    
+    # Add label if available
+    if label:
+        return f"{time_str} ({price_str} - {label})"
+    else:
+        return f"{time_str} ({price_str})"

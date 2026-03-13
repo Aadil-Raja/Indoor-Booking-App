@@ -21,8 +21,7 @@ Analyze the user's message and decide which handler should process it.
 2. **information** - Questions about facilities, courts, availability, pricing
    Examples: "show me tennis courts", "what's available", "how much does it cost", "what amenities do you have", "do you have parking"
 
-3. **booking** - Booking or reserving facilities
-   Examples: "I want to book a court", "reserve a tennis court", "make a reservation"
+
 
 4. **irrelevant** - Off-topic messages NOT related to indoor sports facility booking
    Examples: "what's the weather", "tell me a joke", "help with my homework", "what's the capital of France"

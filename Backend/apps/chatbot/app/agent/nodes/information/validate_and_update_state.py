@@ -24,10 +24,11 @@ logger = logging.getLogger(__name__)
 
 # Action requirements map (imported from check_requirements logic)
 ACTION_REQUIREMENTS = {
-    "property_details": {"property": True, "court": False},
-    "court_details": {"property": True, "court": True},
-    "pricing": {"property": True, "court": True},
-    "media": {"property": True, "court": False},
+    "property_details": {"property": True, "court": False, "date": False},
+    "court_details": {"property": True, "court": True, "date": False},
+    "pricing": {"property": True, "court": True, "date": False},
+    "media": {"property": True, "court": False, "date": False},
+    "availability": {"property": True, "court": True, "date": True},  # NEW: Availability requires all three
 }
 
 
@@ -60,19 +61,39 @@ async def validate_and_update_state(
 
     flow_state["validation_error"] = None
 
+    # PRIORITY: Check if unclear_reason is set (even if unclear=false)
+    # If unclear_reason exists, treat as unclear and show available options
+    unclear_reason = router_result.get("unclear_reason")
+    if unclear_reason:
+        logger.warning(
+            f"[UNCLEAR REASON DETECTED] Chat {chat_id}: "
+            f"unclear_reason='{unclear_reason}' - treating as unclear"
+        )
+        unclear = True
+        message_type = "unclear"
+        router_result["unclear"] = True
+        router_result["message_type"] = "unclear"
+        flow_state["router_result"] = router_result
+
     # Handle unclear message early
     if unclear or message_type == "unclear":
+        # Use unclear_reason if provided, otherwise use default message
+        if unclear_reason:
+            flow_state["bot_response"] = unclear_reason
+        else:
+            flow_state["bot_response"] = "I couldn't understand that. Please try again."
+        
         flow_state["validation_error"] = "unclear_message"
-        flow_state["bot_response"] = "I couldn't understand that. Please try again."
         flow_state["last_node"] = "information-validate"
         state["flow_state"] = flow_state
         return state
 
     property_changed = False
     
-    # Track if property/court was set in THIS turn (for pending action resume logic)
+    # Track if property/court/date was set in THIS turn (for pending action resume logic)
     property_set_this_turn = False
     court_set_this_turn = False
+    date_set_this_turn = False
 
     # ---------------------------------
     # REPLY TARGET VALIDATION (Hybrid Safety Check)
@@ -324,6 +345,194 @@ async def validate_and_update_state(
             return state
 
     # ---------------------------------
+    # DATE REPLY RESOLUTION
+    # ---------------------------------
+    if reply_target == "date_selection":
+        
+        # Additional validation: If no date mentioned, it's not really a reply
+        if not router_result.get("mentioned_date_text"):
+            logger.warning(
+                f"[DATE REPLY VALIDATION] Chat {chat_id}: "
+                f"reply_target='date_selection' but no date mentioned. "
+                f"Treating as new_request instead."
+            )
+            reply_target = None
+            message_type = "new_request"
+            router_result["message_type"] = message_type
+            router_result["reply_target"] = reply_target
+            flow_state["router_result"] = router_result
+        else:
+            # User mentioned a date, validate and normalize it
+            date_interpretation = router_result.get("date_interpretation")
+            mentioned_date_text = router_result.get("mentioned_date_text")
+            date_status = router_result.get("date_status", "not_provided")
+            
+            if date_status == "interpretable" and date_interpretation:
+                # Validate that date_interpretation is something we can normalize
+                valid_interpretations = [
+                    "today", "tonight", "tomorrow", "parso", "day_after_tomorrow",
+                    "next_monday", "next_tuesday", "next_wednesday", "next_thursday",
+                    "next_friday", "next_saturday", "next_sunday",
+                    "this_monday", "this_tuesday", "this_wednesday", "this_thursday",
+                    "this_friday", "this_saturday", "this_sunday"
+                ]
+                
+                # Check if it's a valid interpretation or ISO date format
+                is_valid = (
+                    date_interpretation in valid_interpretations or
+                    date_interpretation.startswith("next_") or
+                    date_interpretation.startswith("this_") or
+                    _is_iso_date(date_interpretation)
+                )
+                
+                if not is_valid:
+                    # Invalid interpretation like "next_week" - ask for specific date
+                    logger.warning(
+                        f"Invalid date_interpretation '{date_interpretation}' for chat {chat_id} - "
+                        f"asking for specific date"
+                    )
+                    flow_state["validation_error"] = "invalid_date"
+                    flow_state["bot_response"] = (
+                        "Please specify a specific date:\n\n"
+                        "📅 Relative dates: today, tomorrow, parso, next Monday\n"
+                        "📅 Exact date: 2026-03-15 or March 15\n\n"
+                        "You can also specify time:\n"
+                        "🕐 Time period: morning, afternoon, evening, night\n"
+                        "🕐 Exact slot: 6 to 7 PM, 18:00 to 19:00"
+                    )
+                    flow_state["awaiting_input"] = "date_selection"
+                    state["flow_state"] = flow_state
+                    return state
+                
+                # Normalize date to YYYY-MM-DD format
+                normalized_date = _normalize_date(
+                    date_interpretation,
+                    mentioned_date_text,
+                    chat_id
+                )
+                
+                if normalized_date:
+                    flow_state["selected_date"] = normalized_date
+                    date_set_this_turn = True  # Mark that date was set THIS turn
+                    flow_state["awaiting_input"] = None
+                    
+                    logger.info(
+                        f"Date reply resolved for chat {chat_id}: "
+                        f"'{mentioned_date_text}' → {normalized_date}"
+                    )
+                else:
+                    # Failed to normalize - invalid date
+                    flow_state["validation_error"] = "invalid_date"
+                    flow_state["awaiting_input"] = "date_selection"
+                    state["flow_state"] = flow_state
+                    return state
+            else:
+                # Date status is unclear or not interpretable
+                flow_state["validation_error"] = "invalid_date"
+                flow_state["awaiting_input"] = "date_selection"
+                state["flow_state"] = flow_state
+                return state
+
+    # ---------------------------------
+    # DATE MENTION VALIDATION
+    # ---------------------------------
+    mentioned_date_text = router_result.get("mentioned_date_text")
+    date_interpretation = router_result.get("date_interpretation")
+    date_status = router_result.get("date_status", "not_provided")
+    
+    if mentioned_date_text and not reply_target:
+        # User mentioned a date in their message (not replying to date question)
+        
+        if date_status == "interpretable" and date_interpretation:
+            # Validate that date_interpretation is something we can normalize
+            valid_interpretations = [
+                "today", "tonight", "tomorrow", "parso", "day_after_tomorrow",
+                "next_monday", "next_tuesday", "next_wednesday", "next_thursday",
+                "next_friday", "next_saturday", "next_sunday",
+                "this_monday", "this_tuesday", "this_wednesday", "this_thursday",
+                "this_friday", "this_saturday", "this_sunday"
+            ]
+            
+            # Check if it's a valid interpretation or ISO date format
+            is_valid = (
+                date_interpretation in valid_interpretations or
+                date_interpretation.startswith("next_") or
+                date_interpretation.startswith("this_") or
+                _is_iso_date(date_interpretation)
+            )
+            
+            if not is_valid:
+                # Invalid interpretation like "next_week" - ask for specific date
+                logger.warning(
+                    f"Invalid date_interpretation '{date_interpretation}' for chat {chat_id} - "
+                    f"asking for specific date"
+                )
+                flow_state["validation_error"] = "invalid_date"
+                flow_state["bot_response"] = (
+                    "Please specify a specific date like today, tomorrow, "
+                    "next Monday, or a date like March 15."
+                )
+                flow_state["awaiting_input"] = "date_selection"
+                state["flow_state"] = flow_state
+                return state
+            
+            # Normalize date to YYYY-MM-DD format
+            normalized_date = _normalize_date(
+                date_interpretation,
+                mentioned_date_text,
+                chat_id
+            )
+            
+            if normalized_date:
+                flow_state["selected_date"] = normalized_date
+                date_set_this_turn = True  # Mark that date was set THIS turn
+                
+                # Clear awaiting_input if we were waiting for date
+                if flow_state.get("awaiting_input") == "date_selection":
+                    flow_state["awaiting_input"] = None
+                    logger.info(
+                        f"Cleared awaiting_input (date_selection) for chat {chat_id} - "
+                        f"user mentioned valid date"
+                    )
+                
+                logger.info(
+                    f"Date mention validated for chat {chat_id}: "
+                    f"'{mentioned_date_text}' → {normalized_date}"
+                )
+            else:
+                # Failed to normalize - invalid date
+                flow_state["validation_error"] = "invalid_date"
+                flow_state["awaiting_input"] = "date_selection"
+                state["flow_state"] = flow_state
+                return state
+        else:
+            # Date status is unclear
+            flow_state["validation_error"] = "invalid_date"
+            flow_state["awaiting_input"] = "date_selection"
+            state["flow_state"] = flow_state
+            return state
+    
+    # ---------------------------------
+    # EXTRACT AND STORE TIME INFORMATION
+    # ---------------------------------
+    # Extract start_time, end_time, and time_period from router result
+    start_time = router_result.get("start_time")
+    end_time = router_result.get("end_time")
+    time_period = router_result.get("time_period")
+    
+    if start_time:
+        flow_state["selected_start_time"] = start_time
+        logger.debug(f"Stored start_time: {start_time} for chat {chat_id}")
+    
+    if end_time:
+        flow_state["selected_end_time"] = end_time
+        logger.debug(f"Stored end_time: {end_time} for chat {chat_id}")
+    
+    if time_period:
+        flow_state["time_period"] = time_period
+        logger.debug(f"Stored time_period: {time_period} for chat {chat_id}")
+
+    # ---------------------------------
     # VALIDATE AND SAVE PROPERTY_DETAIL_FIELDS
     # ---------------------------------
     VALID_PROPERTY_DETAIL_FIELDS = {"location", "contact", "amenities", "available_courts", "description", "all"}
@@ -449,6 +658,14 @@ async def validate_and_update_state(
             "image": ("media", None),
             "photo": ("media", None),
             "picture": ("media", None),
+            # Availability-related keywords
+            "availability": ("availability", None),
+            "available": ("availability", None),
+            "slot": ("availability", None),
+            "slots": ("availability", None),
+            "booking": ("availability", None),
+            "book": ("availability", None),
+            "reserve": ("availability", None),
         }
         
         # Try to match keywords
@@ -517,11 +734,12 @@ async def validate_and_update_state(
     
     # Check if provided info (in THIS turn) satisfies requirements for pending actions
     info_satisfies_pending = False
-    if pending_actions and (property_set_this_turn or court_set_this_turn):
+    if pending_actions and (property_set_this_turn or court_set_this_turn or date_set_this_turn):
         for action in pending_actions:
             action_reqs = ACTION_REQUIREMENTS.get(action, {})
             needs_property = action_reqs.get("property", False)
             needs_court = action_reqs.get("court", False)
+            needs_date = action_reqs.get("date", False)
             
             # If action needs property and user just provided property THIS turn
             if needs_property and property_set_this_turn:
@@ -530,6 +748,11 @@ async def validate_and_update_state(
             
             # If action needs court and user just provided court THIS turn
             if needs_court and court_set_this_turn:
+                info_satisfies_pending = True
+                break
+            
+            # If action needs date and user just provided date THIS turn
+            if needs_date and date_set_this_turn:
                 info_satisfies_pending = True
                 break
     
@@ -553,7 +776,8 @@ async def validate_and_update_state(
                 f"Resuming pending actions for chat {chat_id}: "
                 f"new={requested_actions}, pending={pending_actions}, combined={combined}, "
                 f"reason=info_satisfies_pending, "
-                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}"
+                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}, "
+                f"date_set_this_turn={date_set_this_turn}"
             )
         elif user_asking_same_action:
             # User asking for exact same action - just use requested actions (which are same as pending)
@@ -568,7 +792,8 @@ async def validate_and_update_state(
             logger.info(
                 f"Restored pending actions for chat {chat_id}: {pending_actions}, "
                 f"reason=info_satisfies_pending, "
-                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}"
+                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}, "
+                f"date_set_this_turn={date_set_this_turn}"
             )
         
         # Restore pending action params
@@ -587,6 +812,19 @@ async def validate_and_update_state(
                 if "court_detail_fields" in court_params:
                     flow_state["court_detail_fields"] = court_params["court_detail_fields"]
                     logger.debug(f"Restored court_detail_fields from pending params: {flow_state['court_detail_fields']}")
+            
+            # Restore availability params if availability action is resuming
+            if "availability" in flow_state["requested_actions"] and "availability" in pending_action_params:
+                availability_params = pending_action_params.get("availability", {})
+                if "selected_start_time" in availability_params:
+                    flow_state["selected_start_time"] = availability_params["selected_start_time"]
+                    logger.debug(f"Restored selected_start_time from pending params: {flow_state['selected_start_time']}")
+                if "selected_end_time" in availability_params:
+                    flow_state["selected_end_time"] = availability_params["selected_end_time"]
+                    logger.debug(f"Restored selected_end_time from pending params: {flow_state['selected_end_time']}")
+                if "time_period" in availability_params:
+                    flow_state["time_period"] = availability_params["time_period"]
+                    logger.debug(f"Restored time_period from pending params: {flow_state['time_period']}")
         
         # Don't clear pending_actions yet - keep stored until fully executed
         
@@ -598,7 +836,8 @@ async def validate_and_update_state(
             logger.info(
                 f"User asked new action for chat {chat_id}: "
                 f"new={requested_actions}, keeping pending={pending_actions} stored (not resuming), "
-                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}"
+                f"property_set_this_turn={property_set_this_turn}, court_set_this_turn={court_set_this_turn}, "
+                f"date_set_this_turn={date_set_this_turn}"
             )
         else:
             # No new actions and not providing relevant info this turn - don't restore pending
@@ -617,6 +856,9 @@ async def validate_and_update_state(
         f"Validation Results:\n"
         f"  Property: {flow_state.get('property_name')} (ID: {flow_state.get('property_id')})\n"
         f"  Court: {flow_state.get('court_type')} (IDs: {flow_state.get('court_ids')})\n"
+        f"  Date: {flow_state.get('selected_date')}\n"
+        f"  Time: {flow_state.get('selected_start_time')} - {flow_state.get('selected_end_time')}\n"
+        f"  Period: {flow_state.get('time_period')}\n"
         f"  Requested Actions: {flow_state.get('requested_actions')}\n"
         f"  Awaiting Input: {flow_state.get('awaiting_input')}\n"
         f"  Validation Error: {flow_state.get('validation_error')}"
@@ -637,6 +879,9 @@ async def validate_and_update_state(
         f"[VALIDATE FINAL RESULT] Chat {chat_id}:\n"
         f"  Property: {flow_state.get('property_name')} (ID: {flow_state.get('property_id')})\n"
         f"  Court: {flow_state.get('court_type')} (IDs: {flow_state.get('court_ids')})\n"
+        f"  Date: {flow_state.get('selected_date')}\n"
+        f"  Time: {flow_state.get('selected_start_time')} - {flow_state.get('selected_end_time')}\n"
+        f"  Period: {flow_state.get('time_period')}\n"
         f"  Requested Actions: {flow_state.get('requested_actions')}\n"
         f"  Awaiting Input: {flow_state.get('awaiting_input')}\n"
         f"  Validation Error: {flow_state.get('validation_error')}"
@@ -969,3 +1214,216 @@ def _filter_courts_by_property(
         return courts
 
     return [c for c in courts if c.get("property_id") == property_id]
+
+
+def _is_iso_date(date_str: str) -> bool:
+    """
+    Check if a string is a valid ISO date format (YYYY-MM-DD).
+    
+    Args:
+        date_str: String to check
+        
+    Returns:
+        True if valid ISO date, False otherwise
+    """
+    if not date_str or len(date_str) != 10:
+        return False
+    
+    try:
+        from datetime import datetime
+        datetime.fromisoformat(date_str)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+# =====================================================
+# DATE NORMALIZATION HELPERS
+# =====================================================
+
+def _normalize_date(
+    date_interpretation: Optional[str],
+    mentioned_date_text: Optional[str],
+    chat_id: str
+) -> Optional[str]:
+    """
+    Convert date interpretation to actual date string in YYYY-MM-DD format.
+    Uses Asia/Karachi timezone for "today" and relative dates.
+    
+    Args:
+        date_interpretation: Normalized interpretation from router (e.g., "today", "tomorrow", "next_monday")
+        mentioned_date_text: Original text mentioned by user
+        chat_id: Chat ID for logging
+        
+    Returns:
+        Date string in YYYY-MM-DD format, or None if invalid
+        
+    Examples:
+        _normalize_date("today", "aaj", "123") → "2026-03-13"
+        _normalize_date("tomorrow", "kal", "123") → "2026-03-14"
+        _normalize_date("next_monday", "next Monday", "123") → "2026-03-17"
+    """
+    if not date_interpretation:
+        logger.warning(f"No date_interpretation provided for chat {chat_id}")
+        return None
+    
+    try:
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        
+        # Use Asia/Karachi timezone
+        tz = ZoneInfo("Asia/Karachi")
+        now = datetime.now(tz)
+        today = now.date()
+        
+        # Handle different interpretations
+        if date_interpretation == "today":
+            result = today.isoformat()
+            logger.info(f"Normalized 'today' to {result} for chat {chat_id}")
+            return result
+        
+        elif date_interpretation == "tonight":
+            # Tonight means today (same date, just evening/night time)
+            result = today.isoformat()
+            logger.info(f"Normalized 'tonight' to {result} for chat {chat_id}")
+            return result
+        
+        elif date_interpretation == "tomorrow":
+            result = (today + timedelta(days=1)).isoformat()
+            logger.info(f"Normalized 'tomorrow' to {result} for chat {chat_id}")
+            return result
+        
+        elif date_interpretation == "parso" or date_interpretation == "day_after_tomorrow":
+            result = (today + timedelta(days=2)).isoformat()
+            logger.info(f"Normalized 'parso/day_after_tomorrow' to {result} for chat {chat_id}")
+            return result
+        
+        elif date_interpretation.startswith("next_"):
+            # Extract day name (next_monday → monday)
+            day_name = date_interpretation.replace("next_", "")
+            return _get_next_weekday(today, day_name, chat_id)
+        
+        elif date_interpretation.startswith("this_"):
+            # Extract day name (this_sunday → sunday)
+            day_name = date_interpretation.replace("this_", "")
+            return _get_this_weekday(today, day_name, chat_id)
+        
+        else:
+            # Try to parse as ISO date (YYYY-MM-DD)
+            try:
+                parsed_date = datetime.fromisoformat(date_interpretation).date()
+                result = parsed_date.isoformat()
+                logger.info(f"Parsed ISO date {date_interpretation} to {result} for chat {chat_id}")
+                return result
+            except ValueError:
+                logger.warning(
+                    f"Unknown date_interpretation '{date_interpretation}' for chat {chat_id}"
+                )
+                return None
+    
+    except Exception as e:
+        logger.error(f"Error normalizing date for chat {chat_id}: {e}", exc_info=True)
+        return None
+
+
+def _get_next_weekday(from_date, day_name: str, chat_id: str) -> Optional[str]:
+    """
+    Get the next occurrence of a weekday from a given date.
+    
+    Args:
+        from_date: Starting date
+        day_name: Name of the day (monday, tuesday, etc.)
+        chat_id: Chat ID for logging
+        
+    Returns:
+        Date string in YYYY-MM-DD format
+    """
+    from datetime import timedelta
+    
+    # Map day names to weekday numbers (0=Monday, 6=Sunday)
+    day_map = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6
+    }
+    
+    day_name_lower = day_name.lower()
+    if day_name_lower not in day_map:
+        logger.warning(f"Unknown day name '{day_name}' for chat {chat_id}")
+        return None
+    
+    target_weekday = day_map[day_name_lower]
+    current_weekday = from_date.weekday()
+    
+    # Calculate days until next occurrence
+    # If today is Monday (0) and target is Wednesday (2): 2 - 0 = 2 days
+    # If today is Wednesday (2) and target is Monday (0): (0 - 2) % 7 = 5 days
+    days_ahead = target_weekday - current_weekday
+    
+    # If the day is today or in the past this week, get next week's occurrence
+    if days_ahead <= 0:
+        days_ahead += 7
+    
+    result_date = from_date + timedelta(days=days_ahead)
+    result = result_date.isoformat()
+    
+    logger.info(
+        f"Calculated next {day_name} from {from_date} as {result} for chat {chat_id}"
+    )
+    
+    return result
+
+
+def _get_this_weekday(from_date, day_name: str, chat_id: str) -> Optional[str]:
+    """
+    Get the occurrence of a weekday in the current week.
+    If the day has passed, get next week's occurrence.
+    
+    Args:
+        from_date: Starting date
+        day_name: Name of the day (monday, tuesday, etc.)
+        chat_id: Chat ID for logging
+        
+    Returns:
+        Date string in YYYY-MM-DD format
+    """
+    from datetime import timedelta
+    
+    # Map day names to weekday numbers (0=Monday, 6=Sunday)
+    day_map = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6
+    }
+    
+    day_name_lower = day_name.lower()
+    if day_name_lower not in day_map:
+        logger.warning(f"Unknown day name '{day_name}' for chat {chat_id}")
+        return None
+    
+    target_weekday = day_map[day_name_lower]
+    current_weekday = from_date.weekday()
+    
+    # Calculate days until target day
+    days_ahead = target_weekday - current_weekday
+    
+    # If the day has passed this week, get next week's occurrence
+    if days_ahead < 0:
+        days_ahead += 7
+    
+    result_date = from_date + timedelta(days=days_ahead)
+    result = result_date.isoformat()
+    
+    logger.info(
+        f"Calculated this {day_name} from {from_date} as {result} for chat {chat_id}"
+    )
+    
+    return result

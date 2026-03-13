@@ -21,6 +21,7 @@ from app.agent.nodes.information import (
     check_requirements,
     ask_property,
     ask_court,
+    ask_date,
     execute_actions,
     show_available_actions,
     format_response,
@@ -42,6 +43,7 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
     - check_requirements: Checks what's needed for actions
     - ask_property: Asks user to select a property
     - ask_court: Asks user to select a court
+    - ask_date: Asks user to select a date
     - execute_actions: Executes the requested actions
     - show_available_actions: Shows available actions when property/court selected
     - format_response: Formats the final response
@@ -73,6 +75,9 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
     async def ask_court_node(state):
         return await ask_court(state)
     
+    async def ask_date_node(state):
+        return await ask_date(state)
+    
     async def execute_actions_node(state):
         return await execute_actions(state)
     
@@ -87,6 +92,7 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
     graph.add_node("check_requirements", check_requirements_node)
     graph.add_node("ask_property", ask_property_node)
     graph.add_node("ask_court", ask_court_node)
+    graph.add_node("ask_date", ask_date_node)
     graph.add_node("execute_actions", execute_actions_node)
     graph.add_node("show_available_actions", show_available_actions_node)
     graph.add_node("format_response", format_response_node)
@@ -105,14 +111,16 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
         {
             "ask_property": "ask_property",
             "ask_court": "ask_court",
+            "ask_date": "ask_date",
             "execute_actions": "execute_actions",
             "show_available_actions": "show_available_actions"
         }
     )
     
-    # ask_property, ask_court, and show_available_actions go to END (no format needed)
+    # ask_property, ask_court, ask_date, and show_available_actions go to format_response or END
     graph.add_edge("ask_property", "format_response")
     graph.add_edge("ask_court", "format_response")
+    graph.add_edge("ask_date", "format_response")
     graph.add_edge("show_available_actions", END)
     
     # execute_actions can go to ask nodes OR format_response (conditional)
@@ -122,6 +130,7 @@ def create_information_subgraph(llm_provider: Any) -> StateGraph:
         {
             "ask_property": "ask_property",
             "ask_court": "ask_court",
+            "ask_date": "ask_date",
             "format_response": "format_response"
         }
     )
@@ -142,6 +151,7 @@ def route_check_requirements(state: ConversationState) -> str:
     This function reads flow_state["next_step"] and routes to:
     - "ask_property" if property is missing
     - "ask_court" if court is missing
+    - "ask_date" if date is missing
     - "show_available_actions" if property/court selected but no actions
     - "execute_actions" if all requirements met
     
@@ -156,7 +166,7 @@ def route_check_requirements(state: ConversationState) -> str:
     
     logger.debug(f"Routing from check_requirements: next_step={next_step}")
     
-    if next_step in ["ask_property", "ask_court", "execute_actions", "show_available_actions"]:
+    if next_step in ["ask_property", "ask_court", "ask_date", "execute_actions", "show_available_actions"]:
         return next_step
     else:
         logger.warning(f"Unknown next_step '{next_step}', defaulting to execute_actions")
@@ -170,6 +180,7 @@ def route_after_execute(state: ConversationState) -> str:
     This function reads flow_state["after_execute"] and routes to:
     - "ask_property" if we need to ask for property
     - "ask_court" if we need to ask for court
+    - "ask_date" if we need to ask for date
     - "format_response" if we're done (no more questions)
     
     Args:
@@ -183,7 +194,7 @@ def route_after_execute(state: ConversationState) -> str:
     
     logger.debug(f"Routing after execute_actions: after_execute={after_execute}")
     
-    if after_execute in ["ask_property", "ask_court"]:
+    if after_execute in ["ask_property", "ask_court", "ask_date"]:
         return after_execute
     else:
         return "format_response"

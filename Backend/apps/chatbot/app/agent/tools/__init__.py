@@ -50,7 +50,6 @@ from app.agent.tools.court_tool import (
 )
 
 from app.agent.tools.availability_tool import (
-    check_availability_tool,
     get_available_slots_tool,
 )
 
@@ -100,7 +99,6 @@ TOOL_REGISTRY: Dict[str, Callable] = {
     "get_property_courts": get_property_courts_tool,
     
     # Availability tools (legacy/direct use)
-    "check_availability": check_availability_tool,
     "get_available_slots": get_available_slots_tool,
     
     # Pricing tools (legacy/direct use)
@@ -256,7 +254,6 @@ __all__ = [
     "search_courts_tool",
     "get_court_details_tool",
     "get_property_courts_tool",
-    "check_availability_tool",
     "get_available_slots_tool",
     "get_pricing_tool",
     "calculate_total_price",
