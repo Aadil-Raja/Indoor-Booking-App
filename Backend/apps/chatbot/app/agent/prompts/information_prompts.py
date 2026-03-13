@@ -190,11 +190,33 @@ Availability extraction rules:
 - Do NOT invent a specific calendar date in this router output.
 - Extract start_time and end_time if the user gives an exact time range.
 - ALWAYS extract times even if ambiguous - backend will handle disambiguation.
-- Keep the time format as the user provided it (12-hour or 24-hour):
-  - "6 to 7 pm" → start_time: "6 PM", end_time: "7 PM"
-  - "18:00 to 19:00" → start_time: "18:00", end_time: "19:00"
-  - "6 to 7" → start_time: "6", end_time: "7" (ambiguous - backend will check both AM and PM)
-  - "10 to 12" → start_time: "10", end_time: "12" (ambiguous - backend will check both AM and PM)
+
+Do not return raw numeric time values. Always return times as strings in hh:mm or h:mm format.
+Preserve the user's original time system:
+If the user uses 12-hour time, keep 12-hour time.
+If the user uses 24-hour time, keep 24-hour time.
+Do not convert between 12-hour and 24-hour formats.
+
+Minutes handling:
+
+If the user provides minutes, keep them exactly as provided.
+If the user provides only an hour, normalize it by adding :00.
+
+Examples:
+
+"6 to 7 pm" → start_time: "6:00", end_time: "7:00"
+"18:00 to 19:00" → start_time: "18:00", end_time: "19:00"
+"6 to 7" → start_time: "6:00", end_time: "7:00" (ambiguous; backend will check AM and PM)
+"10 to 12" → start_time: "10:00", end_time: "12:00" (ambiguous; backend will check AM and PM)
+"6:15 to 7:45 pm" → start_time: "6:15", end_time: "7:45"
+"18:30 o 19:15" → start_time: "18:30", end_time: "19:15"
+
+Important rules:
+
+Never return raw numbers like 6, 7, 10, or 12.
+Never convert times to 00:00 or 24:00.
+
+Always ensure the output includes minutes.
 - Extract time_period if the user mentions broad periods:
   morning, afternoon, evening, night
 - If both exact time and time_period are mentioned, extract both (backend will use time_period to disambiguate)
@@ -213,7 +235,29 @@ Examples:
   → requested_actions = ["availability"], mentioned_date_text = "kal", date_interpretation = "tomorrow", time_period = "evening"
 - "monady evening badminton available?"
   → requested_actions = ["availability"], mentioned_date_text = "monady", date_interpretation = "next_monday" only if that is the clear intended meaning, and time_period = "evening"
+Time period inference rules:
+- If AM/PM is explicitly mentioned, infer time_period from it.
+- Use these rules:
+  - times in the morning range → "morning"
+  - times in the afternoon range → "afternoon"
+  - times in the evening range → "evening"
+  - times in the night range → "night"
 
+Recommended mapping for inference:
+- 04:00 am to 11:59 am → morning
+- 12:00 pm to 04:59 pm → afternoon
+- 05:00 pm to 08:59 pm → evening
+- 09:00 pm to 03:59 am → night
+
+Examples:
+- "5 to 7 pm" → start_time: "5:00 pm", end_time: "7:00 pm", time_period: "evening"
+- "5 to 7 am" → start_time: "5:00 am", end_time: "7:00 am", time_period: "morning"
+- "9 pm to 4 am" → start_time: "9:00 pm", end_time: "4:00 am", time_period: "night"
+
+- always infer if am pm given
+- If AM/PM is not mentioned, do NOT invent AM/PM.
+- If AM/PM is not mentioned and no broad period is mentioned, extract the times as written and leave time_period as null.
+- Do NOT normalize to final backend-safe 24-hour meaning when ambiguous. Backend will handle final disambiguation.
 Output rules:
 - Return JSON only.
 - Do not include markdown.

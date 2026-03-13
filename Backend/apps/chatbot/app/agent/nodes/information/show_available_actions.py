@@ -56,6 +56,28 @@ async def show_available_actions(
             response_parts.append("I couldn't find that property.")
         elif validation_error == "invalid_court":
             response_parts.append("I couldn't find that court.")
+        elif validation_error == "invalid_date":
+            # Provide clear instructions for date format
+            response_parts.append("I couldn't understand that date.")
+            response_parts.append("")
+            response_parts.append("📅 Please specify a date like:")
+            response_parts.append("  • Relative: today, tomorrow, parso, next Monday")
+            response_parts.append("  • Exact: 2026-03-15 or March 15")
+            response_parts.append("")
+            response_parts.append("🕐 You can also specify time:")
+            response_parts.append("  • Time period: morning, afternoon, evening, night")
+            response_parts.append("  • Exact slot: 6 to 7 PM, 18:00 to 19:00")
+            response_parts.append("  • Note: Times are rounded to nearest hour (e.g., 6:30 PM → 7:00 PM)")
+        elif validation_error == "invalid_time":
+            # Provide clear instructions for time format
+            response_parts.append("I couldn't understand that time.")
+            response_parts.append("")
+            response_parts.append("🕐 Please specify time like:")
+            response_parts.append("  • Time period: morning (6 AM-12 PM), afternoon (12-6 PM), evening (6-9 PM), night (9 PM-6 AM)")
+            response_parts.append("  • Exact slot: 6 to 7 PM, 18:00 to 19:00, 2 PM to 4 PM")
+            response_parts.append("  • Note: Times are rounded to nearest hour")
+            response_parts.append("    - Start time rounds down: 6:30 PM → 6:00 PM")
+            response_parts.append("    - End time rounds up: 7:15 PM → 8:00 PM")
         elif validation_error == "unclear_message":
             # Use unclear_reason if available, otherwise generic message
             if unclear_reason:

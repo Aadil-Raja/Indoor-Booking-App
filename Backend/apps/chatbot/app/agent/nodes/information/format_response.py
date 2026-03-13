@@ -290,7 +290,24 @@ async def format_response(
                             formatted_slot = _format_slot(slot)
                             response_parts.append(f"  • {formatted_slot}")
                     
-                    elif match_type in ["within_range", "overlapping", "from_start", "until_end", "period"]:
+                    elif match_type == "partial":
+                        response_parts.append("⚠️ Exact time not available. Here are slots that partially overlap:")
+                        response_parts.append("")
+                        for slot in available_slots[:10]:
+                            formatted_slot = _format_slot(slot)
+                            response_parts.append(f"  • {formatted_slot}")
+                        
+                        if len(available_slots) > 10:
+                            response_parts.append(f"  ... and {len(available_slots) - 10} more slots")
+                    
+                    elif match_type == "nearby":
+                        response_parts.append("❌ Requested time not available. Here are nearby alternatives:")
+                        response_parts.append("")
+                        for slot in available_slots[:5]:
+                            formatted_slot = _format_slot(slot)
+                            response_parts.append(f"  • {formatted_slot}")
+                    
+                    elif match_type == "period":
                         response_parts.append("Here are available options:")
                         response_parts.append("")
                         for slot in available_slots[:10]:
@@ -300,36 +317,43 @@ async def format_response(
                         if len(available_slots) > 10:
                             response_parts.append(f"  ... and {len(available_slots) - 10} more slots")
                     
-                    elif match_type == "closest":
-                        response_parts.append("❌ Requested time not available. Here are the closest alternatives:")
-                        response_parts.append("")
-                        for slot in available_slots[:5]:
-                            formatted_slot = _format_slot(slot)
-                            response_parts.append(f"  • {formatted_slot}")
+                    elif match_type == "all":
+                        if slots_by_period:
+                            # Show grouped by period
+                            period_emojis = {
+                                "morning": "🌅",
+                                "afternoon": "☀️",
+                                "evening": "🌆",
+                                "night": "🌙"
+                            }
+                            
+                            for period in ["morning", "afternoon", "evening", "night"]:
+                                period_slots = slots_by_period.get(period, [])
+                                if period_slots:
+                                    emoji = period_emojis.get(period, "")
+                                    response_parts.append(f"{emoji} {period.capitalize()} slots:")
+                                    for slot in period_slots[:5]:
+                                        formatted_slot = _format_slot(slot)
+                                        response_parts.append(f"  • {formatted_slot}")
+                                    if len(period_slots) > 5:
+                                        response_parts.append(f"  ... and {len(period_slots) - 5} more")
+                                    response_parts.append("")
+                        else:
+                            # Show all slots without grouping
+                            response_parts.append("All available slots:")
+                            response_parts.append("")
+                            for slot in available_slots[:10]:
+                                formatted_slot = _format_slot(slot)
+                                response_parts.append(f"  • {formatted_slot}")
+                            
+                            if len(available_slots) > 10:
+                                response_parts.append(f"  ... and {len(available_slots) - 10} more slots")
                     
-                    elif match_type == "all" and slots_by_period:
-                        # Show grouped by period
-                        period_emojis = {
-                            "morning": "🌅",
-                            "afternoon": "☀️",
-                            "evening": "🌆",
-                            "night": "🌙"
-                        }
-                        
-                        for period in ["morning", "afternoon", "evening", "night"]:
-                            period_slots = slots_by_period.get(period, [])
-                            if period_slots:
-                                emoji = period_emojis.get(period, "")
-                                response_parts.append(f"{emoji} {period.capitalize()} slots:")
-                                for slot in period_slots[:5]:
-                                    formatted_slot = _format_slot(slot)
-                                    response_parts.append(f"  • {formatted_slot}")
-                                if len(period_slots) > 5:
-                                    response_parts.append(f"  ... and {len(period_slots) - 5} more")
-                                response_parts.append("")
+                    elif match_type == "none":
+                        response_parts.append("❌ No available slots for this date and time.")
                     
                     else:
-                        # Fallback
+                        # Fallback for any other match type
                         if available_slots:
                             response_parts.append("Available slots:")
                             response_parts.append("")
@@ -339,10 +363,11 @@ async def format_response(
                         else:
                             response_parts.append("❌ No available slots for this date.")
                     
-                    # Add user guidance
-                    if user_guidance:
+                    # Add message if provided by tool
+                    message = data.get("message")
+                    if message:
                         response_parts.append("")
-                        response_parts.append(f"💡 {user_guidance}")
+                        response_parts.append(f"💡 {message}")
                 
                 else:
                     # Fallback for unknown action
@@ -397,7 +422,7 @@ def _format_slot(slot: Dict[str, Any]) -> str:
     """
     Format a single availability slot for display.
     
-    Handles :59 case - converts "18:00-18:59" to "6:00 PM - 7:00 PM"
+    Slots are already normalized by the availability tool (XX:59 → XX+1:00).
     
     Args:
         slot: Slot dictionary with start_time, end_time, price_per_hour, label
@@ -421,13 +446,6 @@ def _format_slot(slot: Dict[str, Any]) -> str:
         else:  # HH:MM
             start_obj = datetime.strptime(start_time, "%H:%M")
             end_obj = datetime.strptime(end_time, "%H:%M")
-        
-        # Handle :59 case - if end time is XX:59, show as next hour
-        if end_obj.minute == 59:
-            end_obj = end_obj.replace(minute=0)
-            # Add 1 hour
-            from datetime import timedelta
-            end_obj = datetime.combine(datetime.today(), end_obj.time()) + timedelta(hours=1)
         
         # Format to 12-hour with AM/PM
         start_12h = start_obj.strftime("%I:%M %p").lstrip("0")

@@ -52,10 +52,10 @@ async def check_requirements(
     
     logger.info(f"Checking requirements for chat {chat_id}")
     
-    # PRIORITY: Check for validation errors (unclear messages)
+    # PRIORITY: Check for validation errors (unclear messages, invalid date/time/property/court)
     # If validation_error exists, route to show_available_actions
     validation_error = flow_state.get("validation_error")
-    if validation_error == "unclear_message":
+    if validation_error in ["unclear_message", "invalid_date", "invalid_time", "invalid_property", "invalid_court"]:
         logger.info(
             f"Validation error detected for chat {chat_id}: {validation_error} - "
             f"routing to show_available_actions"

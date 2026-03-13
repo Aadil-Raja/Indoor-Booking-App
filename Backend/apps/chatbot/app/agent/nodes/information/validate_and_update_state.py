@@ -520,17 +520,91 @@ async def validate_and_update_state(
     end_time = router_result.get("end_time")
     time_period = router_result.get("time_period")
     
+    # Round times to nearest hour: floor start_time, ceil end_time
+    # Examples: "1:45" → "01:00", "2:30" → "02:00" for start_time
+    #           "1:45" → "02:00", "2:30" → "03:00" for end_time
     if start_time:
+        start_time = _floor_time_to_hour(start_time, chat_id)
         flow_state["selected_start_time"] = start_time
-        logger.debug(f"Stored start_time: {start_time} for chat {chat_id}")
+        logger.debug(f"Stored and floored start_time: {start_time} for chat {chat_id}")
     
     if end_time:
+        end_time = _ceil_time_to_hour(end_time, chat_id)
         flow_state["selected_end_time"] = end_time
-        logger.debug(f"Stored end_time: {end_time} for chat {chat_id}")
+        logger.debug(f"Stored and ceiled end_time: {end_time} for chat {chat_id}")
     
     if time_period:
         flow_state["time_period"] = time_period
         logger.debug(f"Stored time_period: {time_period} for chat {chat_id}")
+
+    # ---------------------------------
+    # AUTO-ADD AVAILABILITY ACTION
+    # ---------------------------------
+    # If user provided NEW date/time info IN THIS TURN (validated and saved),
+    # AND we have property_id and court_ids,
+    # THEN auto-add availability action (even if LLM didn't request it)
+    
+    # Get pending_actions early (needed for availability check)
+    pending_actions = flow_state.get("pending_actions", [])
+    
+    # Check if user provided NEW date/time info THIS TURN
+    # This is detected by checking if router_result has these fields
+    date_provided_this_turn = (
+        router_result.get("mentioned_date_text") is not None or
+        router_result.get("date_interpretation") is not None
+    )
+    time_provided_this_turn = (
+        router_result.get("time_period") is not None or
+        router_result.get("start_time") is not None or
+        router_result.get("end_time") is not None
+    )
+    
+    # Check if we have the minimum requirements (property + court)
+    has_property = flow_state.get("property_id") is not None
+    has_court = len(flow_state.get("court_ids", [])) > 0
+    
+    # Check if availability was pending
+    availability_was_pending = "availability" in pending_actions
+    
+    # Auto-add availability if:
+    # 1. User provided date OR time info THIS TURN (validated by this node)
+    # 2. We have property and court
+    # 3. Availability is not already in requested_actions
+    should_add_availability = (
+        (date_provided_this_turn or time_provided_this_turn) and
+        has_property and
+        has_court and
+        "availability" not in requested_actions
+    )
+    
+    if should_add_availability:
+        requested_actions.append("availability")
+        logger.info(
+            f"[AUTO-ADD] Added 'availability' action for chat {chat_id} because user provided date/time: "
+            f"date_provided={date_provided_this_turn}, time_provided={time_provided_this_turn}, "
+            f"selected_date={flow_state.get('selected_date')}, "
+            f"time_period={flow_state.get('time_period')}, "
+            f"start_time={flow_state.get('selected_start_time')}, "
+            f"end_time={flow_state.get('selected_end_time')}, "
+            f"was_pending={availability_was_pending}"
+        )
+        
+        # Update router_result
+        router_result["requested_actions"] = requested_actions
+        flow_state["router_result"] = router_result
+    elif date_provided_this_turn or time_provided_this_turn:
+        # Log why availability wasn't added (for debugging)
+        missing = []
+        if not has_property:
+            missing.append("property")
+        if not has_court:
+            missing.append("court")
+        if "availability" in requested_actions:
+            logger.debug(f"Availability already in requested_actions for chat {chat_id}")
+        elif missing:
+            logger.debug(
+                f"Not auto-adding availability for chat {chat_id} - user provided date/time but missing: {', '.join(missing)}"
+            )
 
     # ---------------------------------
     # VALIDATE AND SAVE PROPERTY_DETAIL_FIELDS
@@ -713,8 +787,7 @@ async def validate_and_update_state(
     # ---------------------------------
     # REQUESTED ACTIONS (Smart Pending Logic)
     # ---------------------------------
-
-    pending_actions = flow_state.get("pending_actions", [])
+    # Note: pending_actions already retrieved earlier for availability check
 
     # RULE: Resume pending actions ONLY if:
     # 1. User provided property/court in THIS TURN (property_set_this_turn or court_set_this_turn)
@@ -1235,6 +1308,130 @@ def _is_iso_date(date_str: str) -> bool:
         return True
     except (ValueError, TypeError):
         return False
+
+
+def _floor_time_to_hour(time_str: str, chat_id: str) -> str:
+    """
+    Floor time to nearest hour (round down) ONLY if minutes are specified.
+    Also normalizes raw hour numbers to HH:00 format.
+    
+    Examples:
+        "1:45" → "01:00" (has minutes, round down)
+        "2:30" → "02:00" (has minutes, round down)
+        "14:15" → "14:00" (has minutes, round down)
+        "18:00" → "18:00" (already on hour, no change)
+        "6" → "06:00" (raw number, normalize to HH:00)
+        "18" → "18:00" (raw number, normalize to HH:00)
+    
+    Args:
+        time_str: Time string in various formats (H:MM, HH:MM, H, HH, etc.)
+        chat_id: Chat ID for logging
+        
+    Returns:
+        Time string in HH:00 format
+    """
+    try:
+        from datetime import datetime
+        
+        # Check if time has colon (indicates minutes are specified)
+        if ':' not in time_str:
+            # No colon means just hour number - normalize to HH:00 format
+            try:
+                hour = int(time_str)
+                if 0 <= hour <= 23:
+                    normalized = f"{hour:02d}:00"
+                    logger.info(f"Normalized raw hour '{time_str}' → '{normalized}' for chat {chat_id}")
+                    return normalized
+                else:
+                    logger.warning(f"Invalid hour value '{time_str}' for chat {chat_id}")
+                    return time_str
+            except ValueError:
+                logger.warning(f"Could not parse raw hour '{time_str}' for chat {chat_id}")
+                return time_str
+        
+        # Try to parse various time formats with colon
+        for fmt in ["%H:%M", "%I:%M", "%H:%M:%S", "%I:%M:%S"]:
+            try:
+                parsed = datetime.strptime(time_str, fmt)
+                # Floor to hour (just take the hour, set minutes to 00)
+                floored = f"{parsed.hour:02d}:00"
+                if floored != time_str:
+                    logger.info(f"Floored start_time '{time_str}' → '{floored}' for chat {chat_id}")
+                return floored
+            except ValueError:
+                continue
+        
+        # If no format matched, return as-is
+        logger.warning(f"Could not parse time '{time_str}' for flooring in chat {chat_id}")
+        return time_str
+        
+    except Exception as e:
+        logger.error(f"Error flooring time '{time_str}' for chat {chat_id}: {e}")
+        return time_str
+
+
+def _ceil_time_to_hour(time_str: str, chat_id: str) -> str:
+    """
+    Ceil time to nearest hour (round up) ONLY if minutes are specified.
+    Also normalizes raw hour numbers to HH:00 format.
+    
+    Examples:
+        "1:45" → "02:00" (has minutes, round up)
+        "2:30" → "03:00" (has minutes, round up)
+        "14:15" → "15:00" (has minutes, round up)
+        "18:00" → "18:00" (already on hour, no change)
+        "7" → "07:00" (raw number, normalize to HH:00)
+        "19" → "19:00" (raw number, normalize to HH:00)
+    
+    Args:
+        time_str: Time string in various formats (H:MM, HH:MM, H, HH, etc.)
+        chat_id: Chat ID for logging
+        
+    Returns:
+        Time string in HH:00 format
+    """
+    try:
+        from datetime import datetime
+        
+        # Check if time has colon (indicates minutes are specified)
+        if ':' not in time_str:
+            # No colon means just hour number - normalize to HH:00 format
+            try:
+                hour = int(time_str)
+                if 0 <= hour <= 23:
+                    normalized = f"{hour:02d}:00"
+                    logger.info(f"Normalized raw hour '{time_str}' → '{normalized}' for chat {chat_id}")
+                    return normalized
+                else:
+                    logger.warning(f"Invalid hour value '{time_str}' for chat {chat_id}")
+                    return time_str
+            except ValueError:
+                logger.warning(f"Could not parse raw hour '{time_str}' for chat {chat_id}")
+                return time_str
+        
+        # Try to parse various time formats with colon
+        for fmt in ["%H:%M", "%I:%M", "%H:%M:%S", "%I:%M:%S"]:
+            try:
+                parsed = datetime.strptime(time_str, fmt)
+                # Ceil to hour (if minutes > 0, add 1 hour)
+                if parsed.minute > 0 or parsed.second > 0:
+                    ceiled_hour = (parsed.hour + 1) % 24
+                    ceiled = f"{ceiled_hour:02d}:00"
+                    logger.info(f"Ceiled end_time '{time_str}' → '{ceiled}' for chat {chat_id}")
+                    return ceiled
+                else:
+                    # Already on the hour
+                    return f"{parsed.hour:02d}:00"
+            except ValueError:
+                continue
+        
+        # If no format matched, return as-is
+        logger.warning(f"Could not parse time '{time_str}' for ceiling in chat {chat_id}")
+        return time_str
+        
+    except Exception as e:
+        logger.error(f"Error ceiling time '{time_str}' for chat {chat_id}: {e}")
+        return time_str
 
 
 # =====================================================

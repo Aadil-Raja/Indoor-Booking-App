@@ -232,10 +232,13 @@ async def execute_actions(
                     )
                     
                     if availability_result.get("success"):
+                        # Get the adjusted date from the tool (may be different if overnight booking)
+                        adjusted_date = availability_result.get("date", selected_date_str)
+                        
                         results["availability"] = {
                             "status": "success",
                             "data": availability_result,
-                            "date": selected_date_str,
+                            "date": adjusted_date,
                             "filters": {
                                 "start_time": start_time,
                                 "end_time": end_time,
@@ -243,32 +246,28 @@ async def execute_actions(
                             }
                         }
                         
+                        # ALWAYS update date if it was adjusted by the tool (for overnight bookings)
+                        if adjusted_date != selected_date_str:
+                            flow_state["selected_date"] = adjusted_date
+                            logger.info(f"Date adjusted from {selected_date_str} to {adjusted_date} for overnight booking")
+                        
                         # Update flow_state with the actual matched slot times
                         # ONLY if there's exactly ONE slot (single_slot_selected)
                         available_slots = availability_result.get("available_slots", [])
                         
                         if len(available_slots) == 1:
-                            # Only ONE slot - save its details
+                            # Only ONE slot - save its normalized details
                             first_slot = available_slots[0]
                             actual_start = first_slot.get("start_time", "")
                             actual_end = first_slot.get("end_time", "")
                             
-                            # Normalize to HH:MM format
+                            # Normalize to HH:MM format (slots are already normalized by tool)
                             if actual_start and len(actual_start) > 5:
                                 actual_start = actual_start[:5]
                             if actual_end and len(actual_end) > 5:
                                 actual_end = actual_end[:5]
                             
-                            # Handle :59 case - normalize for storage
-                            if actual_end and actual_end.endswith(':59'):
-                                # Convert 18:59 to 19:00 for cleaner storage
-                                try:
-                                    hour = int(actual_end.split(':')[0])
-                                    next_hour = (hour + 1) % 24
-                                    actual_end = f"{next_hour:02d}:00"
-                                except:
-                                    pass
-                            
+                            # Save normalized times to flow_state
                             if actual_start:
                                 flow_state["selected_start_time"] = actual_start
                             if actual_end:
@@ -277,15 +276,18 @@ async def execute_actions(
                             # Update time period based on the matched slot
                             slot_period = None
                             if actual_start:
-                                hour = int(actual_start.split(':')[0])
-                                if 6 <= hour < 12:
-                                    slot_period = "morning"
-                                elif 12 <= hour < 18:
-                                    slot_period = "afternoon"
-                                elif 18 <= hour < 21:
-                                    slot_period = "evening"
-                                else:
-                                    slot_period = "night"
+                                try:
+                                    hour = int(actual_start.split(':')[0])
+                                    if 6 <= hour < 12:
+                                        slot_period = "morning"
+                                    elif 12 <= hour < 18:
+                                        slot_period = "afternoon"
+                                    elif 18 <= hour < 21:
+                                        slot_period = "evening"
+                                    else:
+                                        slot_period = "night"
+                                except:
+                                    pass
                             
                             if slot_period:
                                 flow_state["time_period"] = slot_period
@@ -293,8 +295,9 @@ async def execute_actions(
                             flow_state["single_slot_selected"] = True
                             
                             logger.info(
-                                f"Single slot found and saved: times={actual_start}-{actual_end}, "
-                                f"period={slot_period} for chat {chat_id}"
+                                f"Single slot found and saved to flow_state: "
+                                f"start_time={actual_start}, end_time={actual_end}, "
+                                f"period={slot_period}, date={flow_state.get('selected_date')} for chat {chat_id}"
                             )
                         else:
                             # Multiple slots or no slots - don't update times

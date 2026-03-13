@@ -56,12 +56,21 @@ async def greeting_handler(
         logger.debug(f"Generated returning user greeting for chat {chat_id}")
     else:
         # New user - fetch properties to display
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        
         owner_profile = await _fetch_owner_profile(owner_profile_id, chat_id)
         properties = await _fetch_owner_properties(owner_profile_id, chat_id)
         
         # Cache properties for booking flow (always cache, even if empty list)
         flow_state["available_properties"] = properties
         flow_state["owner_properties_initialized"] = True
+        
+        # Auto-set selected_date to today for new users (YYYY-MM-DD format)
+        tz = ZoneInfo("Asia/Karachi")
+        today = datetime.now(tz).date()
+        flow_state["selected_date"] = today.isoformat()
+        logger.info(f"Auto-set selected_date to today ({today.isoformat()}) for new user in chat {chat_id}")
         
         logger.info(f"Cached {len(properties)} properties in flow_state for chat {chat_id}")
         

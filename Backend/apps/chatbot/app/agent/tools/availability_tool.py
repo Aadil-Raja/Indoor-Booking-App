@@ -3,10 +3,29 @@ Availability checking tools for the chatbot agent.
 
 This module provides tools for checking court availability and retrieving
 available time slots by directly using shared.services.public_service.
+
+Period definitions (Rule 1):
+    morning   : 04:00 – 11:59
+    afternoon : 12:00 – 16:59
+    evening   : 17:00 – 20:59
+    night     : 21:00 – 03:59  (00:00–03:59 belongs to the NEXT calendar day)
+
+Time-correction rules (Rules 2–4 & 8):
+    - Boundary hours at period transitions are allowed (Rule 2).
+    - If time already fits the period, keep it (Rule 3).
+    - If hour < 12 and period expects PM, add 12 (Rule 4).
+    - If correction still doesn't fit → reject, don't over-guess (Rule 8).
+
+Night rollover rule (Rule 5):
+    - 21:00–23:59  → selected date
+    - 00:00–03:59  → next calendar day
+
+Today rule (Rule 7):
+    - Reject slots whose start_datetime <= now  (Asia/Karachi timezone).
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import date, time, datetime, timedelta
 
 from app.agent.tools.sync_bridge import call_sync_service
@@ -15,631 +34,724 @@ from shared.services import public_service
 logger = logging.getLogger(__name__)
 
 
-# Time period definitions (24-hour format)
-TIME_PERIODS = {
-    "morning": ("06:00", "12:00"),
-    "afternoon": ("12:00", "18:00"),
-    "evening": ("18:00", "21:00"),
-    "night": ("21:00", "06:00")  # Crosses midnight
+# ---------------------------------------------------------------------------
+# Period definitions  (Rule 1)
+# ---------------------------------------------------------------------------
+# Each entry: (start_hour_inclusive, end_hour_inclusive)
+# Night is represented as two ranges because it crosses midnight.
+PERIOD_RANGES: Dict[str, Any] = {
+    "morning":   (4,  11),
+    "afternoon": (12, 16),
+    "evening":   (17, 20),
+    "night":     [(21, 23), (0, 3)],   # 00:00–03:59 = next day segment
 }
 
+# Periods that require PM correction (hour + 12) when hour < 12
+_PM_PERIODS = {"afternoon", "evening", "night"}
+
+
+# ---------------------------------------------------------------------------
+# Low-level helpers
+# ---------------------------------------------------------------------------
 
 def _parse_time(time_str: str) -> Optional[time]:
-    """Parse time string to time object. Handles HH:MM and HH:MM:SS formats."""
+    """Parse HH:MM or HH:MM:SS string → time object."""
     if not time_str:
         return None
-    
     try:
-        # Try HH:MM:SS format first
         if len(time_str) == 8:
             return datetime.strptime(time_str, "%H:%M:%S").time()
-        # Try HH:MM format
-        elif len(time_str) == 5:
+        if len(time_str) == 5:
             return datetime.strptime(time_str, "%H:%M").time()
-        else:
-            logger.warning(f"Invalid time format: {time_str}")
-            return None
+        logger.warning(f"Invalid time format: {time_str}")
+        return None
     except ValueError as e:
         logger.warning(f"Error parsing time '{time_str}': {e}")
         return None
 
 
-def _normalize_time_display(time_str: str) -> str:
-    """
-    Normalize time for display, handling :59 cases.
-    
-    Backend returns slots like "18:00-18:59" but we want to show "6 PM - 7 PM"
-    
-    Args:
-        time_str: Time in HH:MM or HH:MM:SS format
-        
-    Returns:
-        Normalized time string
-    """
-    if not time_str:
-        return time_str
-    
-    parsed = _parse_time(time_str)
-    if not parsed:
-        return time_str
-    
-    # If minutes are 59, round up to next hour for display
-    if parsed.minute == 59:
-        # Add 1 minute to get to the next hour
-        next_hour = (parsed.hour + 1) % 24
-        return f"{next_hour:02d}:00"
-    
-    return f"{parsed.hour:02d}:{parsed.minute:02d}"
-
-
 def _time_to_minutes(t: time) -> int:
-    """Convert time to minutes since midnight for comparison."""
+    """Convert time → minutes since midnight."""
     return t.hour * 60 + t.minute
 
 
-def _categorize_slot_by_period(slot_start_time: str) -> str:
-    """
-    Categorize a slot into a time period based on its start time.
-    
-    Args:
-        slot_start_time: Start time in HH:MM or HH:MM:SS format
-        
-    Returns:
-        Period name: "morning", "afternoon", "evening", or "night"
-    """
-    slot_time = _parse_time(slot_start_time)
-    if not slot_time:
-        return "unknown"
-    
-    hour = slot_time.hour
-    
-    if 6 <= hour < 12:
-        return "morning"
-    elif 12 <= hour < 18:
-        return "afternoon"
-    elif 18 <= hour < 21:
-        return "evening"
-    else:  # 21-23 or 0-5
-        return "night"
+def _fmt_hhmm(hour: int, minute: int) -> str:
+    """Format hour/minute back to HH:MM, handling 24-hour wrap."""
+    hour = hour % 24
+    return f"{hour:02d}:{minute:02d}"
 
 
-def _filter_slots_by_period(slots: List[Dict[str, Any]], period: str) -> List[Dict[str, Any]]:
-    """
-    Filter slots by time period.
-    
-    Args:
-        slots: List of available slots
-        period: Time period name (morning, afternoon, evening, night)
-        
-    Returns:
-        Filtered list of slots
-    """
-    if not slots or period not in TIME_PERIODS:
-        return []
-    
-    filtered = []
-    for slot in slots:
-        slot_period = _categorize_slot_by_period(slot.get("start_time", ""))
-        if slot_period == period:
-            filtered.append(slot)
-    
-    return filtered
+# ---------------------------------------------------------------------------
+# Rule 1 – period membership check
+# ---------------------------------------------------------------------------
+
+def _is_time_valid_for_period(hour: int, period: str) -> bool:
+    """Return True if *hour* falls inside the allowed range for *period*."""
+    ranges = PERIOD_RANGES.get(period)
+    if ranges is None:
+        return False
+    if period == "night":
+        return any(lo <= hour <= hi for lo, hi in ranges)
+    lo, hi = ranges
+    return lo <= hour <= hi
 
 
-def _filter_slots_by_start_time(slots: List[Dict[str, Any]], start_time: str) -> List[Dict[str, Any]]:
-    """
-    Filter slots that start at or after the given start time.
-    
-    Args:
-        slots: List of available slots
-        start_time: Start time in HH:MM format
-        
-    Returns:
-        Filtered list of slots
-    """
-    if not slots or not start_time:
-        return []
-    
-    target_start = _parse_time(start_time)
-    if not target_start:
-        return []
-    
-    filtered = []
-    for slot in slots:
-        slot_start = _parse_time(slot.get("start_time", ""))
-        if slot_start and slot_start >= target_start:
-            filtered.append(slot)
-    
-    return filtered
+# ---------------------------------------------------------------------------
+# Rule 2 – boundary hours
+# ---------------------------------------------------------------------------
+# Each period allows its neighbour's boundary hour at the transition point:
+#
+#   morning   : 04:00–11:59  → also allows 12:00 as upper boundary
+#   afternoon : 12:00–16:59  → also allows 17:00 as upper boundary
+#   evening   : 17:00–20:59  → also allows 21:00 as upper boundary
+#   night     : 21:00–03:59  → also allows 04:00 as upper boundary
+#
+# Example from spec: "10–12 morning → 10:00–12:00"  (12 is safe upper bound)
+#                    "11–12 morning → valid"
+#                    "4 morning     → valid start"
+#                    "9 night       → start of night"  (corrected to 21:00)
+
+# Map period → extra boundary hours allowed beyond the strict range
+_PERIOD_BOUNDARY_HOURS: Dict[str, set] = {
+    "morning":   {12},   # 12:00 is the upper boundary (start of afternoon)
+    "afternoon": {17},   # 17:00 is the upper boundary (start of evening)
+    "evening":   {21},   # 21:00 is the upper boundary (start of night)
+    "night":     {4},    # 04:00 is the upper boundary (start of morning next day)
+}
 
 
-def _filter_slots_by_end_time(slots: List[Dict[str, Any]], end_time: str) -> List[Dict[str, Any]]:
+def _is_time_valid_for_period_with_boundary(hour: int, period: str) -> bool:
     """
-    Filter slots that end at or before the given end time.
-    
-    Args:
-        slots: List of available slots
-        end_time: End time in HH:MM format
-        
-    Returns:
-        Filtered list of slots
+    Rule 1 + Rule 2: return True if hour is inside the period's range
+    OR is the allowed upper boundary hour for that period.
     """
-    if not slots or not end_time:
-        return []
-    
-    target_end = _parse_time(end_time)
-    if not target_end:
-        return []
-    
-    filtered = []
-    for slot in slots:
-        slot_end = _parse_time(slot.get("end_time", ""))
-        if slot_end and slot_end <= target_end:
-            filtered.append(slot)
-    
-    return filtered
+    if _is_time_valid_for_period(hour, period):
+        return True
+    return hour in _PERIOD_BOUNDARY_HOURS.get(period, set())
 
 
-def _filter_slots_by_time_range(
-    slots: List[Dict[str, Any]], 
-    start_time: str, 
-    end_time: str
+# ---------------------------------------------------------------------------
+# Rule 3 – keep if already valid
+# Rule 4 – simple 12-hour correction
+# Rule 8 – reject if still doesn't fit
+# ---------------------------------------------------------------------------
+
+def _correct_time_for_period(time_str: str, period: str) -> Optional[str]:
+    """
+    Try to return a corrected time string that fits *period*.
+
+    Rules applied in order:
+      3. If already valid → return as-is.
+      4. If hour < 12 and period is a PM period → add 12.
+         Special sub-case: 12 night → 00 (midnight, next-day segment).
+      8. If still doesn't fit → return None (caller should reject).
+    """
+    parsed = _parse_time(time_str)
+    if not parsed or period not in PERIOD_RANGES:
+        return None
+
+    hour = parsed.hour
+    minute = parsed.minute
+
+    # Rule 3 – already valid (includes boundary hours per Rule 2)
+    if _is_time_valid_for_period_with_boundary(hour, period):
+        return time_str
+
+    # Rule 4 special sub-case: "12 night" means midnight (00:00)
+    if hour == 12 and period == "night":
+        corrected = _fmt_hhmm(0, minute)
+        logger.info(f"Rule-4 special: {time_str} night → {corrected} (midnight)")
+        return corrected
+
+    # Rule 4 – add 12 when hour < 12 and period expects PM
+    if hour < 12 and period in _PM_PERIODS:
+        corrected_hour = hour + 12
+        corrected = _fmt_hhmm(corrected_hour, minute)
+        # Verify the corrected value actually fits (Rule 8 guard)
+        if _is_time_valid_for_period_with_boundary(corrected_hour % 24, period):
+            logger.info(f"Rule-4 correction: {time_str} {period} → {corrected}")
+            return corrected
+
+    # Rule 8 – don't over-guess, reject
+    logger.info(f"Rule-8 reject: {time_str} does not fit period '{period}' after correction attempt")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Rule 5 – night rollover: split start/end across calendar dates
+# ---------------------------------------------------------------------------
+
+def _resolve_night_dates(
+    selected_date: date,
+    start_time_str: str,
+    end_time_str: str,
+) -> Tuple[date, date]:
+    """
+    Given a selected date and a night booking's start/end times, return
+    (start_date, end_date) according to the night rollover rule:
+        21:00–23:59  → selected_date
+        00:00–03:59  → selected_date + 1 day
+    """
+    start = _parse_time(start_time_str)
+    end = _parse_time(end_time_str)
+
+    start_date = selected_date
+    end_date = selected_date
+
+    if start and 0 <= start.hour <= 3:
+        start_date = selected_date + timedelta(days=1)
+    if end and 0 <= end.hour <= 3:
+        end_date = selected_date + timedelta(days=1)
+    # end == 0:00 (midnight boundary) also belongs to next day
+    if end and end.hour == 0 and end.minute == 0:
+        end_date = selected_date + timedelta(days=1)
+
+    return start_date, end_date
+
+
+def _adjust_date_for_overnight_booking(
+    date_val: date,
+    start_time: Optional[str],
+    end_time: Optional[str],
+    period: Optional[str],
+) -> Tuple[date, Optional[str], Optional[str]]:
+    """
+    Apply the night rollover rule (Rule 5) to adjust the query date used
+    when fetching slots from the backend.
+
+    Logic:
+    - If both start and end are in the early-morning segment (00:00–03:59),
+      the entire booking is on the *next* calendar day → query next day.
+    - If start is in late-night (21:00+) and end is in early-morning (00:00–03:59),
+      the booking spans midnight but starts on selected_date → query selected_date.
+    - Otherwise keep selected_date.
+    """
+    if not start_time or not end_time:
+        return date_val, start_time, end_time
+
+    parsed_start = _parse_time(start_time)
+    parsed_end = _parse_time(end_time)
+
+    if not parsed_start or not parsed_end:
+        return date_val, start_time, end_time
+
+    sh = parsed_start.hour
+    eh = parsed_end.hour
+
+    # Both times in early morning → next-day booking
+    if 0 <= sh <= 3 and 0 <= eh <= 3:
+        logger.info(f"Night rollover: both times early-morning, shifting date {date_val} → next day")
+        return date_val + timedelta(days=1), start_time, end_time
+
+    # Overnight span (starts late night, ends early morning) → keep selected date
+    if sh >= 21 and 0 <= eh <= 3:
+        logger.info(f"Night rollover: overnight span {start_time}–{end_time}, keeping date {date_val}")
+        return date_val, start_time, end_time
+
+    return date_val, start_time, end_time
+
+
+# ---------------------------------------------------------------------------
+# Slot normalisation  (backend returns XX:59, we normalise to (XX+1):00)
+# ---------------------------------------------------------------------------
+
+def _normalize_slot(slot: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert end_time XX:59 → (XX+1):00 for consistent matching."""
+    normalized = slot.copy()
+    end_str = slot.get("end_time", "")
+    if end_str:
+        parsed_end = _parse_time(end_str)
+        if parsed_end and parsed_end.minute == 59:
+            next_hour = (parsed_end.hour + 1) % 24
+            fmt = "%H:%M:%S" if len(end_str) == 8 else "%H:%M"
+            normalized["end_time"] = (
+                f"{next_hour:02d}:00:00" if fmt == "%H:%M:%S" else f"{next_hour:02d}:00"
+            )
+            normalized["end_time_normalized"] = True
+    return normalized
+
+
+def _normalize_all_slots(slots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [_normalize_slot(s) for s in slots]
+
+
+# ---------------------------------------------------------------------------
+# Time-period validation wrapper
+# ---------------------------------------------------------------------------
+
+def _validate_time_period_consistency(
+    start_time: Optional[str],
+    end_time: Optional[str],
+    period: Optional[str],
 ) -> Dict[str, Any]:
     """
-    Filter slots by time range and find matches.
-    
-    Returns slots that:
-    1. Exactly match (single slot with exact start and end)
-    2. Cover the range (multiple consecutive slots that together cover the requested time)
-    3. Fall within the range (start >= requested start, end <= requested end)
-    4. Overlap with the range
-    5. Closest alternatives if no matches
-    
-    Args:
-        slots: List of available slots
-        start_time: Desired start time (HH:MM format)
-        end_time: Desired end time (HH:MM format)
-        
-    Returns:
-        Dictionary with:
-        - exact_matches: List of slots that exactly cover the requested range
-        - within_range: List of slots within the requested range
-        - overlapping: List of slots that overlap
-        - closest: List of closest alternatives
-        - is_multi_slot_match: Boolean indicating if exact match is from multiple slots
+    Validate start_time and end_time against period, applying corrections
+    (Rules 2–4, 8).  Returns a result dict with keys:
+        valid, corrected_start_time, corrected_end_time, error
     """
+    result: Dict[str, Any] = {
+        "valid": True,
+        "corrected_start_time": start_time,
+        "corrected_end_time": end_time,
+        "error": None,
+    }
+
+    if not period:
+        return result
+
+    if start_time:
+        corrected = _correct_time_for_period(start_time, period)
+        if corrected is None:
+            result["valid"] = False
+            result["error"] = (
+                f"Start time {start_time} doesn't fit the '{period}' period "
+                f"and could not be corrected. Please use a time appropriate for {period}."
+            )
+            return result
+        result["corrected_start_time"] = corrected
+
+    if end_time:
+        corrected = _correct_time_for_period(end_time, period)
+        if corrected is None:
+            result["valid"] = False
+            result["error"] = (
+                f"End time {end_time} doesn't fit the '{period}' period "
+                f"and could not be corrected. Please use a time appropriate for {period}."
+            )
+            return result
+        result["corrected_end_time"] = corrected
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Period categorisation (for grouping/filtering slots)
+# ---------------------------------------------------------------------------
+
+def _categorize_slot_by_period(slot_start_time: str) -> str:
+    """Return the period name for a slot's start time."""
+    t = _parse_time(slot_start_time)
+    if not t:
+        return "unknown"
+    h = t.hour
+    if 4 <= h <= 11:
+        return "morning"
+    if 12 <= h <= 16:
+        return "afternoon"
+    if 17 <= h <= 20:
+        return "evening"
+    # 21-23 and 0-3
+    return "night"
+
+
+# ---------------------------------------------------------------------------
+# Slot filtering by time range  (with multi-slot midnight-crossing fix)
+# ---------------------------------------------------------------------------
+
+def _filter_slots_by_time_range(
+    slots: List[Dict[str, Any]],
+    start_time: str,
+    end_time: str,
+) -> Dict[str, Any]:
+    """
+    Filter *slots* by the requested [start_time, end_time] range.
+
+    Priority:
+      1. Exact single-slot match
+      2. Exact multi-slot match (consecutive slots that together cover the range)
+      3. Partial matches (slots overlapping the range)
+      4. Nearby alternatives (within 2 hours of requested start)
+      5. All slots (when total < 10)
+
+    Midnight crossing is handled throughout by converting times to
+    "minutes since midnight" and adding 24*60 when a wrap is detected.
+    """
+    empty = {
+        "exact_matches": [],
+        "partial_matches": [],
+        "nearby_alternatives": [],
+        "all_slots": [],
+        "is_multi_slot_match": False,
+    }
+
     if not slots or not start_time or not end_time:
-        return {
-            "exact_matches": [],
-            "within_range": [],
-            "overlapping": [],
-            "closest": [],
-            "is_multi_slot_match": False
-        }
-    
+        return empty
+
+    normalized_slots = _normalize_all_slots(slots)
+
     target_start = _parse_time(start_time)
     target_end = _parse_time(end_time)
-    
     if not target_start or not target_end:
-        return {
-            "exact_matches": [],
-            "within_range": [],
-            "overlapping": [],
-            "closest": [],
-            "is_multi_slot_match": False
-        }
-    
-    exact_matches = []
-    within_range = []
-    overlapping = []
-    all_with_distance = []
-    
+        return empty
+
     target_start_min = _time_to_minutes(target_start)
     target_end_min = _time_to_minutes(target_end)
-    
-    # Handle midnight crossing (e.g., 22:00 to 00:00)
-    # If end time is 00:00 (midnight), treat it as 24:00 (1440 minutes)
-    if target_end_min == 0 and target_start_min > 0:
-        target_end_min = 24 * 60  # 1440 minutes
-    elif target_end_min < target_start_min:
-        target_end_min += 24 * 60  # Add 24 hours
-    
-    logger.debug(
-        f"Target range: {start_time} ({target_start_min} min) to {end_time} ({target_end_min} min)"
-    )
-    logger.debug(f"Total slots to check: {len(slots)}")
-    
-    # First pass: check for single slot matches
-    for slot in slots:
+
+    # Handle midnight crossing for target range
+    if target_end_min <= target_start_min:
+        target_end_min += 24 * 60   # e.g. 22:00 → 00:00 becomes 22:00 → 24:00
+
+    exact_matches: List[Dict] = []
+    inner_slots: List[Dict] = []   # slots completely inside the range (multi-slot candidates)
+    partial_matches: List[Dict] = []
+    nearby_alternatives: List[Dict] = []
+
+    for slot in normalized_slots:
         slot_start = _parse_time(slot.get("start_time", ""))
         slot_end = _parse_time(slot.get("end_time", ""))
-        
         if not slot_start or not slot_end:
             continue
-        
-        slot_start_min = _time_to_minutes(slot_start)
-        slot_end_min = _time_to_minutes(slot_end)
-        
-        # Handle :59 case - treat XX:59 as next hour (XX+1:00)
-        if slot_end.minute == 59:
-            slot_end_min += 1
-            # Note: 23:59 + 1 minute = 1440 minutes (midnight)
-        
-        # Handle midnight crossing for slot (e.g., 23:00 to 00:00)
-        elif slot_end_min == 0 and slot_start_min > 0:
-            slot_end_min = 24 * 60  # Treat 00:00 as 24:00 (1440 minutes)
-        elif slot_end_min < slot_start_min:
-            slot_end_min += 24 * 60
-        
-        logger.debug(
-            f"Checking slot: {slot.get('start_time')} ({slot_start_min}) to "
-            f"{slot.get('end_time')} ({slot_end_min}) [normalized]"
-        )
-        
-        # Check for exact match (single slot)
-        if slot_start_min == target_start_min and slot_end_min == target_end_min:
+
+        s_min = _time_to_minutes(slot_start)
+        e_min = _time_to_minutes(slot_end)
+
+        # Lift slot into the same "timeline" as target if it crosses midnight
+        if e_min <= s_min:
+            e_min += 24 * 60
+        # If slot starts before target but would actually be "after midnight"
+        # in relation to the target range, lift it
+        if s_min < target_start_min and (s_min + 24 * 60) <= target_end_min:
+            s_min += 24 * 60
+            e_min += 24 * 60
+
+        # Single-slot exact match
+        if s_min == target_start_min and e_min == target_end_min:
             exact_matches.append(slot)
-            within_range.append(slot)
-            overlapping.append(slot)
-        # Check if slot is within requested range
-        elif slot_start_min >= target_start_min and slot_end_min <= target_end_min:
-            within_range.append(slot)
-            overlapping.append(slot)
-        # Check if slot overlaps with requested range
-        elif not (slot_end_min <= target_start_min or slot_start_min >= target_end_min):
-            overlapping.append(slot)
-        
-        # Calculate distance for closest alternatives
-        distance = abs(slot_start_min - target_start_min)
-        all_with_distance.append((distance, slot))
-    
-    # Second pass: check if multiple consecutive slots cover the exact range
-    if not exact_matches and within_range:
-        logger.debug(f"No single exact match found. Checking {len(within_range)} within_range slots for multi-slot match")
-        
-        # Sort within_range by start time
-        sorted_slots = sorted(within_range, key=lambda s: _parse_time(s.get("start_time", "")))
-        
-        # Check if they form a continuous coverage
-        if sorted_slots:
-            first_slot_start = _parse_time(sorted_slots[0].get("start_time", ""))
-            last_slot_end = _parse_time(sorted_slots[-1].get("end_time", ""))
-            
-            if first_slot_start and last_slot_end:
-                first_start_min = _time_to_minutes(first_slot_start)
-                last_end_min = _time_to_minutes(last_slot_end)
-                
-                # Handle :59 case - treat XX:59 as next hour
-                if last_slot_end.minute == 59:
-                    last_end_min += 1
-                
-                # Handle midnight crossing for last slot
-                if last_end_min < first_start_min:
-                    last_end_min += 24 * 60
-                
-                logger.debug(
-                    f"Multi-slot check: first_start={first_start_min} (target={target_start_min}), "
-                    f"last_end={last_end_min} (target={target_end_min})"
-                )
-                
-                # Check if the slots together cover the exact requested range
-                if first_start_min == target_start_min and last_end_min == target_end_min:
-                    # Verify continuity (no gaps between slots)
-                    is_continuous = True
-                    for i in range(len(sorted_slots) - 1):
-                        current_end = _parse_time(sorted_slots[i].get("end_time", ""))
-                        next_start = _parse_time(sorted_slots[i + 1].get("start_time", ""))
-                        
-                        if current_end and next_start:
-                            current_end_min = _time_to_minutes(current_end)
-                            # Handle :59 case
-                            if current_end.minute == 59:
-                                current_end_min += 1
-                            next_start_min = _time_to_minutes(next_start)
-                            
-                            # Handle midnight crossing
-                            if next_start_min < current_end_min:
-                                next_start_min += 24 * 60
-                            
-                            gap = abs(next_start_min - current_end_min)
-                            logger.debug(f"Gap between slot {i} and {i+1}: {gap} minutes")
-                            
-                            # Allow 1 minute gap (for :59 to :00 transitions)
-                            if gap > 1:
-                                is_continuous = False
-                                logger.debug(f"Gap too large: {gap} minutes")
-                                break
-                    
-                    if is_continuous:
-                        exact_matches = sorted_slots
-                        logger.info(
-                            f"Found multi-slot exact match: {len(sorted_slots)} consecutive slots "
-                            f"cover {start_time} to {end_time}"
-                        )
-                    else:
-                        logger.debug("Slots are not continuous")
-    
-    # Sort by distance and get top 5 closest
-    all_with_distance.sort(key=lambda x: x[0])
-    closest = [slot for _, slot in all_with_distance[:5]]
-    
-    is_multi_slot = len(exact_matches) > 1
-    
+            continue
+
+        # Completely inside the requested range → multi-slot candidate
+        if s_min >= target_start_min and e_min <= target_end_min:
+            inner_slots.append(slot)
+            continue
+
+        # Overlaps (partial)
+        if s_min < target_end_min and e_min > target_start_min:
+            partial_matches.append(slot)
+            continue
+
+        # Nearby (within 2 hours of requested start)
+        if abs(s_min - target_start_min) <= 120:
+            nearby_alternatives.append(slot)
+
+    # ---- Multi-slot exact match (uses inner_slots) -------------------------
+    if not exact_matches and inner_slots:
+        # Sort inner slots by start time (in the lifted timeline)
+        def _slot_start_min(s: Dict) -> int:
+            t = _parse_time(s.get("start_time", ""))
+            if not t:
+                return 0
+            m = _time_to_minutes(t)
+            # lift if needed
+            if m < target_start_min and (m + 24 * 60) <= target_end_min:
+                m += 24 * 60
+            return m
+
+        sorted_inner = sorted(inner_slots, key=_slot_start_min)
+
+        # Try to build a consecutive sequence from target_start_min to target_end_min
+        sequence: List[Dict] = []
+        current_end = target_start_min
+
+        for slot in sorted_inner:
+            t = _parse_time(slot.get("start_time", ""))
+            te = _parse_time(slot.get("end_time", ""))
+            if not t or not te:
+                break
+            s_min = _slot_start_min(slot)
+            e_min = _time_to_minutes(te)
+            if e_min <= _time_to_minutes(t):
+                e_min += 24 * 60
+            if s_min >= target_start_min and (e_min - s_min + s_min) > target_start_min:
+                # re-lift e_min relative to our timeline
+                if e_min < s_min:
+                    e_min += 24 * 60
+            # align e_min to lifted s_min
+            if s_min >= 24 * 60:
+                if e_min < s_min:
+                    e_min += 24 * 60
+
+            if s_min == current_end:
+                sequence.append(slot)
+                current_end = e_min
+                if current_end == target_end_min:
+                    exact_matches = sequence
+                    break
+            else:
+                # Gap found – reset
+                sequence = []
+                current_end = target_start_min
+
+    # Sort nearby by distance
+    nearby_alternatives.sort(
+        key=lambda s: abs(
+            _time_to_minutes(_parse_time(s.get("start_time", ""))) - target_start_min
+        )
+        if _parse_time(s.get("start_time", ""))
+        else 9999
+    )
+    nearby_alternatives = nearby_alternatives[:5]
+
+    all_slots_fallback = normalized_slots if len(normalized_slots) < 10 else []
+
     return {
         "exact_matches": exact_matches,
-        "within_range": within_range,
-        "overlapping": overlapping,
-        "closest": closest,
-        "is_multi_slot_match": is_multi_slot
+        "partial_matches": partial_matches,
+        "nearby_alternatives": nearby_alternatives,
+        "all_slots": all_slots_fallback,
+        "is_multi_slot_match": len(exact_matches) > 1,
     }
 
 
-def _group_slots_by_period(slots: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Group slots by time period.
-    
-    Args:
-        slots: List of slots
-        
-    Returns:
-        Dictionary with period names as keys and slot lists as values
-    """
-    grouped = {
-        "morning": [],
-        "afternoon": [],
-        "evening": [],
-        "night": []
-    }
-    
-    for slot in slots:
-        period = _categorize_slot_by_period(slot.get("start_time", ""))
-        if period in grouped:
-            grouped[period].append(slot)
-    
-    return grouped
-
+# ---------------------------------------------------------------------------
+# Main tool
+# ---------------------------------------------------------------------------
 
 async def get_available_slots_tool(
     court_id: int,
     date_val: date,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
-    time_period: Optional[str] = None
+    time_period: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Get available time slots for a court on a specific date with flexible filtering.
-    
+
     Logic:
-    1. If start_time AND end_time given: Try to match that range, show matches + closest alternatives
-    2. If only time_period given: Show slots in that period
-    3. If only start_time given: Show slots starting from that time (filtered by period if provided)
-    4. If only end_time given: Show slots ending before that time (filtered by period if provided)
-    5. If only date given: Show all slots grouped by period
-    
+      1. If start_time AND end_time given → match that range, show exact / partial / nearby.
+      2. If only time_period given → show slots in that period.
+      3. If only date given → show all slots grouped by period.
+
+    Applies all period/time correction rules (Rules 1–5, 7, 8) before querying.
+
     Args:
-        court_id: ID of the court
-        date_val: Date to check availability for
-        start_time: Optional start time (HH:MM format, can be 12 or 24 hour)
-        end_time: Optional end time (HH:MM format, can be 12 or 24 hour)
-        time_period: Optional time period (morning, afternoon, evening, night)
-        
+        court_id    : ID of the court.
+        date_val    : Date to check (Asia/Karachi).
+        start_time  : Optional start time (HH:MM).
+        end_time    : Optional end time (HH:MM).
+        time_period : Optional period name (morning / afternoon / evening / night).
+
     Returns:
-        Dictionary containing availability results with guidance for user
+        Dict with availability results.
     """
     try:
         logger.info(
-            f"Getting available slots: court_id={court_id}, date={date_val}, "
-            f"start_time={start_time}, end_time={end_time}, time_period={time_period}"
+            f"get_available_slots_tool: court_id={court_id}, date={date_val}, "
+            f"start={start_time}, end={end_time}, period={time_period}"
         )
-        
-        # Call shared public_service directly using sync bridge
+
+        # ------------------------------------------------------------------ #
+        # Step 1 – validate / correct times against period (Rules 2–4, 8)    #
+        # ------------------------------------------------------------------ #
+        # Key rule: explicit start_time + end_time always take precedence.
+        # If a stale/conflicting time_period was carried from session state
+        # but the times don't fit it, DROP the period and infer the correct
+        # one from the actual times rather than returning an error.
+        if time_period and (start_time or end_time):
+            validation = _validate_time_period_consistency(start_time, end_time, time_period)
+            if not validation["valid"]:
+                # Times are explicit and authoritative — infer period from them
+                inferred_period = _categorize_slot_by_period(start_time) if start_time else None
+                logger.warning(
+                    f"Period '{time_period}' conflicts with explicit times "
+                    f"{start_time}-{end_time}. "
+                    f"Dropping stale period, inferred as '{inferred_period}'. "
+                    f"Original error: {validation['error']}"
+                )
+                time_period = inferred_period  # use inferred (or None) going forward
+            else:
+                if validation["corrected_start_time"] != start_time:
+                    logger.info(f"Corrected start_time: {start_time} -> {validation['corrected_start_time']}")
+                    start_time = validation["corrected_start_time"]
+                if validation["corrected_end_time"] != end_time:
+                    logger.info(f"Corrected end_time: {end_time} -> {validation['corrected_end_time']}")
+                    end_time = validation["corrected_end_time"]
+
+        # ------------------------------------------------------------------ #
+        # Step 2 – apply night rollover rule (Rule 5)                        #
+        # ------------------------------------------------------------------ #
+        original_date = date_val
+        date_val, start_time, end_time = _adjust_date_for_overnight_booking(
+            date_val, start_time, end_time, time_period
+        )
+        if date_val != original_date:
+            logger.info(f"Night rollover: date shifted {original_date} → {date_val}")
+
+        # ------------------------------------------------------------------ #
+        # Step 3 – Rule 7: reject past dates / past times (Asia/Karachi)     #
+        # ------------------------------------------------------------------ #
+        now = datetime.now()          # assumes server runs in Asia/Karachi
+        current_date = now.date()
+        current_time = now.time()
+
+        if date_val < current_date:
+            return {
+                "success": False,
+                "error": (
+                    f"Cannot check availability for past date {date_val.isoformat()}. "
+                    "Please select today or a future date."
+                ),
+                "date": date_val.isoformat(),
+                "court_id": court_id,
+                "available_slots": [],
+                "is_past_date": True,
+            }
+
+        is_today = date_val == current_date
+        if is_today and start_time:
+            requested_start = _parse_time(start_time)
+            if requested_start and requested_start <= current_time:
+                return {
+                    "success": False,
+                    "error": (
+                        f"The requested time {start_time} has already passed today. "
+                        "Please select an upcoming time slot."
+                    ),
+                    "date": date_val.isoformat(),
+                    "court_id": court_id,
+                    "available_slots": [],
+                    "is_past_time": True,
+                    "current_time": current_time.strftime("%H:%M"),
+                }
+
+        # ------------------------------------------------------------------ #
+        # Step 4 – fetch slots from backend                                   #
+        # ------------------------------------------------------------------ #
         result = await call_sync_service(
             public_service.get_available_slots,
             db=None,
             court_id=court_id,
-            date_val=date_val
+            date_val=date_val,
         )
-        
-        # Check if service call succeeded
-        if not result.get('success'):
-            logger.warning(
-                f"Failed to get available slots: {result.get('message')} "
-                f"(court_id={court_id}, date={date_val})"
-            )
+
+        if not result.get("success"):
+            logger.warning(f"Backend error: {result.get('message')}")
             return {
                 "success": False,
-                "error": result.get('message', 'Failed to retrieve slots'),
+                "error": result.get("message", "Failed to retrieve slots"),
                 "date": date_val.isoformat(),
                 "court_id": court_id,
-                "available_slots": []
+                "available_slots": [],
             }
-        
-        # Extract data
-        availability_data = result.get('data', {})
-        all_slots = availability_data.get('available_slots', [])
-        court_name = availability_data.get('court_name', 'Unknown Court')
-        
-        logger.info(
-            f"Retrieved {len(all_slots)} total slots for court_id={court_id} on {date_val}"
-        )
-        
-        # Prepare base response
-        response = {
+
+        availability_data = result.get("data", {})
+        all_slots: List[Dict] = availability_data.get("available_slots", [])
+        court_name: str = availability_data.get("court_name", "Unknown Court")
+
+        logger.info(f"Backend returned {len(all_slots)} slots for court {court_id} on {date_val}")
+
+        # Normalise XX:59 → (XX+1):00
+        all_slots = _normalize_all_slots(all_slots)
+
+        # ------------------------------------------------------------------ #
+        # Step 5 – Rule 7: strip past slots when checking today              #
+        # ------------------------------------------------------------------ #
+        if is_today:
+            before = len(all_slots)
+            all_slots = [
+                s for s in all_slots
+                if (t := _parse_time(s.get("start_time", ""))) and t > current_time
+            ]
+            logger.info(f"Stripped {before - len(all_slots)} past slots for today")
+
+            if not all_slots:
+                return {
+                    "success": False,
+                    "error": (
+                        "No upcoming slots available for today. "
+                        "All time slots have passed. Please try tomorrow or a future date."
+                    ),
+                    "date": date_val.isoformat(),
+                    "court_id": court_id,
+                    "court_name": court_name,
+                    "available_slots": [],
+                    "is_today": True,
+                    "current_time": current_time.strftime("%H:%M"),
+                }
+
+        # ------------------------------------------------------------------ #
+        # Step 6 – build response                                             #
+        # ------------------------------------------------------------------ #
+        response: Dict[str, Any] = {
             "success": True,
             "date": date_val.isoformat(),
             "court_id": court_id,
             "court_name": court_name,
             "total_slots": len(all_slots),
-            "filter_info": {},
-            "user_guidance": ""
         }
-        
-        # CASE 1: Both start_time and end_time provided
+
+        # Case 1: explicit time range
         if start_time and end_time:
-            logger.info(f"Case 1: Both start and end time provided: {start_time} to {end_time}")
-            
-            # Log all slots for debugging
-            logger.debug(f"All available slots: {[(s.get('start_time'), s.get('end_time')) for s in all_slots]}")
-            
+            logger.info(f"Filtering by range: {start_time} – {end_time}")
             matches = _filter_slots_by_time_range(all_slots, start_time, end_time)
-            
-            logger.info(
-                f"Time range filter results: exact={len(matches['exact_matches'])}, "
-                f"within={len(matches['within_range'])}, overlapping={len(matches['overlapping'])}, "
-                f"is_multi_slot={matches.get('is_multi_slot_match', False)}"
-            )
-            
-            # Apply period filter if provided
-            if time_period:
-                matches["exact_matches"] = _filter_slots_by_period(matches["exact_matches"], time_period)
-                matches["within_range"] = _filter_slots_by_period(matches["within_range"], time_period)
-                matches["overlapping"] = _filter_slots_by_period(matches["overlapping"], time_period)
-                matches["closest"] = _filter_slots_by_period(matches["closest"], time_period)
-            
-            response["filter_info"] = {
-                "type": "time_range",
-                "start_time": start_time,
-                "end_time": end_time,
-                "time_period": time_period
-            }
-            
+
             if matches["exact_matches"]:
                 response["available_slots"] = matches["exact_matches"]
                 response["match_type"] = "exact"
-                response["is_multi_slot_match"] = matches.get("is_multi_slot_match", False)
-                
-                if matches.get("is_multi_slot_match"):
-                    response["user_guidance"] = (
-                        f"✅ Found {len(matches['exact_matches'])} consecutive slots covering {start_time} to {end_time}. "
-                        f"You can also try: different times, morning/afternoon/evening/night slots, or specific dates (YYYY-MM-DD)."
-                    )
-                else:
-                    response["user_guidance"] = (
-                        f"✅ Found exact match for {start_time} to {end_time}. "
-                        f"You can also try: different times, morning/afternoon/evening/night slots, or specific dates (YYYY-MM-DD)."
-                    )
-            elif matches["within_range"]:
-                response["available_slots"] = matches["within_range"]
-                response["match_type"] = "within_range"
-                response["user_guidance"] = (
-                    f"Found slots within {start_time} to {end_time}. "
-                    f"Try: exact times like '6 PM to 7 PM', morning/evening, or different dates."
+                response["is_multi_slot_match"] = matches["is_multi_slot_match"]
+                logger.info(f"Exact match: {len(matches['exact_matches'])} slot(s)")
+
+            elif matches["partial_matches"]:
+                response["available_slots"] = matches["partial_matches"]
+                response["match_type"] = "partial"
+                response["message"] = (
+                    f"Exact time {start_time}–{end_time} not available. "
+                    "Showing slots that partially overlap with your requested time."
                 )
-            elif matches["overlapping"]:
-                response["available_slots"] = matches["overlapping"]
-                response["match_type"] = "overlapping"
-                response["user_guidance"] = (
-                    f"Found slots overlapping with {start_time} to {end_time}. "
-                    f"Try: adjusting times, morning/afternoon/evening/night, or different dates."
+
+            elif matches["nearby_alternatives"]:
+                response["available_slots"] = matches["nearby_alternatives"]
+                response["match_type"] = "nearby"
+                response["message"] = (
+                    f"No slots available for {start_time}–{end_time}. "
+                    "Showing nearby time slots."
                 )
+
+            elif matches["all_slots"]:
+                response["available_slots"] = matches["all_slots"]
+                response["match_type"] = "all"
+                response["message"] = (
+                    f"No slots available for {start_time}–{end_time}. "
+                    "Showing all available slots for this date."
+                )
+
             else:
-                response["available_slots"] = matches["closest"]
-                response["match_type"] = "closest"
-                response["user_guidance"] = (
-                    f"No slots available for {start_time} to {end_time}. Showing closest alternatives. "
-                    f"Try: morning/afternoon/evening/night, different times, or other dates."
+                response["available_slots"] = []
+                response["match_type"] = "none"
+                response["message"] = (
+                    f"No slots available for {start_time}–{end_time} or nearby times."
                 )
-        
-        # CASE 2: Only time_period provided
-        elif time_period and not start_time and not end_time:
-            logger.info(f"Case 2: Only time period provided: {time_period}")
-            
-            filtered_slots = _filter_slots_by_period(all_slots, time_period)
-            
-            response["available_slots"] = filtered_slots
-            response["filter_info"] = {
-                "type": "time_period",
-                "time_period": time_period
-            }
+
+        # Case 2: period only
+        elif time_period:
+            logger.info(f"Filtering by period: {time_period}")
+            response["available_slots"] = [
+                s for s in all_slots
+                if _categorize_slot_by_period(s.get("start_time", "")) == time_period
+            ]
             response["match_type"] = "period"
-            response["user_guidance"] = (
-                f"Showing {time_period} slots. "
-                f"Try: specific times like '6 to 7 PM', other periods (morning/afternoon/evening/night), or exact dates."
-            )
-        
-        # CASE 3: Only start_time provided
-        elif start_time and not end_time:
-            logger.info(f"Case 3: Only start time provided: {start_time}")
-            
-            filtered_slots = _filter_slots_by_start_time(all_slots, start_time)
-            
-            # Apply period filter if provided
-            if time_period:
-                filtered_slots = _filter_slots_by_period(filtered_slots, time_period)
-            
-            response["available_slots"] = filtered_slots
-            response["filter_info"] = {
-                "type": "start_time_only",
-                "start_time": start_time,
-                "time_period": time_period
-            }
-            response["match_type"] = "from_start"
-            response["user_guidance"] = (
-                f"Showing slots from {start_time} onwards" + 
-                (f" in the {time_period}" if time_period else "") + ". "
-                f"Try: adding end time like '{start_time} to 8 PM', morning/evening, or different dates."
-            )
-        
-        # CASE 4: Only end_time provided
-        elif end_time and not start_time:
-            logger.info(f"Case 4: Only end time provided: {end_time}")
-            
-            filtered_slots = _filter_slots_by_end_time(all_slots, end_time)
-            
-            # Apply period filter if provided
-            if time_period:
-                filtered_slots = _filter_slots_by_period(filtered_slots, time_period)
-            
-            response["available_slots"] = filtered_slots
-            response["filter_info"] = {
-                "type": "end_time_only",
-                "end_time": end_time,
-                "time_period": time_period
-            }
-            response["match_type"] = "until_end"
-            response["user_guidance"] = (
-                f"Showing slots until {end_time}" +
-                (f" in the {time_period}" if time_period else "") + ". "
-                f"Try: adding start time like '6 PM to {end_time}', morning/evening, or different dates."
-            )
-        
-        # CASE 5: Only date provided (no time filters)
+
+        # Case 3: date only → all slots
         else:
-            logger.info(f"Case 5: Only date provided, showing all slots")
-            
-            # Group by period for better display
-            grouped = _group_slots_by_period(all_slots)
-            
             response["available_slots"] = all_slots
-            response["slots_by_period"] = grouped
-            response["filter_info"] = {
-                "type": "full_day"
-            }
             response["match_type"] = "all"
-            response["user_guidance"] = (
-                f"Showing all available slots. "
-                f"Try: specific times like '6 to 7 PM', morning/afternoon/evening/night, or exact dates (YYYY-MM-DD)."
-            )
-        
-        logger.info(
-            f"Availability check complete: found {len(response.get('available_slots', []))} slots, "
-            f"match_type={response.get('match_type')}"
-        )
-        
+
+        logger.info(f"Returning {len(response.get('available_slots', []))} slots")
         return response
-            
-    except Exception as e:
-        logger.error(f"Error getting available slots: {e}", exc_info=True)
+
+    except Exception as exc:
+        logger.error(f"Unexpected error in get_available_slots_tool: {exc}", exc_info=True)
         return {
             "success": False,
-            "error": str(e),
+            "error": str(exc),
             "date": date_val.isoformat() if date_val else None,
             "court_id": court_id,
-            "available_slots": []
+            "available_slots": [],
         }
 
 
-# Tool registry for easy access
+# ---------------------------------------------------------------------------
+# Tool registry
+# ---------------------------------------------------------------------------
 AVAILABILITY_TOOLS = {
     "get_available_slots": get_available_slots_tool,
 }
