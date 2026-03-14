@@ -19,6 +19,7 @@ from app.agent.prompts.conversation_prompts import (
 )
 from app.agent.prompts.information_prompts import (
     get_information_router_prompt,
+    get_availability_router_prompt,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "get_booking_prompt",
     "get_error_prompt",
     "get_information_router_prompt",
+    "get_availability_router_prompt",
 ]

@@ -18,6 +18,18 @@ from typing import Dict, Any, Optional, List
 
 from app.agent.state.conversation_state import ConversationState
 from app.agent.utils.llm_logger import get_llm_logger
+from app.agent.nodes.information.utils.matching_utils import (
+    _match_property,
+    _match_court,
+    _resolve_property_selection,
+    _resolve_court_selection,
+)
+from app.agent.nodes.information.utils.date_time_utils import (
+    _is_iso_date,
+    _floor_time_to_hour,
+    _ceil_time_to_hour,
+    _normalize_date,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +69,6 @@ async def validate_and_update_state(
     available_courts = flow_state.get("available_courts", [])
 
     current_property_id = flow_state.get("property_id")
-    current_court_ids = flow_state.get("court_ids", [])
 
     flow_state["validation_error"] = None
 
@@ -84,6 +95,32 @@ async def validate_and_update_state(
             flow_state["bot_response"] = "I couldn't understand that. Please try again."
         
         flow_state["validation_error"] = "unclear_message"
+        
+        # Save property/court related requested_actions as pending so next turn can resume
+        # Skip availability (it needs date which is the unclear part)
+        non_availability_actions = [a for a in requested_actions if a != "availability"]
+        if non_availability_actions:
+            existing_pending = flow_state.get("pending_actions", [])
+            merged_pending = list(existing_pending)
+            for action in non_availability_actions:
+                if action not in merged_pending:
+                    merged_pending.append(action)
+            flow_state["pending_actions"] = merged_pending
+            
+            # Save field params for property/court actions
+            pending_params = flow_state.get("pending_action_params", {})
+            if "property_details" in non_availability_actions:
+                pending_params["property_details"] = {
+                    "property_detail_fields": router_result.get("property_detail_fields") or ["all"]
+                }
+            if "court_details" in non_availability_actions:
+                pending_params["court_details"] = {
+                    "court_detail_fields": router_result.get("court_detail_fields") or ["all"]
+                }
+            flow_state["pending_action_params"] = pending_params
+            
+            logger.info(f"[UNCLEAR] Saved pending actions for chat {chat_id}: {merged_pending}")
+        
         flow_state["last_node"] = "information-validate"
         state["flow_state"] = flow_state
         return state
@@ -113,11 +150,14 @@ async def validate_and_update_state(
     # ---------------------------------
     # PENDING_REPLY VALIDATION (Fallback for LLM errors)
     # ---------------------------------
-    # If LLM says "pending_reply" but user has requested actions, it's likely a new request
-    if message_type == "pending_reply" and requested_actions:
+    # If LLM says "pending_reply" but user has requested actions, it's likely a new request.
+    # Exception: "availability" in requested_actions is expected when reply_target="date_selection"
+    # because the router always adds "availability" when date/time intent is detected.
+    non_availability_requested = [a for a in requested_actions if a != "availability"]
+    if message_type == "pending_reply" and non_availability_requested:
         logger.warning(
             f"[PENDING_REPLY CORRECTION] Chat {chat_id}: "
-            f"LLM set message_type='pending_reply' but user requested actions: {requested_actions}. "
+            f"LLM set message_type='pending_reply' but user requested non-availability actions: {non_availability_requested}. "
             f"Correcting to 'mixed' or 'new_request'."
         )
         # If there's a valid reply_target AND actions, it's mixed
@@ -135,8 +175,14 @@ async def validate_and_update_state(
         router_result["reply_target"] = reply_target
         flow_state["router_result"] = router_result
     
-    # Additional check: If "mixed" but no mentioned property/court, it's just new_request
-    if message_type == "mixed" and not mentioned_property_name and not mentioned_court_name:
+    # Additional check: If "mixed" but no mentioned property/court, it's just new_request.
+    # Exception: if reply_target="date_selection" with only availability action, that's valid.
+    if (
+        message_type == "mixed"
+        and not mentioned_property_name
+        and not mentioned_court_name
+        and reply_target != "date_selection"
+    ):
         logger.warning(
             f"[MIXED CORRECTION] Chat {chat_id}: "
             f"LLM set message_type='mixed' but no property/court mentioned. "
@@ -160,70 +206,38 @@ async def validate_and_update_state(
         flow_state["router_result"] = router_result
 
     # ---------------------------------
-    # PROPERTY REPLY RESOLUTION
+    # PROPERTY VALIDATION (reply or mention)
     # ---------------------------------
-    if reply_target == "property_selection":
-        
-        # Additional validation: If no property mentioned, it's not really a reply
-        if not mentioned_property_name:
-            logger.warning(
-                f"[PROPERTY REPLY VALIDATION] Chat {chat_id}: "
-                f"reply_target='property_selection' but no property mentioned. "
-                f"Treating as new_request instead."
-            )
-            reply_target = None
-            message_type = "new_request"
-            router_result["message_type"] = message_type
-            router_result["reply_target"] = reply_target
-            flow_state["router_result"] = router_result
-        else:
-            # User mentioned a property, validate it
-            matched_property = _resolve_property_selection(
-                mentioned_property_name,
-                available_properties,
-                chat_id
-            )
+    is_property_reply = reply_target == "property_selection"
 
-            if matched_property:
-                if matched_property["id"] != current_property_id:
-                    property_changed = True
+    if is_property_reply and not mentioned_property_name:
+        logger.warning(
+            f"[PROPERTY REPLY VALIDATION] Chat {chat_id}: "
+            f"reply_target='property_selection' but no property mentioned. "
+            f"Treating as new_request instead."
+        )
+        reply_target = None
+        message_type = "new_request"
+        router_result["message_type"] = message_type
+        router_result["reply_target"] = reply_target
+        flow_state["router_result"] = router_result
 
-                flow_state["property_id"] = matched_property["id"]
-                flow_state["property_name"] = matched_property.get("name")
-                property_set_this_turn = True  # Mark that property was set THIS turn
-
-                flow_state["awaiting_input"] = None
-
-            else:
-                flow_state["validation_error"] = "invalid_property"
-                flow_state["awaiting_input"] = "property_selection"
-                state["flow_state"] = flow_state
-                return state
-
-    # ---------------------------------
-    # PROPERTY MENTION VALIDATION
-    # ---------------------------------
-    if mentioned_property_name and not reply_target:
-
-        matched_property = _match_property(
-            mentioned_property_name,
-            available_properties,
-            chat_id
+    elif mentioned_property_name and (is_property_reply or not reply_target):
+        matched_property = (
+            _resolve_property_selection(mentioned_property_name, available_properties, chat_id)
+            if is_property_reply
+            else _match_property(mentioned_property_name, available_properties, chat_id)
         )
 
         if matched_property:
             if matched_property["id"] != current_property_id:
                 property_changed = True
-
             flow_state["property_id"] = matched_property["id"]
             flow_state["property_name"] = matched_property.get("name")
-            property_set_this_turn = True  # Mark that property was set THIS turn
-            
-            # Clear awaiting_input if we were waiting for property
-            if flow_state.get("awaiting_input") == "property_selection":
+            property_set_this_turn = True
+            if is_property_reply or flow_state.get("awaiting_input") == "property_selection":
                 flow_state["awaiting_input"] = None
-                logger.info(f"Cleared awaiting_input (property_selection) for chat {chat_id} - user mentioned valid property")
-
+                logger.info(f"Cleared awaiting_input (property_selection) for chat {chat_id}")
         else:
             flow_state["validation_error"] = "invalid_property"
             flow_state["awaiting_input"] = "property_selection"
@@ -276,68 +290,36 @@ async def validate_and_update_state(
     active_property_id = flow_state.get("property_id")
 
     # ---------------------------------
-    # COURT REPLY RESOLUTION
+    # COURT VALIDATION (reply or mention)
     # ---------------------------------
-    if reply_target == "court_selection":
-        
-        # Additional validation: If no court mentioned, it's not really a reply
-        if not mentioned_court_name:
-            logger.warning(
-                f"[COURT REPLY VALIDATION] Chat {chat_id}: "
-                f"reply_target='court_selection' but no court mentioned. "
-                f"Treating as new_request instead."
-            )
-            reply_target = None
-            message_type = "new_request"
-            router_result["message_type"] = message_type
-            router_result["reply_target"] = reply_target
-            flow_state["router_result"] = router_result
-        else:
-            # User mentioned a court, validate it
-            matched_sport_type, matched_court_ids = _resolve_court_selection(
-                mentioned_court_name,
-                available_courts,
-                active_property_id,
-                chat_id
-            )
+    is_court_reply = reply_target == "court_selection"
 
-            if matched_court_ids:
+    if is_court_reply and not mentioned_court_name:
+        logger.warning(
+            f"[COURT REPLY VALIDATION] Chat {chat_id}: "
+            f"reply_target='court_selection' but no court mentioned. "
+            f"Treating as new_request instead."
+        )
+        reply_target = None
+        message_type = "new_request"
+        router_result["message_type"] = message_type
+        router_result["reply_target"] = reply_target
+        flow_state["router_result"] = router_result
 
-                flow_state["court_ids"] = matched_court_ids
-                flow_state["court_type"] = matched_sport_type
-                court_set_this_turn = True  # Mark that court was set THIS turn
-
-                flow_state["awaiting_input"] = None
-
-            else:
-                flow_state["validation_error"] = "invalid_court"
-                flow_state["awaiting_input"] = "court_selection"
-                state["flow_state"] = flow_state
-                return state
-
-    # ---------------------------------
-    # COURT MENTION VALIDATION
-    # ---------------------------------
-    if mentioned_court_name and not reply_target:
-
-        matched_sport_type, matched_court_ids = _match_court(
-            mentioned_court_name,
-            available_courts,
-            active_property_id,
-            chat_id
+    elif mentioned_court_name and (is_court_reply or not reply_target):
+        matched_sport_type, matched_court_ids = (
+            _resolve_court_selection(mentioned_court_name, available_courts, active_property_id, chat_id)
+            if is_court_reply
+            else _match_court(mentioned_court_name, available_courts, active_property_id, chat_id)
         )
 
         if matched_court_ids:
-
             flow_state["court_ids"] = matched_court_ids
             flow_state["court_type"] = matched_sport_type
-            court_set_this_turn = True  # Mark that court was set THIS turn
-            
-            # Clear awaiting_input if we were waiting for court
-            if flow_state.get("awaiting_input") == "court_selection":
+            court_set_this_turn = True
+            if is_court_reply or flow_state.get("awaiting_input") == "court_selection":
                 flow_state["awaiting_input"] = None
-                logger.info(f"Cleared awaiting_input (court_selection) for chat {chat_id} - user mentioned valid court")
-
+                logger.info(f"Cleared awaiting_input (court_selection) for chat {chat_id}")
         else:
             flow_state["validation_error"] = "invalid_court"
             flow_state["awaiting_input"] = "court_selection"
@@ -345,171 +327,83 @@ async def validate_and_update_state(
             return state
 
     # ---------------------------------
-    # DATE REPLY RESOLUTION
-    # ---------------------------------
-    if reply_target == "date_selection":
-        
-        # Additional validation: If no date mentioned, it's not really a reply
-        if not router_result.get("mentioned_date_text"):
-            logger.warning(
-                f"[DATE REPLY VALIDATION] Chat {chat_id}: "
-                f"reply_target='date_selection' but no date mentioned. "
-                f"Treating as new_request instead."
-            )
-            reply_target = None
-            message_type = "new_request"
-            router_result["message_type"] = message_type
-            router_result["reply_target"] = reply_target
-            flow_state["router_result"] = router_result
-        else:
-            # User mentioned a date, validate and normalize it
-            date_interpretation = router_result.get("date_interpretation")
-            mentioned_date_text = router_result.get("mentioned_date_text")
-            date_status = router_result.get("date_status", "not_provided")
-            
-            if date_status == "interpretable" and date_interpretation:
-                # Validate that date_interpretation is something we can normalize
-                valid_interpretations = [
-                    "today", "tonight", "tomorrow", "parso", "day_after_tomorrow",
-                    "next_monday", "next_tuesday", "next_wednesday", "next_thursday",
-                    "next_friday", "next_saturday", "next_sunday",
-                    "this_monday", "this_tuesday", "this_wednesday", "this_thursday",
-                    "this_friday", "this_saturday", "this_sunday"
-                ]
-                
-                # Check if it's a valid interpretation or ISO date format
-                is_valid = (
-                    date_interpretation in valid_interpretations or
-                    date_interpretation.startswith("next_") or
-                    date_interpretation.startswith("this_") or
-                    _is_iso_date(date_interpretation)
-                )
-                
-                if not is_valid:
-                    # Invalid interpretation like "next_week" - ask for specific date
-                    logger.warning(
-                        f"Invalid date_interpretation '{date_interpretation}' for chat {chat_id} - "
-                        f"asking for specific date"
-                    )
-                    flow_state["validation_error"] = "invalid_date"
-                    flow_state["bot_response"] = (
-                        "Please specify a specific date:\n\n"
-                        "📅 Relative dates: today, tomorrow, parso, next Monday\n"
-                        "📅 Exact date: 2026-03-15 or March 15\n\n"
-                        "You can also specify time:\n"
-                        "🕐 Time period: morning, afternoon, evening, night\n"
-                        "🕐 Exact slot: 6 to 7 PM, 18:00 to 19:00"
-                    )
-                    flow_state["awaiting_input"] = "date_selection"
-                    state["flow_state"] = flow_state
-                    return state
-                
-                # Normalize date to YYYY-MM-DD format
-                normalized_date = _normalize_date(
-                    date_interpretation,
-                    mentioned_date_text,
-                    chat_id
-                )
-                
-                if normalized_date:
-                    flow_state["selected_date"] = normalized_date
-                    date_set_this_turn = True  # Mark that date was set THIS turn
-                    flow_state["awaiting_input"] = None
-                    
-                    logger.info(
-                        f"Date reply resolved for chat {chat_id}: "
-                        f"'{mentioned_date_text}' → {normalized_date}"
-                    )
-                else:
-                    # Failed to normalize - invalid date
-                    flow_state["validation_error"] = "invalid_date"
-                    flow_state["awaiting_input"] = "date_selection"
-                    state["flow_state"] = flow_state
-                    return state
-            else:
-                # Date status is unclear or not interpretable
-                flow_state["validation_error"] = "invalid_date"
-                flow_state["awaiting_input"] = "date_selection"
-                state["flow_state"] = flow_state
-                return state
-
-    # ---------------------------------
-    # DATE MENTION VALIDATION
+    # DATE VALIDATION (reply or mention)
     # ---------------------------------
     mentioned_date_text = router_result.get("mentioned_date_text")
     date_interpretation = router_result.get("date_interpretation")
     date_status = router_result.get("date_status", "not_provided")
-    
-    if mentioned_date_text and not reply_target:
-        # User mentioned a date in their message (not replying to date question)
-        
+
+    is_date_reply = reply_target == "date_selection"
+
+    if is_date_reply and not mentioned_date_text:
+        # LLM said reply_target=date_selection but no date in message — treat as new request
+        logger.warning(
+            f"[DATE REPLY VALIDATION] Chat {chat_id}: "
+            f"reply_target='date_selection' but no date mentioned. "
+            f"Treating as new_request instead."
+        )
+        reply_target = None
+        message_type = "new_request"
+        router_result["message_type"] = message_type
+        router_result["reply_target"] = reply_target
+        flow_state["router_result"] = router_result
+
+    elif mentioned_date_text and (is_date_reply or not reply_target):
+        _VALID_DATE_INTERPRETATIONS = {
+            "today", "tonight", "tomorrow", "parso", "day_after_tomorrow",
+            "next_monday", "next_tuesday", "next_wednesday", "next_thursday",
+            "next_friday", "next_saturday", "next_sunday",
+            "this_monday", "this_tuesday", "this_wednesday", "this_thursday",
+            "this_friday", "this_saturday", "this_sunday",
+        }
+
+        def _fail_date(bot_response: str = None):
+            _save_non_availability_as_pending(flow_state, router_result, chat_id)
+            flow_state["validation_error"] = "invalid_date"
+            flow_state["awaiting_input"] = "date_selection"
+            if bot_response:
+                flow_state["bot_response"] = bot_response
+            state["flow_state"] = flow_state
+
         if date_status == "interpretable" and date_interpretation:
-            # Validate that date_interpretation is something we can normalize
-            valid_interpretations = [
-                "today", "tonight", "tomorrow", "parso", "day_after_tomorrow",
-                "next_monday", "next_tuesday", "next_wednesday", "next_thursday",
-                "next_friday", "next_saturday", "next_sunday",
-                "this_monday", "this_tuesday", "this_wednesday", "this_thursday",
-                "this_friday", "this_saturday", "this_sunday"
-            ]
-            
-            # Check if it's a valid interpretation or ISO date format
             is_valid = (
-                date_interpretation in valid_interpretations or
+                date_interpretation in _VALID_DATE_INTERPRETATIONS or
                 date_interpretation.startswith("next_") or
                 date_interpretation.startswith("this_") or
                 _is_iso_date(date_interpretation)
             )
-            
+
             if not is_valid:
-                # Invalid interpretation like "next_week" - ask for specific date
                 logger.warning(
                     f"Invalid date_interpretation '{date_interpretation}' for chat {chat_id} - "
                     f"asking for specific date"
                 )
-                flow_state["validation_error"] = "invalid_date"
-                flow_state["bot_response"] = (
-                    "Please specify a specific date like today, tomorrow, "
-                    "next Monday, or a date like March 15."
+                _fail_date(
+                    "Please specify a specific date:\n\n"
+                    "📅 Relative dates: today, tomorrow, parso, next Monday\n"
+                    "📅 Exact date: 2026-03-15 or March 15\n\n"
+                    "You can also specify time:\n"
+                    "🕐 Time period: morning, afternoon, evening, night\n"
+                    "🕐 Exact slot: 6 to 7 PM, 18:00 to 19:00"
                 )
-                flow_state["awaiting_input"] = "date_selection"
-                state["flow_state"] = flow_state
                 return state
-            
-            # Normalize date to YYYY-MM-DD format
-            normalized_date = _normalize_date(
-                date_interpretation,
-                mentioned_date_text,
-                chat_id
-            )
-            
+
+            normalized_date = _normalize_date(date_interpretation, mentioned_date_text, chat_id)
+
             if normalized_date:
                 flow_state["selected_date"] = normalized_date
-                date_set_this_turn = True  # Mark that date was set THIS turn
-                
-                # Clear awaiting_input if we were waiting for date
-                if flow_state.get("awaiting_input") == "date_selection":
+                date_set_this_turn = True
+                if is_date_reply or flow_state.get("awaiting_input") == "date_selection":
                     flow_state["awaiting_input"] = None
-                    logger.info(
-                        f"Cleared awaiting_input (date_selection) for chat {chat_id} - "
-                        f"user mentioned valid date"
-                    )
-                
                 logger.info(
-                    f"Date mention validated for chat {chat_id}: "
-                    f"'{mentioned_date_text}' → {normalized_date}"
+                    f"Date validated for chat {chat_id}: "
+                    f"'{mentioned_date_text}' → {normalized_date} (reply={is_date_reply})"
                 )
             else:
-                # Failed to normalize - invalid date
-                flow_state["validation_error"] = "invalid_date"
-                flow_state["awaiting_input"] = "date_selection"
-                state["flow_state"] = flow_state
+                _fail_date()
                 return state
         else:
-            # Date status is unclear
-            flow_state["validation_error"] = "invalid_date"
-            flow_state["awaiting_input"] = "date_selection"
-            state["flow_state"] = flow_state
+            _fail_date()
             return state
     
     # ---------------------------------
@@ -575,6 +469,8 @@ async def validate_and_update_state(
         has_property and
         has_court and
         "availability" not in requested_actions
+        # TODO: consider adding `and not availability_was_pending` to let pending
+        # resume logic handle it exclusively instead of both paths firing
     )
     
     if should_add_availability:
@@ -696,7 +592,7 @@ async def validate_and_update_state(
     # ---------------------------------
     # If LLM returned empty actions and user is NOT replying, try keyword matching
     # This handles cases like "tell courts", "show location", "pricing info" etc.
-    if not requested_actions and not reply_target and message_type != "pending_reply":
+    if not requested_actions and not reply_target and message_type != "pending_reply" and not mentioned_court_name and not mentioned_property_name:
         user_message = state.get("user_message", "").lower()
         
         # Keyword mappings for common requests
@@ -715,7 +611,6 @@ async def validate_and_update_state(
             "facility": ("property_details", ["amenities"]),
             "courts": ("property_details", ["available_courts"]),
             "court": ("property_details", ["available_courts"]),
-            "available": ("property_details", ["available_courts"]),
             "description": ("property_details", ["description"]),
             "about": ("property_details", ["description"]),
             "details": ("property_details", ["all"]),
@@ -963,664 +858,42 @@ async def validate_and_update_state(
     return state
 
 
-# =====================================================
-# MATCH HELPERS
-# =====================================================
-
-# Sport name synonyms/aliases for flexible matching
-SPORT_SYNONYMS = {
-    "football": ["futsal", "soccer"],
-    "soccer": ["futsal", "football"],
-    "futsal": ["football", "soccer"],
-    "badminton": ["shuttle", "shuttlecock"],
-    "table tennis": ["ping pong", "tt"],
-    "ping pong": ["table tennis", "tt"],
-    "basketball": ["basket", "hoops"],
-    "tennis": ["lawn tennis"],
-    "cricket": ["indoor cricket"],
-}
-
-
-def _normalize_sport_name(name: str) -> str:
-    """Normalize sport name for matching (lowercase, strip)."""
-    return name.lower().strip()
-
-
-def _get_sport_aliases(sport_name: str) -> List[str]:
-    """Get all aliases for a sport name including the original."""
-    normalized = _normalize_sport_name(sport_name)
-    aliases = [normalized]
-    
-    # Add synonyms if they exist
-    if normalized in SPORT_SYNONYMS:
-        aliases.extend(SPORT_SYNONYMS[normalized])
-    
-    return aliases
-
-def _resolve_property_selection(
-    mentioned_name: Optional[str],
-    available_properties: List[Dict],
+def _save_non_availability_as_pending(
+    flow_state: Dict[str, Any],
+    router_result: Dict[str, Any],
     chat_id: str
-) -> Optional[Dict]:
-
-    if not mentioned_name or not available_properties:
-        return None
-
-    try:
-        index = int(mentioned_name) - 1
-        if 0 <= index < len(available_properties):
-            return available_properties[index]
-    except (ValueError, TypeError):
-        pass
-
-    return _match_property(mentioned_name, available_properties, chat_id)
-
-
-def _resolve_court_selection(
-    mentioned_name: Optional[str],
-    available_courts: List[Dict],
-    property_id: Optional[int],
-    chat_id: str
-) -> tuple[Optional[str], List[int]]:
+) -> None:
     """
-    Resolve court selection to sport type and matching court IDs.
-    
-    Returns:
-        tuple: (sport_type, [court_ids]) or (None, [])
+    Save property_details / court_details / media actions as pending when
+    an invalid_date early return occurs. Availability is intentionally excluded
+    because the date is the unclear part — it will be re-requested next turn.
     """
-    if not mentioned_name or not available_courts:
-        return None, []
+    requested_actions = router_result.get("requested_actions", [])
+    non_avail_actions = [a for a in requested_actions if a != "availability"]
 
-    filtered = _filter_courts_by_property(available_courts, property_id)
+    if not non_avail_actions:
+        return
 
-    try:
-        index = int(mentioned_name) - 1
-        if 0 <= index < len(filtered):
-            # Get unique sport types from filtered courts
-            unique_sport_types = []
-            for court in filtered:
-                sport_types = court.get("sport_types", [])
-                for st in sport_types:
-                    if st not in unique_sport_types:
-                        unique_sport_types.append(st)
-            
-            # User selected by index - get the sport type at that index
-            if 0 <= index < len(unique_sport_types):
-                selected_sport = unique_sport_types[index]
-                # Find all courts with this sport type
-                matching_ids = []
-                for court in filtered:
-                    if selected_sport in court.get("sport_types", []):
-                        matching_ids.append(court["id"])
-                return selected_sport, matching_ids
-    except (ValueError, TypeError):
-        pass
+    existing_pending = flow_state.get("pending_actions", [])
+    merged_pending = list(existing_pending)
+    for action in non_avail_actions:
+        if action not in merged_pending:
+            merged_pending.append(action)
+    flow_state["pending_actions"] = merged_pending
 
-    return _match_court(mentioned_name, available_courts, property_id, chat_id)
+    pending_params = flow_state.get("pending_action_params", {})
+    if "property_details" in non_avail_actions:
+        pending_params["property_details"] = {
+            "property_detail_fields": router_result.get("property_detail_fields") or ["all"]
+        }
+    if "court_details" in non_avail_actions:
+        pending_params["court_details"] = {
+            "court_detail_fields": router_result.get("court_detail_fields") or ["all"]
+        }
+    flow_state["pending_action_params"] = pending_params
 
-
-def _match_property(
-    property_name: str,
-    available_properties: List[Dict],
-    chat_id: str
-) -> Optional[Dict]:
-    """
-    Match property by name with fuzzy matching.
-    
-    Matching priority:
-    1. Exact name match
-    2. Starts-with match
-    3. Contains match (partial)
-    4. Description match (fallback)
-    """
-    name_lower = _normalize_sport_name(property_name)
-
-    # Level 1: Exact match
-    for prop in available_properties:
-        pname = _normalize_sport_name(prop.get("name") or "")
-        if pname == name_lower:
-            logger.debug(f"Exact property match: '{property_name}' → {prop.get('id')}")
-            return prop
-
-    # Level 2: Starts-with match
-    for prop in available_properties:
-        pname = _normalize_sport_name(prop.get("name") or "")
-        if pname.startswith(name_lower):
-            logger.debug(f"Starts-with property match: '{property_name}' → {prop.get('id')}")
-            return prop
-
-    # Level 3: Contains match (partial)
-    for prop in available_properties:
-        pname = _normalize_sport_name(prop.get("name") or "")
-        if name_lower in pname or pname in name_lower:
-            logger.debug(f"Partial property match: '{property_name}' → {prop.get('id')}")
-            return prop
-
-    # Level 4: Description match (fallback)
-    for prop in available_properties:
-        description = _normalize_sport_name(prop.get("description") or "")
-        if description and name_lower in description:
-            logger.debug(f"Description property match: '{property_name}' → {prop.get('id')}")
-            return prop
-
-    logger.warning(f"No property match for '{property_name}' chat {chat_id}")
-    return None
-
-
-def _match_court(
-    court_name: str,
-    available_courts: List[Dict],
-    property_id: Optional[int],
-    chat_id: str
-) -> Optional[Dict]:
-    """
-    Match court by sport_type, name, or description with fuzzy matching.
-    
-    Matching priority:
-    1. Exact sport_type match
-    2. Synonym sport_type match (football → futsal)
-    3. Exact name match
-    4. Partial sport_type match (contains)
-    5. Partial name match (contains)
-    6. Description match (contains)
-    """
-    name_lower = _normalize_sport_name(court_name)
-    user_aliases = _get_sport_aliases(court_name)
-
-    filtered = _filter_courts_by_property(available_courts, property_id)
-
-    # Level 1: Exact sport_type match
-    for court in filtered:
-        sport_type = _normalize_sport_name(court.get("sport_type") or "")
-        if sport_type == name_lower:
-            logger.debug(f"Exact sport_type match: '{court_name}' → {court.get('id')}")
-            return court
-
-    # Level 2: Synonym sport_type match (football → futsal)
-    for court in filtered:
-        sport_type = _normalize_sport_name(court.get("sport_type") or "")
-        court_aliases = _get_sport_aliases(sport_type)
-        
-        # Check if any user alias matches any court alias
-        if any(alias in court_aliases for alias in user_aliases):
-            logger.debug(f"Synonym sport_type match: '{court_name}' → {court.get('id')} (via {sport_type})")
-            return court
-
-    # Level 3: Exact name match
-    for court in filtered:
-        cname = _normalize_sport_name(court.get("name") or "")
-        if cname == name_lower:
-            logger.debug(f"Exact name match: '{court_name}' → {court.get('id')}")
-            return court
-
-    # Level 4: Partial sport_type match (contains)
-    for court in filtered:
-        sport_type = _normalize_sport_name(court.get("sport_type") or "")
-        if name_lower in sport_type or sport_type in name_lower:
-            logger.debug(f"Partial sport_type match: '{court_name}' → {court.get('id')}")
-            return court
-
-    # Level 5: Partial name match (contains)
-    for court in filtered:
-        cname = _normalize_sport_name(court.get("name") or "")
-        if name_lower in cname or cname in name_lower:
-            logger.debug(f"Partial name match: '{court_name}' → {court.get('id')}")
-            return court
-
-    # Level 6: Description match (contains) - fallback
-    for court in filtered:
-        description = _normalize_sport_name(court.get("description") or "")
-        if description and name_lower in description:
-            logger.debug(f"Description match: '{court_name}' → {court.get('id')}")
-            return court
-
-    logger.warning(f"No court match for '{court_name}' chat {chat_id}")
-    return None
-
-
-def _match_court(
-    court_name: str,
-    available_courts: List[Dict],
-    property_id: Optional[int],
-    chat_id: str
-) -> tuple[Optional[str], List[int]]:
-    """
-    Match court by sport_type, name, or description with fuzzy matching.
-    
-    Returns tuple: (sport_type, [court_ids])
-    
-    Matching priority:
-    1. Exact sport_type match in sport_types array
-    2. Synonym sport_type match (football → futsal)
-    3. Exact name match
-    4. Partial sport_type match (contains)
-    5. Partial name match (contains)
-    6. Description match (contains)
-    """
-    name_lower = _normalize_sport_name(court_name)
-    user_aliases = _get_sport_aliases(court_name)
-
-    filtered = _filter_courts_by_property(available_courts, property_id)
-
-    # Level 1: Exact sport_type match in sport_types array
-    for court in filtered:
-        sport_types = court.get("sport_types", [])
-        for sport_type in sport_types:
-            if _normalize_sport_name(sport_type) == name_lower:
-                logger.debug(f"Exact sport_type match: '{court_name}' → {sport_type}")
-                # Find all courts with this sport type
-                matching_ids = []
-                for c in filtered:
-                    if sport_type in c.get("sport_types", []):
-                        matching_ids.append(c["id"])
-                return sport_type, matching_ids
-
-    # Level 2: Synonym sport_type match (football → futsal)
-    for court in filtered:
-        sport_types = court.get("sport_types", [])
-        for sport_type in sport_types:
-            court_aliases = _get_sport_aliases(sport_type)
-            # Check if any user alias matches any court alias
-            if any(alias in court_aliases for alias in user_aliases):
-                logger.debug(f"Synonym sport_type match: '{court_name}' → {sport_type}")
-                # Find all courts with this sport type
-                matching_ids = []
-                for c in filtered:
-                    if sport_type in c.get("sport_types", []):
-                        matching_ids.append(c["id"])
-                return sport_type, matching_ids
-
-    # Level 3: Exact name match - return first sport type of that court
-    for court in filtered:
-        cname = _normalize_sport_name(court.get("name") or "")
-        if cname == name_lower:
-            logger.debug(f"Exact name match: '{court_name}' → {court.get('id')}")
-            sport_types = court.get("sport_types", [])
-            if sport_types:
-                return sport_types[0], [court["id"]]
-            return court.get("name"), [court["id"]]
-
-    # Level 4: Partial sport_type match (contains)
-    for court in filtered:
-        sport_types = court.get("sport_types", [])
-        for sport_type in sport_types:
-            sport_type_lower = _normalize_sport_name(sport_type)
-            if name_lower in sport_type_lower or sport_type_lower in name_lower:
-                logger.debug(f"Partial sport_type match: '{court_name}' → {sport_type}")
-                # Find all courts with this sport type
-                matching_ids = []
-                for c in filtered:
-                    if sport_type in c.get("sport_types", []):
-                        matching_ids.append(c["id"])
-                return sport_type, matching_ids
-
-    # Level 5: Partial name match (contains)
-    for court in filtered:
-        cname = _normalize_sport_name(court.get("name") or "")
-        if name_lower in cname or cname in name_lower:
-            logger.debug(f"Partial name match: '{court_name}' → {court.get('id')}")
-            sport_types = court.get("sport_types", [])
-            if sport_types:
-                return sport_types[0], [court["id"]]
-            return court.get("name"), [court["id"]]
-
-    # Level 6: Description match (contains) - fallback
-    for court in filtered:
-        description = _normalize_sport_name(court.get("description") or "")
-        if description and name_lower in description:
-            logger.debug(f"Description match: '{court_name}' → {court.get('id')}")
-            sport_types = court.get("sport_types", [])
-            if sport_types:
-                return sport_types[0], [court["id"]]
-            return court.get("name"), [court["id"]]
-
-    logger.warning(f"No court match for '{court_name}' chat {chat_id}")
-    return None, []
-
-
-def _filter_courts_by_property(
-    courts: List[Dict],
-    property_id: Optional[int]
-) -> List[Dict]:
-
-    if not property_id:
-        return courts
-
-    return [c for c in courts if c.get("property_id") == property_id]
-
-
-def _is_iso_date(date_str: str) -> bool:
-    """
-    Check if a string is a valid ISO date format (YYYY-MM-DD).
-    
-    Args:
-        date_str: String to check
-        
-    Returns:
-        True if valid ISO date, False otherwise
-    """
-    if not date_str or len(date_str) != 10:
-        return False
-    
-    try:
-        from datetime import datetime
-        datetime.fromisoformat(date_str)
-        return True
-    except (ValueError, TypeError):
-        return False
-
-
-def _floor_time_to_hour(time_str: str, chat_id: str) -> str:
-    """
-    Floor time to nearest hour (round down) ONLY if minutes are specified.
-    Also normalizes raw hour numbers to HH:00 format.
-    
-    Examples:
-        "1:45" → "01:00" (has minutes, round down)
-        "2:30" → "02:00" (has minutes, round down)
-        "14:15" → "14:00" (has minutes, round down)
-        "18:00" → "18:00" (already on hour, no change)
-        "6" → "06:00" (raw number, normalize to HH:00)
-        "18" → "18:00" (raw number, normalize to HH:00)
-    
-    Args:
-        time_str: Time string in various formats (H:MM, HH:MM, H, HH, etc.)
-        chat_id: Chat ID for logging
-        
-    Returns:
-        Time string in HH:00 format
-    """
-    try:
-        from datetime import datetime
-        
-        # Check if time has colon (indicates minutes are specified)
-        if ':' not in time_str:
-            # No colon means just hour number - normalize to HH:00 format
-            try:
-                hour = int(time_str)
-                if 0 <= hour <= 23:
-                    normalized = f"{hour:02d}:00"
-                    logger.info(f"Normalized raw hour '{time_str}' → '{normalized}' for chat {chat_id}")
-                    return normalized
-                else:
-                    logger.warning(f"Invalid hour value '{time_str}' for chat {chat_id}")
-                    return time_str
-            except ValueError:
-                logger.warning(f"Could not parse raw hour '{time_str}' for chat {chat_id}")
-                return time_str
-        
-        # Try to parse various time formats with colon
-        for fmt in ["%H:%M", "%I:%M", "%H:%M:%S", "%I:%M:%S"]:
-            try:
-                parsed = datetime.strptime(time_str, fmt)
-                # Floor to hour (just take the hour, set minutes to 00)
-                floored = f"{parsed.hour:02d}:00"
-                if floored != time_str:
-                    logger.info(f"Floored start_time '{time_str}' → '{floored}' for chat {chat_id}")
-                return floored
-            except ValueError:
-                continue
-        
-        # If no format matched, return as-is
-        logger.warning(f"Could not parse time '{time_str}' for flooring in chat {chat_id}")
-        return time_str
-        
-    except Exception as e:
-        logger.error(f"Error flooring time '{time_str}' for chat {chat_id}: {e}")
-        return time_str
-
-
-def _ceil_time_to_hour(time_str: str, chat_id: str) -> str:
-    """
-    Ceil time to nearest hour (round up) ONLY if minutes are specified.
-    Also normalizes raw hour numbers to HH:00 format.
-    
-    Examples:
-        "1:45" → "02:00" (has minutes, round up)
-        "2:30" → "03:00" (has minutes, round up)
-        "14:15" → "15:00" (has minutes, round up)
-        "18:00" → "18:00" (already on hour, no change)
-        "7" → "07:00" (raw number, normalize to HH:00)
-        "19" → "19:00" (raw number, normalize to HH:00)
-    
-    Args:
-        time_str: Time string in various formats (H:MM, HH:MM, H, HH, etc.)
-        chat_id: Chat ID for logging
-        
-    Returns:
-        Time string in HH:00 format
-    """
-    try:
-        from datetime import datetime
-        
-        # Check if time has colon (indicates minutes are specified)
-        if ':' not in time_str:
-            # No colon means just hour number - normalize to HH:00 format
-            try:
-                hour = int(time_str)
-                if 0 <= hour <= 23:
-                    normalized = f"{hour:02d}:00"
-                    logger.info(f"Normalized raw hour '{time_str}' → '{normalized}' for chat {chat_id}")
-                    return normalized
-                else:
-                    logger.warning(f"Invalid hour value '{time_str}' for chat {chat_id}")
-                    return time_str
-            except ValueError:
-                logger.warning(f"Could not parse raw hour '{time_str}' for chat {chat_id}")
-                return time_str
-        
-        # Try to parse various time formats with colon
-        for fmt in ["%H:%M", "%I:%M", "%H:%M:%S", "%I:%M:%S"]:
-            try:
-                parsed = datetime.strptime(time_str, fmt)
-                # Ceil to hour (if minutes > 0, add 1 hour)
-                if parsed.minute > 0 or parsed.second > 0:
-                    ceiled_hour = (parsed.hour + 1) % 24
-                    ceiled = f"{ceiled_hour:02d}:00"
-                    logger.info(f"Ceiled end_time '{time_str}' → '{ceiled}' for chat {chat_id}")
-                    return ceiled
-                else:
-                    # Already on the hour
-                    return f"{parsed.hour:02d}:00"
-            except ValueError:
-                continue
-        
-        # If no format matched, return as-is
-        logger.warning(f"Could not parse time '{time_str}' for ceiling in chat {chat_id}")
-        return time_str
-        
-    except Exception as e:
-        logger.error(f"Error ceiling time '{time_str}' for chat {chat_id}: {e}")
-        return time_str
-
-
-# =====================================================
-# DATE NORMALIZATION HELPERS
-# =====================================================
-
-def _normalize_date(
-    date_interpretation: Optional[str],
-    mentioned_date_text: Optional[str],
-    chat_id: str
-) -> Optional[str]:
-    """
-    Convert date interpretation to actual date string in YYYY-MM-DD format.
-    Uses Asia/Karachi timezone for "today" and relative dates.
-    
-    Args:
-        date_interpretation: Normalized interpretation from router (e.g., "today", "tomorrow", "next_monday")
-        mentioned_date_text: Original text mentioned by user
-        chat_id: Chat ID for logging
-        
-    Returns:
-        Date string in YYYY-MM-DD format, or None if invalid
-        
-    Examples:
-        _normalize_date("today", "aaj", "123") → "2026-03-13"
-        _normalize_date("tomorrow", "kal", "123") → "2026-03-14"
-        _normalize_date("next_monday", "next Monday", "123") → "2026-03-17"
-    """
-    if not date_interpretation:
-        logger.warning(f"No date_interpretation provided for chat {chat_id}")
-        return None
-    
-    try:
-        from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
-        
-        # Use Asia/Karachi timezone
-        tz = ZoneInfo("Asia/Karachi")
-        now = datetime.now(tz)
-        today = now.date()
-        
-        # Handle different interpretations
-        if date_interpretation == "today":
-            result = today.isoformat()
-            logger.info(f"Normalized 'today' to {result} for chat {chat_id}")
-            return result
-        
-        elif date_interpretation == "tonight":
-            # Tonight means today (same date, just evening/night time)
-            result = today.isoformat()
-            logger.info(f"Normalized 'tonight' to {result} for chat {chat_id}")
-            return result
-        
-        elif date_interpretation == "tomorrow":
-            result = (today + timedelta(days=1)).isoformat()
-            logger.info(f"Normalized 'tomorrow' to {result} for chat {chat_id}")
-            return result
-        
-        elif date_interpretation == "parso" or date_interpretation == "day_after_tomorrow":
-            result = (today + timedelta(days=2)).isoformat()
-            logger.info(f"Normalized 'parso/day_after_tomorrow' to {result} for chat {chat_id}")
-            return result
-        
-        elif date_interpretation.startswith("next_"):
-            # Extract day name (next_monday → monday)
-            day_name = date_interpretation.replace("next_", "")
-            return _get_next_weekday(today, day_name, chat_id)
-        
-        elif date_interpretation.startswith("this_"):
-            # Extract day name (this_sunday → sunday)
-            day_name = date_interpretation.replace("this_", "")
-            return _get_this_weekday(today, day_name, chat_id)
-        
-        else:
-            # Try to parse as ISO date (YYYY-MM-DD)
-            try:
-                parsed_date = datetime.fromisoformat(date_interpretation).date()
-                result = parsed_date.isoformat()
-                logger.info(f"Parsed ISO date {date_interpretation} to {result} for chat {chat_id}")
-                return result
-            except ValueError:
-                logger.warning(
-                    f"Unknown date_interpretation '{date_interpretation}' for chat {chat_id}"
-                )
-                return None
-    
-    except Exception as e:
-        logger.error(f"Error normalizing date for chat {chat_id}: {e}", exc_info=True)
-        return None
-
-
-def _get_next_weekday(from_date, day_name: str, chat_id: str) -> Optional[str]:
-    """
-    Get the next occurrence of a weekday from a given date.
-    
-    Args:
-        from_date: Starting date
-        day_name: Name of the day (monday, tuesday, etc.)
-        chat_id: Chat ID for logging
-        
-    Returns:
-        Date string in YYYY-MM-DD format
-    """
-    from datetime import timedelta
-    
-    # Map day names to weekday numbers (0=Monday, 6=Sunday)
-    day_map = {
-        "monday": 0,
-        "tuesday": 1,
-        "wednesday": 2,
-        "thursday": 3,
-        "friday": 4,
-        "saturday": 5,
-        "sunday": 6
-    }
-    
-    day_name_lower = day_name.lower()
-    if day_name_lower not in day_map:
-        logger.warning(f"Unknown day name '{day_name}' for chat {chat_id}")
-        return None
-    
-    target_weekday = day_map[day_name_lower]
-    current_weekday = from_date.weekday()
-    
-    # Calculate days until next occurrence
-    # If today is Monday (0) and target is Wednesday (2): 2 - 0 = 2 days
-    # If today is Wednesday (2) and target is Monday (0): (0 - 2) % 7 = 5 days
-    days_ahead = target_weekday - current_weekday
-    
-    # If the day is today or in the past this week, get next week's occurrence
-    if days_ahead <= 0:
-        days_ahead += 7
-    
-    result_date = from_date + timedelta(days=days_ahead)
-    result = result_date.isoformat()
-    
     logger.info(
-        f"Calculated next {day_name} from {from_date} as {result} for chat {chat_id}"
+        f"[INVALID DATE] Saved non-availability pending actions for chat {chat_id}: {merged_pending}"
     )
-    
-    return result
 
 
-def _get_this_weekday(from_date, day_name: str, chat_id: str) -> Optional[str]:
-    """
-    Get the occurrence of a weekday in the current week.
-    If the day has passed, get next week's occurrence.
-    
-    Args:
-        from_date: Starting date
-        day_name: Name of the day (monday, tuesday, etc.)
-        chat_id: Chat ID for logging
-        
-    Returns:
-        Date string in YYYY-MM-DD format
-    """
-    from datetime import timedelta
-    
-    # Map day names to weekday numbers (0=Monday, 6=Sunday)
-    day_map = {
-        "monday": 0,
-        "tuesday": 1,
-        "wednesday": 2,
-        "thursday": 3,
-        "friday": 4,
-        "saturday": 5,
-        "sunday": 6
-    }
-    
-    day_name_lower = day_name.lower()
-    if day_name_lower not in day_map:
-        logger.warning(f"Unknown day name '{day_name}' for chat {chat_id}")
-        return None
-    
-    target_weekday = day_map[day_name_lower]
-    current_weekday = from_date.weekday()
-    
-    # Calculate days until target day
-    days_ahead = target_weekday - current_weekday
-    
-    # If the day has passed this week, get next week's occurrence
-    if days_ahead < 0:
-        days_ahead += 7
-    
-    result_date = from_date + timedelta(days=days_ahead)
-    result = result_date.isoformat()
-    
-    logger.info(
-        f"Calculated this {day_name} from {from_date} as {result} for chat {chat_id}"
-    )
-    
-    return result
